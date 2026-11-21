@@ -2532,3 +2532,34 @@ Found (`fadd=g1`, the runner; ours equals the runner under IEEE adds on every co
 | rec22 (mesa attract) | 0 | 38,257 of 38,257 |
 
 The spin replay has no misses left on the four recordings.
+
+## F4b3k2g: state 0xf (`AIComputer_ControlsAir` 0x138bb8) against the running game (2026-11-21)
+
+`controls_air_word` (`tests/ground_motion.rs`, `computer_pad_words_against_the_running_game`) now replays control
+state `0xf` (`AIComputer_ControlsAir` 0x138bb8, `aictl::controls_air`, runner-checked in `tests/aictl.rs`) on
+recordings with the computer object window (`5ae0>830:100`) and the course's AI paths: `aicomp::find_jump_marker`
+0x1392a8 on the rider's path (`+0x340`, `+0x344`), the rail balance tilt (`rider+0x198`), `stats+0x1d`, and object
+`+0x868` (speed) / `+0x888` (kept side). `TRICKY_AIRF=<path><tilt>` selects sample `a` or `b` (default `bb`).
+
+Proven (on rec26, rec28, rec29 — Mesa Blanca, the recordings with `5ae0>830:100` and state `0xf` ticks):
+
+| TRICKY_AIRF | rec26 (194 ticks) | rec28 (667 ticks) | rec29 (663 ticks) |
+|---|---|---|---|
+| `aa` / `ba` | 125 | 570 | 567 |
+| `ab` / `bb` | 194 | 667 | 663 |
+
+- The rail balance tilt (`rider+0x198`) is the **second** sample's: `RailMotion_Update` moves it before
+  `cComputer::GetControls` runs in the frame (default `bb`, matching the rider sample in `TRICKY_DISP` and
+  `TRICKY_AIR`).
+- Every pad word matches bit for bit across all three recordings (194/194, 667/667, 663/663 = 1,524/1,524):
+  - rec26: 156 tilt (`|−2·tilt| > 0.1`), 38 flat-tilt trick (`|−2·tilt| ≤ 0.1`, bit 3 + ±31 stick), 0 jump markers.
+  - rec28: 493 tilt, 174 flat-tilt trick, 0 jump markers; object `+0x888` changed on 2 ticks, both exact.
+  - rec29: 489 tilt, 174 flat-tilt trick, 0 jump markers; object `+0x888` changed on 2 ticks, both exact.
+- Object fields `+0x868` and `+0x888` match the second sample on all 1,524/1,524 ticks.
+- On Mesa Blanca every computer rider's `stats+0x1d` is 178..252 (> 83), so `(Rand_Game() % 100) - 16 < stat` is
+  always true regardless of the draw (the test passes `0` / `99` by `pad & 8` for riders with `stats+0x1d ≤ 83`,
+  and here `99` still passes).
+- No same-state `0xf` tick hits a jump marker (`marker.found && marker.kind != 0`), and `0xf -> 0x10` transitions in
+  rec26/rec28/rec29 already hold `0x10`'s pad word (`0x1a` / `0x10001a`: motion leaves the rail before `GetControls`),
+  so `AIComputer_ControlsAir`'s jump-marker branch stays runner-checked (`tests/aictl.rs`) rather than observed on
+  the running game.
