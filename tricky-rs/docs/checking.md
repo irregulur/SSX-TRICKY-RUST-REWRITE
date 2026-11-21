@@ -2388,6 +2388,19 @@ has the button up (TRICKY_NOHOOK: as before).
 
 rec19, rec22 and rec26 unchanged.
 
+Mesa Blanca re-recorded with `L700:78 hookpad rollers flags clock` (2026-11-21, `rec30`, 400 s, 23,572 ticks — full
+live race plus scoreboard replay, 100,799 ground ticks across all 6 riders, 11 `(rider, roller)` pairs across riders
+0, 2, 3, 4, 5 and knocked objects 1040, 1041, 1078, 1962, 2254, 2255):
+- `ground_ticks_against_the_running_game` under `fadd=g1`: every field **100,532**, pos **100,770 / 100,769**, vel
+  **95,397 / 100,671**, state **100,793 / 100,799** (both ours and the runner).
+- The only 6 state diffs in the entire recording are the 6 riders crossing the finish line (`3 → 6` at `14485 r4`,
+  `14491 r1`, `14566 r0`, `14571 r2`, `14591 r3`, `14702 r5`), which the ground test does not replay — **0 missed
+  stumbles**.
+- With `TRICKY_NOROLL=1`, `state` drops `100,793 → 100,791` and `every field` drops `100,532 → 100,530` (both misses
+  are AI rider 4 stumbling `3 → 2` over knocked objects `1040`/`1041` at tick `6233`, once in the live race and once
+  in the scoreboard replay), confirming both `roller::rider_kick` (ours) and the runner's rollers' loop replay AI
+  knocked-object kicks bit-exact. Row F4b3k1a done.
+
 ## F4b3d2: the half-pipe turn in the spin replay (2026-11-20, notes)
 
 Proven (`SpinState_Update` 0x100908, mode 2, stick settled, st+0x5c 0): the half-pipe turn reads the frame's nose
