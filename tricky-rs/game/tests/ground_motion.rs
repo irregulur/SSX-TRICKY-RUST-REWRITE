@@ -4349,6 +4349,12 @@ fn computer_pad_words_against_the_running_game() {
     // [ticks, fields equal, changed over the frame] and branches [marker_jump, tilt, rand_yes, rand_no]
     let mut airf_after = [0usize; 3];
     let mut airf_branch = [0usize; 4];
+    // F4b3k2: recorded race mode word 0x32de8c (`mode N` in header, else TRICKY_GMODE, else 1), stuck bit counts
+    // [disp_game_bit0, disp_bit0_match, s13_14_game_bit0, s13_14_bit0_match], and states 0x13/0x14 stuck counters
+    // (+0x894, +0x898) [ticks, equal, changed]
+    let rec_mode = recording::mode(path);
+    let mut stuck_bits = [0usize; 4];
+    let mut idle_after = [0usize; 3];
     let mut changed = 0;
     for w in ticks.windows(2) {
         for i in (0..n).filter(|&i| u32_le(&stats[i], 0x6c) == u32::MAX) {
@@ -4357,7 +4363,36 @@ fn computer_pad_words_against_the_running_game() {
                 continue;
             }
             let state = u32_le(&w[0].riders[i], 0x428);
-            if state != u32_le(&w[1].riders[i], 0x428) {
+            let state1 = u32_le(&w[1].riders[i], 0x428);
+            if state != state1 {
+                // F4b3k2: when `AIComputer_CheckStuck` sets pad bit 0 (reset), `Boarder_UpdateControl` immediately
+                // transitions `rider+0x428` to 0x16 in the same frame — check those stuck-reset transitions here!
+                if state1 == 0x16 && matches!(state, 2 | 3 | 4 | 7 | 0xb | 0xc | 0x12 | 0x13 | 0x14) {
+                    if let (Some(kh), Some(ks)) = (kh, ks) {
+                        if matches!(state, 0x13 | 0x14) {
+                            if let Some((d, _)) = stuck_only_word(w, i, n, kh, ks, state, rec_mode) {
+                                if pad & 1 != 0 {
+                                    stuck_bits[2] += 1;
+                                    stuck_bits[3] += (d == pad) as usize;
+                                    if d != pad && std::env::var("TRICKY_DBGD").is_ok() {
+                                        eprintln!("DBGD stuck tick {} rider {i} state {state:#x}->0x16: pad {pad:#x} ours {d:#x}", w[1].tick);
+                                    }
+                                }
+                            }
+                        } else if let (Some(kf), Some(ka), Some(ps), Some(ct)) = (kf, ka, paths.as_deref(), clip_types.as_deref()) {
+                            let mut dummy = std::collections::BTreeMap::new();
+                            if let Some(d) = dispatch_word(w, i, n, kh, kf, ka, ps, ct, rec_mode, &mut dummy) {
+                                if pad & 1 != 0 {
+                                    stuck_bits[0] += 1;
+                                    stuck_bits[1] += (d.0 == pad) as usize;
+                                    if d.0 != pad && std::env::var("TRICKY_DBGD").is_ok() {
+                                        eprintln!("DBGD stuck tick {} rider {i} state {state:#x}->0x16: pad {pad:#x} ours {:#x} (xor {:#x})", w[1].tick, d.0, d.0 ^ pad);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 changed += 1;
                 continue;
             }
@@ -4374,7 +4409,8 @@ fn computer_pad_words_against_the_running_game() {
                 tricky_game::aictl::controls_countdown(&mut word, f32_at(h, 0x3c), time, f32_at(a, 0x238), f32_at(a, 0x240), &mut side);
                 Some(word)
             }).flatten();
-            let dispatch = matches!(state, 2 | 3 | 4 | 7 | 0xb | 0xc | 0x12).then(|| dispatch_word(w, i, n, kh?, kf?, ka?, paths.as_deref()?, clip_types.as_deref()?, &mut by_mode)).flatten();
+            let dispatch = matches!(state, 2 | 3 | 4 | 7 | 0xb | 0xc | 0x12).then(|| dispatch_word(w, i, n, kh?, kf?, ka?, paths.as_deref()?, clip_types.as_deref()?, rec_mode, &mut by_mode)).flatten();
+            let idle_stuck = matches!(state, 0x13 | 0x14).then(|| stuck_only_word(w, i, n, kh?, ks?, state, rec_mode)).flatten();
             let ride = (state == 0xe).then(|| ride_word(w, i, kh?, kf?, paths.as_deref()?)).flatten();
             let airf = (state == 0xf).then(|| controls_air_word(w, i, kh?, paths.as_deref()?, &stats[i], pad, &mut airf_branch)).flatten();
             let air = (state == 0x10).then(|| air_trick_word(w, i, kh?, kf?, &stats[i], &mut draws)).flatten();
@@ -4382,7 +4418,23 @@ fn computer_pad_words_against_the_running_game() {
             let ok = match state {
                 _ if routine => false,
                 // the stuck check alone (0x14), or after the idle's clearing of the zero word (0x13, `aictl::controls_idle`)
-                0x13 | 0x14 => pad & !1 == 0,
+                0x13 | 0x14 => match idle_stuck {
+                    Some((d, cnt_ok)) => {
+                        if pad & 1 != 0 {
+                            stuck_bits[2] += 1;
+                            stuck_bits[3] += (d & 1 == 1) as usize;
+                        }
+                        idle_after[0] += 1;
+                        idle_after[1] += cnt_ok as usize;
+                        let (h0, h1) = (&w[0].chased[kh.unwrap()].1[i], &w[1].chased[kh.unwrap()].1[i]);
+                        idle_after[2] += (h0[0x894 - 0x830..0x89c - 0x830] != h1[0x894 - 0x830..0x89c - 0x830]) as usize;
+                        if d != pad && std::env::var("TRICKY_DBGD").is_ok() {
+                            eprintln!("DBGD tick {} rider {i} state {state:#x}: pad {pad:#x} ours {d:#x}", w[1].tick);
+                        }
+                        d == pad
+                    }
+                    None => pad & !1 == 0,
+                },
                 // the turn-around (`aictl::controls_turn_around`): the stick's y alone, and only under 0.5 (rider+0x57b8,
                 // the second sample's: it moves before the control, rec22 2401 r3, 2602 r1, 10463 r0 cross 0.5 in the
                 // frame); its steer (`AIComputer_SteerTowards`) is not recorded
@@ -4436,6 +4488,10 @@ fn computer_pad_words_against_the_running_game() {
                 }
                 2 | 3 | 4 | 7 | 0xb | 0xc | 0x12 => {
                     let d = dispatch.unwrap();
+                    if pad & 1 != 0 {
+                        stuck_bits[0] += 1;
+                        stuck_bits[1] += (d.0 & 1 == 1) as usize;
+                    }
                     if d.0 != pad && std::env::var("TRICKY_DBGD").is_ok() {
                         eprintln!("DBGD tick {} rider {i} state {state:#x} mode {} -> {}: pad {pad:#x} ours {:#x} (xor {:#x})", w[1].tick, d.1, d.2, d.0, d.0 ^ pad);
                     }
@@ -4472,6 +4528,9 @@ fn computer_pad_words_against_the_running_game() {
     eprintln!("{path}: the air trick's object fields (+0x878..+0x88c) at the second sample [ticks, equal, changed over the frame]: {air_after:?}");
     if airf_after[0] > 0 {
         eprintln!("{path}: state 0xf (`AIComputer_ControlsAir`) object fields (+0x868, +0x888) [ticks, equal, changed]: {airf_after:?}, branches [marker_jump, tilt, rand_yes, rand_no]: {airf_branch:?}");
+    }
+    if idle_after[0] > 0 || stuck_bits.iter().any(|&x| x > 0) {
+        eprintln!("{path}: stuck bit (mode {rec_mode:?}) [disp_bit0, disp_match, s13_14_bit0, s13_14_match]: {stuck_bits:?}; states 0x13/0x14 counters (+0x894, +0x898) [ticks, equal, changed]: {idle_after:?}");
     }
     eprintln!("{path}: the dispatch states by riding mode (object +0x89c at the first sample) [ticks, equal]: {by_mode:?}");
 }
@@ -4643,12 +4702,58 @@ fn path_of(paths: &[tricky_game::aipath::Path], r: &[u8]) -> (usize, f32) {
 /// fields from TRICKY_DISP=<rider><frame> (a or b: the samples of the rider's 0x700 bytes and of the frame `4aa0`;
 /// default `ba`, as the turn-around, F4b3k2c). The race mode word 0x32de8c (not recorded) TRICKY_GMODE (default 1).
 /// The word, the mode it began in, the mode it ended in, and the object's fields after it as [`ObjAfter`] (F4b3k6).
+/// States 0x13 (`AIComputer_ControlsIdle` 0x138b60) and 0x14 (`AIComputer_CheckStuck` 0x139ab8 alone) for computer
+/// rider `i` over the frame `w` (F4b3k2): runs `aictl::check_stuck` and checks `+0x894` / `+0x898` at the second sample.
+fn stuck_only_word(w: &[recording::Tick], i: usize, n: usize, kh: usize, ks: usize, state: u32, rec_mode: Option<u32>) -> Option<(u32, bool)> {
+    use tricky_game::aictl;
+    let sel = std::env::var("TRICKY_DISP").unwrap_or("ba".into()).into_bytes();
+    let pick = |k: usize| (sel.get(k) == Some(&b'b')) as usize;
+    let gmode: u32 = std::env::var("TRICKY_GMODE").ok().and_then(|v| v.parse().ok()).or(rec_mode).unwrap_or(1);
+    let h0 = &w[0].chased[kh].1[i];
+    let h1 = &w[1].chased[kh].1[i];
+    let o = |off: usize| off - 0x830;
+    let r = &w[pick(0)].riders[i];
+    let rs = std::env::var("TRICKY_RECS").unwrap_or_default();
+    let rfs = |j: usize| match rs.as_str() { "a" => 0, "o" => (j > i) as usize, "p" => (j < i) as usize, _ => 1 };
+    let recs: Vec<[f32; 2]> = (0..n).map(|j| [f32_at(&w[rfs(j)].riders[i], 0x40 + 0x20 * j), f32_at(&w[rfs(j)].riders[i], 0x44 + 0x20 * j)]).collect();
+    let heading = f32_at(r, 0x1b0);
+    let ahead = u32_le(r, 0x100) as i32;
+    let ahead_rec = (0 <= ahead).then(|| recs[ahead as usize]);
+    let mut s = aictl::StuckIn {
+        heading: f32_at(r, 0x370),
+        path: heading,
+        state: if u32_le(r, 0x428) == 0x16 { u32_le(&w[0].riders[i], 0x424) } else { u32_le(r, 0x424) },
+        state2: state,
+        speed: f32_at(r, 0x348),
+        f57fc: f32_at(&w[pick(0)].extra[ks].1[i], 0x4c),
+        mode: gmode,
+        skill: f32_at(h0, o(0x86c)),
+        w890: u32_le(h0, o(0x890)) as i32,
+        c894: u32_le(h0, o(0x894)),
+        c898: u32_le(h0, o(0x898)),
+    };
+    let r_heading = f32_at(r, 0x370);
+    let stuck = aictl::check_stuck(
+        &mut s,
+        &mut || aictl::below_gap_min(ahead_rec, r_heading, f32_at(r, 0x104)),
+        &mut || aictl::above_gap_max(ahead_rec, r_heading, f32_at(r, 0x108)),
+    );
+    let mut word = 0u32;
+    if state == 0x13 {
+        aictl::controls_idle(&mut word, stuck);
+    } else {
+        word = stuck as u32;
+    }
+    let cnt_ok = s.c894 == u32_le(h1, o(0x894)) && s.c898 == u32_le(h1, o(0x898));
+    Some((word, cnt_ok))
+}
+
 #[allow(clippy::too_many_arguments)]
-fn dispatch_word(w: &[recording::Tick], i: usize, n: usize, kh: usize, kf: usize, ka: usize, paths: &[tricky_game::aipath::Path], clip_types: &[u8], by_mode: &mut std::collections::BTreeMap<u32, [usize; 2]>) -> Option<(u32, u32, u32, ObjAfter)> {
+fn dispatch_word(w: &[recording::Tick], i: usize, n: usize, kh: usize, kf: usize, ka: usize, paths: &[tricky_game::aipath::Path], clip_types: &[u8], rec_mode: Option<u32>, by_mode: &mut std::collections::BTreeMap<u32, [usize; 2]>) -> Option<(u32, u32, u32, ObjAfter)> {
     use tricky_game::aicomp::{self, Ai, GrudgeOf, Mode, World};
     let sel = std::env::var("TRICKY_DISP").unwrap_or("ba".into()).into_bytes();
     let pick = |k: usize| (sel.get(k) == Some(&b'b')) as usize;
-    let gmode: u32 = std::env::var("TRICKY_GMODE").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
+    let gmode: u32 = std::env::var("TRICKY_GMODE").ok().and_then(|v| v.parse().ok()).or(rec_mode).unwrap_or(1);
     let h = &w[0].chased[kh].1[i];
     let o = |off: usize| off - 0x830;
     let r = &w[pick(0)].riders[i];
@@ -4677,7 +4782,8 @@ fn dispatch_word(w: &[recording::Tick], i: usize, n: usize, kh: usize, kf: usize
         c894: u32_le(h, o(0x894)),
         c898: u32_le(h, o(0x898)),
     };
-    let stuck = tricky_game::aictl::check_stuck(&mut s, &mut || tricky_game::aictl::below_gap_min(ahead_rec, heading, f32_at(r, 0x104)), &mut || tricky_game::aictl::above_gap_max(ahead_rec, heading, f32_at(r, 0x108)));
+    let r_heading = f32_at(r, 0x370);
+    let stuck = tricky_game::aictl::check_stuck(&mut s, &mut || tricky_game::aictl::below_gap_min(ahead_rec, r_heading, f32_at(r, 0x104)), &mut || tricky_game::aictl::above_gap_max(ahead_rec, r_heading, f32_at(r, 0x108)));
     let mut word = stuck as u32;
     // the shove: not while the layer-1 clip is a shove (type 0x15, `AnimCtl_GetClipType`)
     let c1 = u32_le(&w[0].extra[ka].1[i], 0xc);

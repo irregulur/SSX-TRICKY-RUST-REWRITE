@@ -204,6 +204,8 @@ def hook(p, on):
 RACE_TICK, RACE_COUNT, RACE_RIDERS = 0x18, 0x88, 0xC4
 # the course id (0 garibald ... 3 mesablanca ...: `Camera_GetCourseCmlName` 0x178330's order; F4h5k)
 COURSE_ID = 0x32DE88
+# the game mode word (0x32de8c: 2 single race, 4 circuit race, 3/5 show-off, 6 tutorial, 7 freeride; F4b3k2)
+GAME_MODE = 0x32DE8C
 # the course object (`gWorld`)
 WORLD = 0x346488
 RIDER_POS, RIDER_VEL, RIDER_TIMESCALE, RIDER_PLACE, RIDER_STATS = 0x140, 0x150, 0x12C, 0x110, 0x464
@@ -422,7 +424,7 @@ def main(argv):
                     + (" posed 1" if size >= 0x700 else "")
                     + (f" flags {n_inst}" if flagged else "")
                     + (" clock 1" if clocked else "")
-                    + f" course {p.read32(COURSE_ID)}" + "\n")
+                    + f" course {p.read32(COURSE_ID)} mode {p.read32(GAME_MODE)}" + "\n")
             while time.time() - t0 < seconds:
                 tick = p.read32(race + RACE_TICK)
                 if tick == last:

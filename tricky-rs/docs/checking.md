@@ -2576,3 +2576,35 @@ Proven (on rec26, rec28, rec29 — Mesa Blanca, the recordings with `5ae0>830:10
   rec26/rec28/rec29 already hold `0x10`'s pad word (`0x1a` / `0x10001a`: motion leaves the rail before `GetControls`),
   so `AIComputer_ControlsAir`'s jump-marker branch stays runner-checked (`tests/aictl.rs`) rather than observed on
   the running game.
+
+## F4b3k2: the stuck bit (`0x139ab8`) and race mode word `0x32de8c` (2026-11-21, done)
+
+Proven (`AIComputer_CheckStuck` 0x139ab8, `AIComputer_BelowGapMin` 0x1399a8, `AIComputer_AboveGapMax` 0x139a30):
+- Whenever `AIComputer_CheckStuck` returns `true` (setting pad bit 0, the reset button), `Boarder_UpdateControl`
+  immediately transitions `rider+0x428` to `0x16` (the reset state) in the same frame — so every stuck-bit tick had
+  `state_0 != state_1` and was previously skipped by `computer_pad_words_against_the_running_game` (`tests/ground_motion.rs`).
+- `AIComputer_BelowGapMin` and `AIComputer_AboveGapMax` read the rider's heading `rider+0x370`, not the path heading
+  `rider+0x1b0` (fixed in both `dispatch_word` and `stuck_only_word`).
+
+Changed:
+- `tools/pine.py`: writes the game mode word `GAME_MODE = 0x32DE8C` into the recording header (`mode N`, next to
+  `course N`); `tests/recording/mod.rs`: `recording::mode(path)` reads it.
+- `tests/ground_motion.rs`: wired `aictl::check_stuck` (`stuck_only_word`) for states `0x13` (`AIComputer_ControlsIdle`)
+  and `0x14` (`AIComputer_CheckStuck` alone), checked `state -> 0x16` stuck-reset transitions (using the pre-reset
+  control/motion state), and defaulted `gmode` to `recording::mode(path)` (`TRICKY_GMODE` still overrides).
+
+Checked (`computer_pad_words_against_the_running_game`):
+
+| Recording | Dispatch stuck resets (`0x2`/`0x3`/`0x4` → `0x16`) | `0x13`/`0x14` stuck resets (`→ 0x16`) | `0x13`/`0x14` counters (`+0x894`, `+0x898`) |
+|---|---|---|---|
+| rec25 (Snowdream) | 0 / 0 | 9 / 9 | 3,946 / 3,946 (2,151 changed) |
+| rec26 (Mesa Blanca) | 2 / 2 (`7174 r3`, `7560 r1`) | 3 / 3 | 1,766 / 1,766 (1,136 changed) |
+| rec28 (Mesa Blanca) | 2 / 2 (`3398 r2`, `6361 r2`) | 0 / 0 | 1,236 / 1,236 (851 changed) |
+| rec29 (Mesa replay) | 2 / 2 (`3398 r2`, `6361 r2`) | 0 / 0 | 1,168 / 1,168 (830 changed) |
+| rec30 (Mesa + replay) | 0 / 0 | 11 / 11 | 3,190 / 3,190 (2,103 changed) |
+
+- All **29 / 29** stuck-bit reset pad words (`6/6` dispatch + `23/23` `0x13`/`0x14`) and all **11,306 / 11,306**
+  `0x13`/`0x14` stuck-counter updates match bit for bit.
+- `TRICKY_GMODE=0` breaks `+0x894` counters (`278` misses on rec25, `17` on rec26, `80` on rec28, `74` on rec29, `25`
+  on rec30) and dispatch pad words, while `mode != 0` gives 0 misses across all 5 recordings; verified `pine.py`'s new
+  `mode 2` header end-to-end on `rec31_mode.txt` (481 ticks, `course 3 mode 2`, 0 object-field misses). Row F4b3k2 done.
