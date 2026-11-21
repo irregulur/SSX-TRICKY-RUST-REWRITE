@@ -1,12 +1,13 @@
-//! Character and board models: the `.mpf` files of `DATA/CHAR/MDLPS2.BIG` and `BRDPS2.BIG` (board row E4a).
+//! Character and board models: the `.mpf` files of `DATA/CHAR/MDLPS2.BIG` and `BRDPS2.BIG` (board rows E4a, E4d).
 //!
 //! Proven from the game's loader (`MpfFile_Open` 0x208468, `MpfFile_AddPart` 0x208488, `SkinPart_Load`
-//! 0x205080, `SkinPart_ResolveTextureNames` 0x2055c0, `SkinPart_ResolveMaterials` 0x205670): the file header,
-//! the 0x50-byte part directory, and the tables of a part (texture sets, bones, materials, weight sets,
-//! weight palettes, mesh packet lists). Inferred from the data (see `port-notes/files.md`): the meshes are PS2
-//! DMA chains of VIF packets the game sends to the vector unit as they are, and their layout is read here
-//! from the packets themselves, because the vector unit's program is not decompiled. Checked against the
-//! models exported before (`chars/*/model.json`): same triangles, UVs, normals, weights and winding.
+//! 0x205080, `SkinPart_ResolveTextureNames` 0x2055c0, `SkinPart_ResolveMaterials` 0x205670), its skin and
+//! shadow renderers (`cPS2GraphicsMan::vf91_1df478` 0x1df478, `vf93_1dfe30` 0x1dfe30, `vf94_1dff88` 0x1dff88,
+//! `vf99_1dee80` 0x1dee80, `vf100_1df2d8` 0x1df2d8, `vf101_1df120` 0x1df120), and VU1 chain `0x318080`
+//! (programs 8 and 9, `BASE 0xbe`, `OFFSET 0x16a`, 941 instruction pairs): the file header, the 0x50-byte
+//! part directory, the part tables, the regular/face/shadow DMA+VIF packet layouts, the shadow position-only
+//! program (`0x004` -> `0x278`), and the face morph delta program (`0x002` -> `0x06b`). Checked against both
+//! the exported models (`chars/*/model.json`) and `SLUS_203.26`'s VU1 program (`tricky-game/tests/vu1mpf.rs`).
 
 use std::fmt;
 
@@ -129,39 +130,68 @@ pub struct MpfBone {
     pub rot: [f32; 3],
 }
 
-/// A vertex as the packets hold it.
+/// A vertex as the regular/face packets hold it (VU1 chain `0x318080`, `0x000` -> `0x096` / `0x00a` -> `0x163`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct MpfVertex {
     pub pos: [f32; 3],
-    /// 4.12 fixed point in the packet.
+    /// 4.12 fixed point in the packet (`itof12`).
     pub uv: [f32; 2],
-    /// s16 / 32767 in the packet.
+    /// Signed 16-bit / 32768 in the packet (`itof15`).
     pub nrm: [f32; 3],
     /// Index into the part's weight sets.
     pub weights: usize,
 }
 
-/// One material: its packet lists. Each list has its own weight palette and one or more records, each a
-/// packet chain drawn in turn (the face's 18 records are 18 pieces of it, every one a chain ending in
-/// `ret` and followed by data not read yet, likely its expressions).
+/// A shadow mesh vertex (material flags `0x10`, VU1 chain `0x318080`, `0x004` -> `0x278`, driven by
+/// `cPS2GraphicsMan::vf94_1dff88` 0x1dff88): position (cm) and weight-set index only, packed as one
+/// `V4-32` quadword `[pos.x, pos.y, pos.z, mat_addr]`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MpfShadowVertex {
+    pub pos: [f32; 3],
+    /// Index into the part's weight sets.
+    pub weights: usize,
+}
+
+/// Centimetres per signed 8-bit morph delta unit at `weight = 1.0`, `part_scale = 1.0`:
+/// `cPS2GraphicsMan::vf91_1df478` 0x1df478 uploads `(weight, part_scale * 2560.0)` to `VU1[0x3ff]`,
+/// and VU1 `0x002` -> `0x06b` runs `itof15` (`/ 32768.0`) on the `V3-8` (`0x6a`) delta before `maddx`.
+pub const MORPH_SCALE: f32 = 2560.0 / 32768.0;
+
+/// One material: its packet lists. Each list has its own weight palette and one or more 0xc-byte records:
+/// - regular (`flags == 1`): one record whose `+0` DMA chain runs `MSCAL 0x0`/`0xa` (+ `0x6` gloss, `0x8` GS setup);
+/// - shadow (`flags & 0x10 != 0`): one record whose `+0` DMA chain runs `MSCAL 0x4` (positions + weight addr only);
+/// - face (`flags & 0x100 != 0`): records whose `+0` base chain ends in `ret`, followed at `+0 + +4 + t * +8`
+///   by `MpfPart::morph_count` expression delta chains (`V3-8` `0x6a` at `0x80b6`, `MSCAL 0x2`).
 #[derive(Clone, Debug)]
 pub struct MpfMesh {
     /// Index into the part's texture sets.
     pub texture: usize,
     /// Material +0: 1, 0x100 for the face, 0x11 for the shadows.
     pub flags: u32,
-    /// Per list, per record, the record's triangle strips. Empty for a shadow (see `is_shadow`).
+    /// Per list, per record, the record's triangle strips. Empty for a shadow (see `shadow_lists`).
     pub lists: Vec<Vec<Vec<Vec<MpfVertex>>>>,
+    /// Per list, per record, the shadow mesh's triangle strips (positions + weights). Empty for non-shadows.
+    pub shadow_lists: Vec<Vec<Vec<Vec<MpfShadowVertex>>>>,
+    /// Per list, per record, per morph target (`0..MpfPart::morph_count`), one `[dx, dy, dz]` delta in cm
+    /// (at weight 1, scale 1) for each vertex in the record's strips in order. Empty for non-face meshes.
+    pub morphs: Vec<Vec<Vec<Vec<[f32; 3]>>>>,
 }
 
 impl MpfMesh {
-    /// A shadow mesh (flags 0x10): its packets are positions only, for another vector unit program; not
-    /// decoded yet (row E4d).
+    /// A shadow mesh (flags 0x10): positions and weight indices only (`shadow_lists`).
     pub fn is_shadow(&self) -> bool { self.flags & 0x10 != 0 }
 
-    /// The strips of every record.
+    /// A face mesh with morph targets (flags 0x100).
+    pub fn is_morph(&self) -> bool { self.flags & 0x100 != 0 }
+
+    /// The strips of every regular/face record.
     pub fn strips(&self) -> impl Iterator<Item = &Vec<MpfVertex>> {
         self.lists.iter().flatten().flatten()
+    }
+
+    /// The strips of every shadow record.
+    pub fn shadow_strips(&self) -> impl Iterator<Item = &Vec<MpfShadowVertex>> {
+        self.shadow_lists.iter().flatten().flatten()
     }
 
     /// `strips` as triangles, odd triangles turned round, the degenerate ones (two equal corners: the
@@ -179,6 +209,21 @@ impl MpfMesh {
         }
         out
     }
+
+    /// `shadow_strips` as triangles, same winding and degenerate culling as `triangles`.
+    pub fn shadow_triangles(&self) -> Vec<[&MpfShadowVertex; 3]> {
+        let mut out = Vec::new();
+        for s in self.shadow_strips() {
+            for t in 0..s.len().saturating_sub(2) {
+                let (a, b, c) = (&s[t], &s[t + 1], &s[t + 2]);
+                if a.pos == b.pos || b.pos == c.pos || a.pos == c.pos {
+                    continue;
+                }
+                out.push(if t % 2 == 0 { [a, b, c] } else { [b, a, c] });
+            }
+        }
+        out
+    }
 }
 
 /// A part with its tables (`SkinPart_Load` 0x205080) and decoded meshes.
@@ -186,6 +231,8 @@ impl MpfMesh {
 pub struct MpfPart {
     pub name: String,
     pub slot: i8,
+    /// Number of facial morph targets (`PartEntry+0x48`, proven from `cPS2GraphicsMan::vf91_1df478` 0x1df478).
+    pub morph_count: usize,
     pub textures: Vec<TexSet>,
     pub bones: Vec<MpfBone>,
     /// Weight sets: (bone, percent) pairs; entry+0x30 list of (count, pointer, ...) 0xc records.
@@ -199,6 +246,7 @@ impl MpfPart {
         let materials = e.u16(0x40) as usize;
         let bones_n = e.u16(0x42) as usize;
         let textures_n = e.u16(0x44) as usize;
+        let morph_count = e.u16(0x48) as usize;
         let weights_n = e.u16(0x3c) as usize;
         let palettes_n = e.u16(0x3e) as usize;
         let mut textures = Vec::with_capacity(textures_n);
@@ -233,7 +281,7 @@ impl MpfPart {
             palettes.push((0..n).map(|k| r.u32(p + k * 4).map(|v| v as usize)).collect::<Result<Vec<_>, _>>()?);
         }
         // materials (0x14): +4 texture set, +0xc count and +0x10 pointer of (pointer, count) pairs, each
-        // pointing at `count` 0xc-byte records whose first word is a packet chain
+        // pointing at `count` 0xc-byte records: +0 base chain offset, +4 morph-0 offset from +0, +8 morph stride
         let materials_at = e.u32(0x20) as usize;
         let mut meshes = Vec::with_capacity(materials);
         let mut chunk = 0;
@@ -242,42 +290,78 @@ impl MpfPart {
             let flags = r.u32(at)?;
             let texture = r.u32(at + 4)? as usize;
             let n_lists = r.u32(at + 0xc)? as usize;
+            let lists_at = r.u32(at + 0x10)? as usize;
             if flags & 0x10 != 0 {
-                // a shadow keeps its lists' palettes in the count
-                chunk += n_lists;
-                meshes.push(MpfMesh { texture, flags, lists: Vec::new() });
+                let mut shadow_lists = Vec::with_capacity(n_lists);
+                for l in 0..n_lists {
+                    let p = r.u32(lists_at + l * 8)? as usize;
+                    let n = r.u32(lists_at + l * 8 + 4)? as usize;
+                    let palette = palettes.get(chunk).ok_or_else(|| MpfError(format!("{}: no palette {chunk}", e.name)))?;
+                    let mut records = Vec::with_capacity(n);
+                    for k in 0..n {
+                        let start = r.u32(p + k * 0xc)? as usize;
+                        let mut strips = Vec::new();
+                        decode_shadow_chain(&r, start, palette, weights.len(), &mut strips)
+                            .map_err(|x| MpfError(format!("{}: {}", e.name, x.0)))?;
+                        records.push(strips);
+                    }
+                    shadow_lists.push(records);
+                    chunk += 1;
+                }
+                meshes.push(MpfMesh { texture, flags, lists: Vec::new(), shadow_lists, morphs: Vec::new() });
                 continue;
             }
-            let lists_at = r.u32(at + 0x10)? as usize;
             let mut lists = Vec::with_capacity(n_lists);
+            let mut morphs = if flags & 0x100 != 0 { Vec::with_capacity(n_lists) } else { Vec::new() };
             for l in 0..n_lists {
                 let p = r.u32(lists_at + l * 8)? as usize;
                 let n = r.u32(lists_at + l * 8 + 4)? as usize;
                 let palette = palettes.get(chunk).ok_or_else(|| MpfError(format!("{}: no palette {chunk}", e.name)))?;
                 let mut records = Vec::with_capacity(n);
+                let mut list_morphs = if flags & 0x100 != 0 { Vec::with_capacity(n) } else { Vec::new() };
                 for k in 0..n {
                     let start = r.u32(p + k * 0xc)? as usize;
                     let mut strips = Vec::new();
                     decode_chain(&r, start, palette, weights.len(), &mut strips).map_err(|x| MpfError(format!("{}: {}", e.name, x.0)))?;
+                    if flags & 0x100 != 0 {
+                        let morph_off = r.u32(p + k * 0xc + 4)? as usize;
+                        let morph_stride = r.u32(p + k * 0xc + 8)? as usize;
+                        let n_verts: usize = strips.iter().map(Vec::len).sum();
+                        let mut targets = Vec::with_capacity(morph_count);
+                        for t in 0..morph_count {
+                            let m_at = start + morph_off + t * morph_stride;
+                            let deltas = decode_morph_chain(&r, m_at, n_verts)
+                                .map_err(|x| MpfError(format!("{}: morph {t}: {}", e.name, x.0)))?;
+                            targets.push(deltas);
+                        }
+                        list_morphs.push(targets);
+                    }
                     records.push(strips);
                 }
                 lists.push(records);
+                if flags & 0x100 != 0 {
+                    morphs.push(list_morphs);
+                }
                 chunk += 1;
             }
-            meshes.push(MpfMesh { texture, flags, lists });
+            meshes.push(MpfMesh { texture, flags, lists, shadow_lists: Vec::new(), morphs });
         }
-        Ok(MpfPart { name: e.name.clone(), slot: e.slot(), textures, bones, weights, meshes })
+        Ok(MpfPart { name: e.name.clone(), slot: e.slot(), morph_count, textures, bones, weights, meshes })
     }
 }
 
-/// The vector unit address the weight palette starts at: a vertex's weight set is
-/// `palette[(uv.z - 14) / 4]` (inferred: every vertex of every shipped model fits it).
+/// The VU1 address where the weight-matrix palette starts (`0x0e`, proven from `cPS2GraphicsMan::vf100_1df2d8`
+/// 0x1df2d8, `vf99_1dee80` 0x1dee80, and VU1 chain `0x318080` `0x00e`): each 4x4 skin matrix occupies 4
+/// quadwords from `0x0e`, so a vertex's weight set is `palette[(addr - 14) / 4]` (and its 3-quadword normal
+/// matrix lives at `0x72 + slot * 3`).
 const PALETTE_BASE: i16 = 14;
 
-/// Walks a DMA chain (tags `cnt` until `end`/`ret`) of VIF packets. Each batch is four unpacks and a
-/// program start (`MSCAL`): a V4-32 header (a GS tag, then the strip count and one strip length per
-/// quadword), and per vertex, interleaved three quadwords apart (`STCYCL` 3/1): V4-16 UV (x, y in 4.12;
-/// z: the weight palette address), V3-16 normal (/32767), V3-32 position. Inferred from the data.
+/// Walks a regular or face DMA chain (tags `cnt` until `end`/`ret`) of VIF packets. Proven from VU1 chain
+/// `0x318080` (`0x000` -> `0x096` multi-bone, `0x00a` -> `0x163` single-bone, `0x006` -> `0x251` gloss pass):
+/// each batch is four unpacks and a program start (`MSCAL`; face records end with `ret` and `0x1df478` appends
+/// `MSCAL 0x96`): a V4-32 header (GS GIFTAG, strip count / single-bone addrs / vert count, strip lengths), and
+/// per vertex interleaved three quadwords apart (`STCYCL` 3/1): V4-16 UV (`itof12`, `z` = skin matrix addr,
+/// `w` = normal matrix addr), V3-16 normal (`itof15`: `/32768`), V3-32 position (cm).
 fn decode_chain(r: &R, mut at: usize, palette: &[usize], weight_sets: usize, strips: &mut Vec<Vec<MpfVertex>>) -> Result<(), MpfError> {
     let mut unpacks: Vec<(u32, &[u8])> = Vec::new();
     for _ in 0..100_000 {
@@ -357,7 +441,7 @@ fn batch(u: &[(u32, &[u8])], palette: &[usize], weight_sets: usize, strips: &mut
             strip.push(MpfVertex {
                 pos: [f(0), f(1), f(2)],
                 uv: [half(uv, v * 4) as f32 / 4096.0, half(uv, v * 4 + 1) as f32 / 4096.0],
-                nrm: [half(nrm, v * 3) as f32 / 32767.0, half(nrm, v * 3 + 1) as f32 / 32767.0, half(nrm, v * 3 + 2) as f32 / 32767.0],
+                nrm: [half(nrm, v * 3) as f32 / 32768.0, half(nrm, v * 3 + 1) as f32 / 32768.0, half(nrm, v * 3 + 2) as f32 / 32768.0],
                 weights,
             });
             v += 1;
@@ -365,6 +449,152 @@ fn batch(u: &[(u32, &[u8])], palette: &[usize], weight_sets: usize, strips: &mut
         strips.push(strip);
     }
     Ok(())
+}
+
+/// Walks a shadow mesh DMA chain (`flags & 0x10`, proven from `cPS2GraphicsMan::vf94_1dff88` 0x1dff88 and
+/// VU1 chain `0x318080` `0x004` -> `0x278`): each batch is two `V4-32` (`0xc`) unpacks and `MSCAL 0x4`:
+/// a header (GS GIFTAG `NREG=1 XYZ2 TRISTRIP`, strip count, one strip length per quadword) and one
+/// `[pos.x, pos.y, pos.z, mat_addr]` quadword per vertex (`slot = (mat_addr - 14) / 4`).
+fn decode_shadow_chain(
+    r: &R,
+    mut at: usize,
+    palette: &[usize],
+    weight_sets: usize,
+    strips: &mut Vec<Vec<MpfShadowVertex>>,
+) -> Result<(), MpfError> {
+    let mut unpacks: Vec<(u32, &[u8])> = Vec::new();
+    for _ in 0..100_000 {
+        let lo = r.u32(at)?;
+        let qwc = (lo & 0xffff) as usize;
+        let id = (lo >> 28) & 7;
+        let body = r.bytes(at + 8, 8 + qwc * 16)?;
+        let mut i = 0;
+        while i + 4 <= body.len() {
+            let w = u32::from_le_bytes(body[i..i + 4].try_into().unwrap());
+            i += 4;
+            let cmd = (w >> 24) & 0x7f;
+            let num = ((w >> 16) & 0xff) as usize;
+            match cmd {
+                0x60..=0x7f => {
+                    let comps = ((cmd >> 2) & 3) as usize + 1;
+                    let bits = [32, 16, 8, 5][(cmd & 3) as usize];
+                    let n = ((bits * comps * num + 31) / 32) * 4;
+                    let d = body.get(i..i + n).ok_or_else(|| MpfError("shadow unpack past the packet".into()))?;
+                    unpacks.push((cmd & 0x0f, d));
+                    i += n;
+                }
+                0x30 | 0x31 => i += 16,
+                0x20 => i += 4,
+                0x14 | 0x15 | 0x17 => {
+                    flush_shadow(&mut unpacks, palette, weight_sets, strips)?;
+                }
+                _ => {}
+            }
+        }
+        at += 16 + qwc * 16;
+        if id == 7 || id == 6 {
+            return flush_shadow(&mut unpacks, palette, weight_sets, strips);
+        }
+    }
+    err("shadow packet chain without an end")
+}
+
+fn flush_shadow(
+    unpacks: &mut Vec<(u32, &[u8])>,
+    palette: &[usize],
+    weight_sets: usize,
+    strips: &mut Vec<Vec<MpfShadowVertex>>,
+) -> Result<(), MpfError> {
+    if unpacks.len() % 2 != 0 {
+        return err(format!("{} shadow unpacks before a program start", unpacks.len()));
+    }
+    for b in unpacks.chunks(2) {
+        let (hdr, verts) = match b {
+            [(0xc, h), (0xc, v)] => (*h, *v),
+            _ => return err(format!("unexpected shadow batch layout {:?}", b.iter().map(|x| x.0).collect::<Vec<_>>())),
+        };
+        let word = |b: &[u8], i: usize| u32::from_le_bytes(b[i * 4..i * 4 + 4].try_into().unwrap());
+        let count = verts.len() / 16;
+        let n_strips = word(hdr, 4) as usize;
+        let mut v = 0;
+        for s in 0..n_strips {
+            let len = word(hdr, 8 + s * 4) as usize;
+            let mut strip = Vec::with_capacity(len);
+            for _ in 0..len {
+                if v >= count {
+                    return err("shadow strip longer than the batch");
+                }
+                let mat_addr = word(verts, v * 4 + 3) as i32;
+                let base = PALETTE_BASE as i32;
+                if mat_addr < base || (mat_addr - base) % 4 != 0 {
+                    return err(format!("shadow weight address {mat_addr}"));
+                }
+                let slot = ((mat_addr - base) / 4) as usize;
+                let weights = *palette.get(slot).ok_or_else(|| MpfError(format!("shadow weight slot {slot}")))?;
+                if weights >= weight_sets {
+                    return err(format!("shadow weight set {weights}"));
+                }
+                let f = |i: usize| f32::from_bits(word(verts, v * 4 + i));
+                strip.push(MpfShadowVertex { pos: [f(0), f(1), f(2)], weights });
+                v += 1;
+            }
+            strips.push(strip);
+        }
+    }
+    unpacks.clear();
+    Ok(())
+}
+
+/// Decodes one facial morph target DMA chain (`flags & 0x100`, proven from `cPS2GraphicsMan::vf91_1df478`
+/// 0x1df478 and VU1 chain `0x318080` `0x002` -> `0x06b`): `STCYCL 4/4`, `UNPACK V3-8` (`0x6a`, signed 8-bit)
+/// at `0x80b6` with `n_verts` deltas, `FLUSHE`, `MSCAL 0x2`. Returns `[dx, dy, dz]` in cm at weight 1, scale 1.
+fn decode_morph_chain(r: &R, mut at: usize, expected_verts: usize) -> Result<Vec<[f32; 3]>, MpfError> {
+    let mut out: Option<Vec<[f32; 3]>> = None;
+    for _ in 0..1024 {
+        let lo = r.u32(at)?;
+        let qwc = (lo & 0xffff) as usize;
+        let id = (lo >> 28) & 7;
+        let body = r.bytes(at + 8, 8 + qwc * 16)?;
+        let mut i = 0;
+        while i + 4 <= body.len() {
+            let w = u32::from_le_bytes(body[i..i + 4].try_into().unwrap());
+            i += 4;
+            let cmd = (w >> 24) & 0x7f;
+            let num = ((w >> 16) & 0xff) as usize;
+            match cmd {
+                0x60..=0x7f => {
+                    let comps = ((cmd >> 2) & 3) as usize + 1;
+                    let bits = [32, 16, 8, 5][(cmd & 3) as usize];
+                    let n = ((bits * comps * num + 31) / 32) * 4;
+                    let d = body.get(i..i + n).ok_or_else(|| MpfError("morph unpack past the packet".into()))?;
+                    if (cmd & 0x0f) != 0x0a {
+                        return err(format!("unexpected morph unpack format {:#x}", cmd & 0x0f));
+                    }
+                    if num != expected_verts {
+                        return err(format!("morph unpack count {num} != base {expected_verts}"));
+                    }
+                    let mut deltas = Vec::with_capacity(num);
+                    for v in 0..num {
+                        deltas.push([
+                            (d[v * 3] as i8) as f32 * MORPH_SCALE,
+                            (d[v * 3 + 1] as i8) as f32 * MORPH_SCALE,
+                            (d[v * 3 + 2] as i8) as f32 * MORPH_SCALE,
+                        ]);
+                    }
+                    out = Some(deltas);
+                    i += n;
+                }
+                0x30 | 0x31 => i += 16,
+                0x20 => i += 4,
+                _ => {}
+            }
+        }
+        at += 16 + qwc * 16;
+        if id == 7 || id == 6 {
+            return out.ok_or_else(|| MpfError("morph chain had no V3-8 unpack".into()));
+        }
+    }
+    err("morph packet chain without an end")
 }
 
 /// The part names the game builds a rider from (`BdrLoad_BuildSkin` 0x201138), read out of the exe:

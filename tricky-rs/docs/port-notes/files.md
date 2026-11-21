@@ -142,35 +142,60 @@ Proven (ported in `tricky-data/src/compress.rs`):
 
 Checked: all 793 entries of the character archives unpack to the same bytes as `tools/afl/refpack.py`.
 
-## Character and board models, `.mpf` (row E4a)
+## Character and board models, `.mpf` (rows E4a, E4d)
 
-Proven (loader, see also `notes/characters.md`): file header (+4 part count, +6 directory, +8 data), the
-0x50-byte part entries, `MpfFile_AddPart`'s name match (`strnicmp` 0x2fd398 on 15 characters), and the part
-tables `SkinPart_Load` 0x205080 fixes up:
-- texture sets at the data's start, 0x20 each (count +0x44): five 4-character names, gloss strength at +0x14;
-- bones at +0x18, 0x54 each (count +0x42): name, +0x10 parent slot, +0x12 parent index, +0x18 position, +0x24
-  rotation (Euler, inverse); a bone is named `slot << 8 | index`, the slot being a part's +0x4a (body 0,
-  eyes 5, goggles 6, hair 7 or 8);
-- weight sets at +0x30, 0xc each (count +0x3c): (count, pointer) of u32 `bone << 16 | percent`;
-- weight palettes at +0x2c, 8 each (count +0x3e): (count, pointer) of weight-set numbers, one per packet list;
-- materials at +0x20, 0x14 each (count +0x40): +0 flags (1; 0x100 face; 0x11 shadow), +4 texture set, +0xc /
-  +0x10 its packet lists: (pointer, count) of 0xc-byte records whose first word starts a DMA chain.
+Proven (loader, renderers, and VU1 chain `0x318080`; see also `notes/characters.md`, verified by
+`tricky-game/tests/vu1mpf.rs` on `SLUS_203.26` + `TRICKY_DISC`):
+- File header (+4 part count, +6 directory, +8 data), 0x50-byte part entries (`+0x48` morph target count: 23 on
+  all face parts, 0 elsewhere), `MpfFile_AddPart`'s name match (`strnicmp` 0x2fd398 on 15 characters), and the
+  part tables `SkinPart_Load` 0x205080 fixes up:
+  - texture sets at the data's start, 0x20 each (count +0x44): five 4-character names, gloss strength at +0x14;
+  - bones at +0x18, 0x54 each (count +0x42): name, +0x10 parent slot, +0x12 parent index, +0x18 position, +0x24
+    rotation (Euler, inverse); a bone is named `slot << 8 | index`, the slot being a part's +0x4a (body 0,
+    eyes 5, goggles 6, hair 7 or 8);
+  - weight sets at +0x30, 0xc each (count +0x3c): (count, pointer) of u32 `bone << 16 | percent`;
+  - weight palettes at +0x2c, 8 each (count +0x3e): (count, pointer) of weight-set numbers, one per packet list;
+  - materials at +0x20, 0x14 each (count +0x40): +0 flags (`0x1` regular, `0x100` face morph, `0x11` shadow),
+    +4 texture set, +0xc / +0x10 its packet lists: (pointer, count) of 0xc-byte records where `+0` is the base
+    DMA chain offset, `+4` is the first morph chain's offset from `+0` (fixed up in `SkinPart_Load` as
+    `part_data + rec[0] + rec[1]`), and `+8` is the byte stride between morph targets (`0xffffffff` on non-face
+    records).
 - The names of the parts a rider is built from (`BdrLoad_BuildSkin` 0x201138): tables 0x341318 (body, three
   per level of detail), 0x341588 (head, five) and 0x341998 (board), copied into `mpf::names`.
+- **VU1 chain `0x318080`** (programs 8 and 9, `BASE 0xbe`, `OFFSET 0x16a`, 941 instruction pairs, uploaded by
+  `PS2Draw_WriteTexState` 0x1c5c88):
+  - `0x00c` -> `0x00e`: matrix palette pre-transform (`cPS2GraphicsMan::vf100_1df2d8` 0x1df2d8 / `vf99_1dee80`
+    0x1dee80 unpack `n` 4×4 skin matrices at `0x0e` = `PALETTE_BASE = 14` and `n` at `0x3ff`): multiplies each
+    by MVP (`VU1[0..3]`) in place at `0x0e + slot*4`, light-direction matrix (`VU1[7..9]`) into `0x72 + slot*3`,
+    and envmap matrix (`VU1[0x393..0x395]`) into `0x396 + slot*3`.
+  - `0x000` -> `0x096` (multi-bone, 1,373 batches) and `0x00a` -> `0x163` (single-bone, 289 batches): regular
+    skinned mesh draw (`cPS2GraphicsMan::vf91_1df478` 0x1df478). Four unpacks per batch: `V4-32` header (GS
+    GIFTAG `NREG=3 ST/RGBAQ/XYZ2 TRISTRIP`, `[n_strips, single_mat, single_nrm, n_verts]`, strip lengths),
+    and interleaved at `STCYCL 3/1`: `V4-16` UV (`itof12` `/4096`, `z` = `0x0e + slot*4`, `w` = `0x72 + slot*3`),
+    `V3-16` normal (`itof15` `/32768`), `V3-32` position (cm). Sets `ADC = 0xffff` on vertices 0 and 1 of each
+    strip, and `fcand 0x3ffff` from vertex 2 onward. Followed by `MSCAL 0x6` (`0x251`, gloss/envmap pass) and
+    optional `MSCAL 0x8` (`0x160`, `XGKICK 0x392`).
+  - `0x004` -> `0x278`: **shadow mesh** draw (`flags & 0x10`, program 9, `cPS2GraphicsMan::vf93_1dfe30` 0x1dfe30 +
+    `vf94_1dff88` 0x1dff88, 109 batches / 14,768 verts across all 39 unique shadow materials). Two `V4-32`
+    unpacks and `MSCAL 0x4`: header (GS GIFTAG `NREG=1 XYZ2 TRISTRIP`, strip count, strip lengths) and one
+    `[pos.x, pos.y, pos.z, mat_addr]` quadword per vertex (`slot = (mat_addr - 14) / 4`), decoded into
+    `MpfMesh::shadow_lists`.
+  - `0x002` -> `0x06b`: **face morph** expression blender (`flags & 0x100`, `cPS2GraphicsMan::vf91_1df478` 0x1df478,
+    252 records × 23 targets = 5,796 morph chains across all 16 face materials). Base record chains end in `ret`
+    (no `MSCAL`); each target chain at `rec[0] + rec[1] + t * rec[2]` unpacks `V3-8` (`0x6a`, signed 8-bit) at
+    `0x80b6` and runs `MSCAL 0x2`. `0x1df478` uploads `(weight, part_scale * 2560.0)` to `VU1[0x3ff]` (`w[0]`
+    unconditionally, `w[1..22]` when `> 0.01`) and VU1 adds `itof15(delta_i8) * weight * part_scale * 2560.0`
+    (`0.078125` cm per unit at weight 1, scale 1) directly onto the unpacked base positions before `MSCAL 0x96`,
+    decoded into `MpfMesh::morphs`.
 
-Inferred from the data (the vector unit programs are not decompiled; `tricky-data/src/mpf.rs`):
-- A packet chain is `cnt` DMA tags of VIF codes, ending with `end` or `ret`. A batch is four unpacks then a
-  program start (`MSCAL`; a `ret` record has none): a V4-32 header (a GS tag: triangle strip, ST/RGBAQ/XYZ2;
-  then the strip count and one strip length per quadword), and per vertex, three quadwords apart: V4-16 UV
-  (4.12 fixed; z is the vector unit address of the vertex's weight palette entry: `(z - 14) / 4`), V3-16
-  normal (/32767) and V3-32 position (cm).
-- A list with several records draws all of them (the face: 18 pieces, each followed by more data, likely its
-  expressions, not read). Shadow meshes (flags 0x10) are positions only for another program: not decoded
-  (row E4d).
-
-Checked: for the 12 riders exported before and the six board shapes, the models built from the disc
-(`CharModel::rider_from_disc`, `board_from_disc`) equal the exports: bones, parents, bind positions, and every
-vertex's position, UV, normal and weights.
+Checked:
+- For all 12 exported riders and 6 board shapes, `CharModel::rider_from_disc` / `board_from_disc` equal the
+  exports (`character::tests::disc_models_match_the_exports`).
+- Every `.mpf` file on the disc (`MDLPS2.BIG`, `BRDPS2.BIG`) decodes cleanly including all shadow meshes and
+  5,796 face morph targets (`mpf::tests::every_model_decodes`, `vu1mpf::audit_all_mpf_chains_on_disc`).
+- Real regular (multi-bone `0x000` and single-bone `0x00a`), shadow (`0x004`), and morphed face (`0x002` +
+  `0x096`) chains run through `SLUS_203.26`'s VU1 chain `0x318080` match `tricky_data::mpf` vertex-for-vertex
+  (`tricky-game/tests/vu1mpf.rs`).
 
 ## Textures, `.ssh` (row E3b)
 
