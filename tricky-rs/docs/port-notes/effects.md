@@ -66,6 +66,24 @@ player's strip state and both passes' counts every frame.
   `cBoarderRender::vf7` 0x1356f8): moves a group slot's particles and spawns new ones along the segment from the last
   point, five `Rand_Fx` draws each. Not yet read: 0x1d5b60 (10.5 KB, vector maths only, called once by
   `ParticleSys_Create` on system+0x150).
+- `cParticleMan` (`tricky-rs/game/src/particleman.rs`, E1b2g3a, checked word for word in `tests/particleman.rs`):
+  12 trail slots (`0xf0` bytes each from `+0x10`; `+0xc` active count) sharing a pool of 250 (`0xfa`) particles of
+  `0x80` bytes (`+0xb50` base, `+0xb54` free count, `+0xb58` free head, `+0xb5c` used count; 32,000 bytes allocated
+  by `ParticleMan_Init` 0x1d8e30 and filled with `0xdeadc0ed`). `ParticleGroup_Add` 0x1d9060 claims the first free
+  slot and copies `0xe0` bytes of config (`slot+0x10`); `ParticleGroup_Get` 0x1d9108 returns `slot+0x10` when
+  `slot < 13` (original bound `0xd`) and in use; `ParticleGroup_Remove` 0x1d9138 returns live particles to the pool
+  via `PoolList_Push` 0x1d9018 and clears the slot. `ParticleGroup_UpdateTrail` 0x1d9208 (called by
+  `cBoarderRender::vf7` 0x1356f8): shifts `+0xb0 → +0xc0`, stores `pos` with `w = 1`, sets emitter velocity `+0xd0`
+  to `vel + 0.14930607 * ((pos - prev_pos) - vel)` (`w = 1`, `Vec4_Scale` 0x102f50); walks the slot's doubly-linked
+  list, retiring `life == 0` nodes (`PoolList_Push`) and stepping living ones (`colour += colour_step`, `prev_pos = pos`,
+  `size += size_step`, `vel *= drag (+0x80)`, `pos += vel + gravity (+0x90)` with `w = 1`, `life -= 1`); draws once
+  from `Rand_Fx` (`u ∈ [-1, 1)`) for `rate + rate_var * u + accum`, truncates to `n` and stores fractional remainder
+  in `accum (+0x18)`; spawns `n` particles, taking 5 `Rand_Fx` draws each (life, start/end size, start/end colour)
+  **before** calling `PoolList_Pop` 0x1d8fd8 (returning 1 immediately if the pool is empty), computing `1 / life`
+  (`div.s`) for colour/size step and prepending to the slot head. `cParticleMan::vf2` 0x1d9900 sets blend 3 /
+  depth-bias 0.08 and calls `ParticleMan_DrawSlot` 0x1d9700 per active slot (emitter glow sprite on texture 0x1c,
+  size `18.871937`, uv `0..0.5`, alpha `glow_alpha * 1.6129689 + 0.37703115`, rgb `0.9979741, 0.998004, 0.9905221`,
+  then each particle on `slot+0xa0`, uv `0..1`). `cParticleMan::~cParticleMan` 0x1d8f50 frees `+0xb50` if non-null.
 - Surface table words used by the effects (proven, E13; values in `tricky-rs/game/src/surface.rs`): ground spray
   (`Fx_SurfaceSpray` 0x1311b0, ground motion, not surfaces 9, 13, 18, 19, which spark) takes [13] rate, [14] size
   × 0.8–1.2, [15] [16] lives, [17] sprite index (gApp+0x30), [18] pull of the light colour (rider+0x5ae0 +0x470)

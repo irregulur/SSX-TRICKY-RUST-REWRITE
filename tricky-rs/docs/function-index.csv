@@ -2984,17 +2984,17 @@ address,size,name,system,status
 0x1d8d48,56,ParticleNode_SaveState,render,checked
 0x1d8d80,64,ParticleSys_ReadReplay,render,checked
 0x1d8dc0,44,Vec4_ScaleCopy25,common,not started
-0x1d8e30,288,ParticleMan_Init,render,ported
-0x1d8f50,132,cParticleMan::~cParticleMan,render,not started
-0x1d8fd8,64,PoolList_Pop,world,not started
-0x1d9018,68,PoolList_Push,world,not started
-0x1d9060,168,ParticleGroup_Add,render,not started
-0x1d9108,48,ParticleGroup_Get,render,not started
-0x1d9138,208,ParticleGroup_Remove,render,not started
-0x1d9208,1272,ParticleGroup_UpdateTrail,render,ported
-0x1d9700,504,ParticleMan_DrawSlot,render,not started
+0x1d8e30,288,ParticleMan_Init,render,checked
+0x1d8f50,132,cParticleMan::~cParticleMan,render,checked
+0x1d8fd8,64,PoolList_Pop,world,checked
+0x1d9018,68,PoolList_Push,world,checked
+0x1d9060,168,ParticleGroup_Add,render,checked
+0x1d9108,48,ParticleGroup_Get,render,checked
+0x1d9138,208,ParticleGroup_Remove,render,checked
+0x1d9208,1272,ParticleGroup_UpdateTrail,render,checked
+0x1d9700,504,ParticleMan_DrawSlot,render,checked
 0x1d98f8,8,cParticleMan::vf1_1d98f8,render,not started
-0x1d9900,356,cParticleMan::vf2_1d9900,render,not started
+0x1d9900,356,cParticleMan::vf2_1d9900,render,checked
 0x1d9a68,124,StaticInit_ParticleMan,render,not started
 0x1d9ae8,80,cParticleMan::__tf,runtime,host
 0x1d9b38,44,Vec4_ScaleCopy19,common,not started

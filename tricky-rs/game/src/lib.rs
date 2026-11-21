@@ -186,6 +186,7 @@ pub mod boardtrack;
 pub mod puff;
 pub mod brakefx;
 pub mod boardtrail;
+pub mod particleman;
 pub mod campath;
 pub mod camscript;
 pub mod camera_ctl;
