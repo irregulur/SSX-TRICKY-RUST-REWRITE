@@ -2366,7 +2366,27 @@ position and velocity to the bit in the runner, and the game's position in ours 
 450 and 747: IEEE adds), and the runner's four stumbles (12579, 13221 r3, 14166, 14835) are down to 13221
 r3. Left (row F4b3k1a): 13221 r3 (no roller in its list; rider 2 stumbles in ours where the game's rider 3 does: a
 rider hit), and rec22's five stumbles, which need the mesa attract replay recorded again with `L700:78 rollers`. The
-3 → 6 misses at 165xx–167xx are the race's end, which the test does not replay.
+3 → 6 misses at 165xx–167xx are the race's end, which the test does not replay. (13221: F4b3k1a below.)
+
+## F4b3k1a: a boost let go before a rider hit (rec28 13221, 2026-11-21)
+
+rec28 13221: riders 3 and 2 overlap at the frame's start (gap −1.15 cm); 3 runs first. The game's 3 stumbles and
+ends with velocity (−280.99347, 1229.0239, −629.6676); ours and the runner's stumbled 2 instead, as 3's speed stat
+was the boosted one (1,881.8 against 209.1), so the pair's push (`pair_speeds`) went mostly to 2 (313 cm/s, over
+`Boarder_RiderHit`'s 167.31738). `boost_at_collisions` took the first sample's boost level whenever the second's is
+0 after a 3 → 2 stumble (F4b3r: a stumble in its own collisions zeroes the level after the hit). Here the boost
+button was up in the tick's pad word (pad bit 3, `Boarder_UpdateBoost`'s first button; window `hookpad`): the
+cruise control had zeroed the level before the collisions. With the unboosted stat the hit gives the game's
+velocity to the bit and 2's speed is 160.6 (no stumble). The test now takes the level as 0 when the hooked pad word
+has the button up (TRICKY_NOHOOK: as before).
+
+| | every field (runner) | pos (ours / runner) | vel (ours / runner) | state (ours / runner) |
+|---|---|---|---|---|
+| rec23 | 142,145 → 142,148 | 142,916 (=) | 136,870 → 136,873 / 142,574 → 142,577 | 142,986 → 142,989 |
+| rec28 | 74,343 → 74,345 | 74,543 → 74,544 / 74,544 → 74,545 | 70,841 → 70,843 / 74,411 → 74,413 | 74,542 → 74,544 |
+| rec29 | 68,996 → 68,998 | 69,050 → 69,051 / 69,051 → 69,052 | 65,718 → 65,720 / 69,017 → 69,019 | 69,051 → 69,053 |
+
+rec19, rec22 and rec26 unchanged.
 
 ## F4b3d2: the half-pipe turn in the spin replay (2026-11-20, notes)
 

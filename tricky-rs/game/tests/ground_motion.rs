@@ -1656,6 +1656,9 @@ struct Frame {
     stumbled: Vec<bool>,
     /// per rider: `Boarder_GetSpeedStat` with the boost level 0
     stat0: Vec<f32>,
+    /// per rider: the boost button (pad bit 3) in the tick's pad word, where the recorder hooked it (F4b3k1a,
+    /// [`boost_at_collisions`])
+    boost_held: Vec<Option<bool>>,
     /// per rider: the type of its layer-1 clip (`AnimCtl_GetClipType`(rider+0x46c0, 1): the second sample's clip,
     /// window `46c0`) and whether it is between the clip's flags 1 and 2 (F4b3s, the shove)
     clip1: Vec<u32>,
@@ -1874,6 +1877,7 @@ impl Frame {
             state: a.iter().map(|r| u32_le(r, 0x428)).collect(),
             stumbled: vec![false; n],
             stat0: (0..n).map(|i| speed_stat(&stats[i], 0.0, add)).collect(),
+            boost_held: vec![None; n],
             clip1,
             shoving,
             pushes: vec![0; n],
@@ -1960,13 +1964,14 @@ fn speed_stat(st: &[u8], boost: f32, add: Add) -> f32 {
 /// `CruiseControl_Exit` 0x1033c0 → `Boarder_UpdateBoost`(rider, 0, 0), which zeroes it, so the sample holds 0 but the
 /// hit was taken at the boosted speed stat. TRICKY_BOOST=end: the second sample's always, and no stumble tracking
 /// ([`Frame`]'s `stumbled`).
-/// STANDIN: the first sample's level, for the button (computer riders' pad word is not recorded, F4b3k) held as the
-/// tick before and the meter in the same band.
-fn boost_at_collisions(a: &[u8], b: &[u8]) -> f32 {
+/// With the tick's pad word (`held`, window `hookpad`, F4b3k1a: rec28 13221 r3) a button let go is 0: the control
+/// zeroed the level before the collisions (`Boarder_UpdateBoost`'s first button is pad bit 3).
+/// STANDIN: else the first sample's level, for the button held as the tick before and the meter in the same band.
+fn boost_at_collisions(a: &[u8], b: &[u8], held: Option<bool>) -> f32 {
     let (sa, sb) = (u32_le(a, 0x428), u32_le(b, 0x428));
     let (ba, bb) = (f32_at(a, 0x130), f32_at(b, 0x130));
     let left = matches!(sa, 3 | 0xe) && sb == 2;
-    if bb == 0.0 && ba > 0.0 && left && std::env::var("TRICKY_BOOST").map_or(true, |v| v != "end") {
+    if bb == 0.0 && ba > 0.0 && left && held != Some(false) && std::env::var("TRICKY_BOOST").map_or(true, |v| v != "end") {
         ba
     } else {
         bb
@@ -2395,7 +2400,7 @@ impl FrameRun {
             riders[o].motion = u32_le(b, 0x424);
             f.hit[o] = hit_rider(b);
         }
-        f.stat[o] = if f.stumbled[o] { f.stat0[o] } else { speed_stat(&stats[o], boost_at_collisions(a, b), f.add) };
+        f.stat[o] = if f.stumbled[o] { f.stat0[o] } else { speed_stat(&stats[o], boost_at_collisions(a, b, f.boost_held[o]), f.add) };
         rider_collisions(o, &self.lists[o], riders, self.tick, false, f);
     }
 }
@@ -2877,6 +2882,9 @@ fn ground_ticks_against_the_running_game() {
         while step < 1 + runners.len() {
             let k = step;
             let mut f = Frame::new((wi > 0 && ticks[wi - 1].tick + 1 == w[0].tick).then(|| &ticks[wi - 1].riders[..]), &w[0].riders, &w[1].riders, &stats, &twins, w[0].tick, if k == 0 { adder("") } else { adder(runners[k - 1].0) }, Some((&w[1].extra[ka].1[..], &table[..])), &flags);
+            if std::env::var("TRICKY_NOHOOK").is_err() {
+                f.boost_held = (0..n).map(|i| hook_pad(&w[1], i).map(|p| p & 8 != 0)).collect();
+            }
             stale_bodies += if k > 0 { 0 } else { f.stale.iter().filter(|x| **x).count() };
             if k == 0 {
                 frame_stale = f.stale.clone();
@@ -3085,7 +3093,7 @@ fn ground_ticks_against_the_running_game() {
                     f.hit[me] = HitRider { vel: riders[me].vel, ..hit_rider(b) };
                     snap[me] = Some((riders[me].pos, riders[me].vel));
                 }
-                f.stat[me] = if f.stumbled[me] { f.stat0[me] } else { speed_stat(&stats[me], boost_at_collisions(a, b), f.add) };
+                f.stat[me] = if f.stumbled[me] { f.stat0[me] } else { speed_stat(&stats[me], boost_at_collisions(a, b, f.boost_held[me]), f.add) };
                 if pushes {
                     // the pair list as recorded (`L700`), from the frame's start (`Boarder_UpdateBroadphase` 0x126748
                     // in the last frame's `cPostAI::vf1`) or (TRICKY_LIST=b) its end; else every other rider in slot
