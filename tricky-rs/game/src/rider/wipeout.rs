@@ -462,6 +462,13 @@ impl WallEnv for Walls<'_> {
         let record = crate::knockables::record_context(rec.pos, rec.normal, self.s.tree);
         course.knock.lock().unwrap_or_else(|e| e.into_inner()).contact(course, object, rider, c, record);
     }
+    /// The object's flags and controller as the contact left them (`knockables::reread`).
+    fn reread(&mut self, o: &Touched) -> Touched {
+        match &self.world.course {
+            Some(course) => crate::knockables::reread(course, o),
+            None => *o,
+        }
+    }
     /// `Sfx_InstanceCollision` 0x216c50: the object and the rider's speed, for the app's sound.
     fn sfx_object(&mut self, r: &WallRider, object: u32) {
         if let Some(c) = &self.world.course {

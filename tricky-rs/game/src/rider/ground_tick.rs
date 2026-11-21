@@ -1129,6 +1129,10 @@ impl crate::walls::WallEnv for WallGlue<'_> {
         let mut k = self.course.knock.lock().unwrap_or_else(|e| e.into_inner());
         k.contact(self.course, object, rider, c, record);
     }
+    /// The object's flags and controller as the contact left them (`knockables::reread`).
+    fn reread(&mut self, o: &crate::walls::Touched) -> crate::walls::Touched {
+        crate::knockables::reread(self.course, o)
+    }
     /// `Sfx_InstanceCollision` 0x216c50: the object and the rider's speed, for the app's sound.
     fn sfx_object(&mut self, r: &crate::walls::WallRider, object: u32) {
         let speed = dot(r.vel, r.vel).sqrt();

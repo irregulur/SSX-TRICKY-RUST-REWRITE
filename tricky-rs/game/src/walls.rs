@@ -76,6 +76,10 @@ pub trait WallEnv {
     fn knock(&mut self, r: &mut WallRider, amount: f32);
     /// `Instance_OnPlayerContact` 0x13bd40(object, rider, contact, record)
     fn contact(&mut self, object: u32, r: &mut WallRider, c: &Contact, rec: &CastRecord);
+    /// The object as the contact left it: `Boarder_InstanceCollisions` reads its flags (+0xe8) again after
+    /// `Instance_OnPlayerContact`, and `Boarder_InstanceBounce` its controller (+0xe4), which a first contact's
+    /// event-1 script may just have made (a `cRollerNode`: its +0x54 answers 0, so the knock is shared by the masses)
+    fn reread(&mut self, o: &Touched) -> Touched;
     /// `Sfx_InstanceCollision` 0x216c50 (with the object) and `Sfx_OnWallHit` 0x2162f0
     fn sfx_object(&mut self, r: &WallRider, object: u32);
     fn sfx_wall(&mut self, r: &WallRider);
@@ -215,8 +219,8 @@ pub fn instance_bounce(r: &mut WallRider, t: f32, o: &Touched, c: &Contact, rec:
 
 /// `Boarder_InstanceCollisions` 0x125088 up to its rollers' loop (`roller::rider_kick`, row E8c2): the rider's shape against the touch
 /// objects; on a hit (t ≥ 0) the normal is turned off the ground in mode 2, the contact record made (point,
-/// direction of travel, normal, speed into it), the object's contact scripts run, a bouncy one (flag 0x80)
-/// bounces the rider, and its collision sound plays.
+/// direction of travel, normal, speed into it), the object's contact scripts run, a bouncy one (flag 0x80, read
+/// after the contact) bounces the rider, and its collision sound plays.
 pub fn instance_collisions(r: &mut WallRider, env: &mut impl WallEnv) {
     let (t, mut rec, o) = env.query_objects(r);
     if !(0.0 <= t) {
@@ -229,6 +233,7 @@ pub fn instance_collisions(r: &mut WallRider, env: &mut impl WallEnv) {
     let vin = dot(scale(rec.normal, -1.0), r.vel);
     let c = Contact { pos: rec.pos, dir: unit(r.vel), normal: rec.normal, speed_in: vin };
     env.contact(o.id, r, &c, &rec);
+    let o = env.reread(&o);
     if o.flags & 0x80 != 0 {
         instance_bounce(r, t, &o, &c, &rec, env);
     }

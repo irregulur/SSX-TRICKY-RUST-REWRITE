@@ -2321,6 +2321,53 @@ Found (TRICKY_DBG2=ours, with and without TRICKY_NOROLL=1):
   what this first contact does to the rider and to 0x80 that the replay's static bounce does not.
 - 13221 r3 has no roller in its list (a rider or something else).
 
+## F4b3k1: the first contact and the runner's rollers' loop (2026-11-21, done)
+
+Proven (code): `Boarder_InstanceCollisions` 0x125088 tests flag 0x80 *after* `Instance_OnPlayerContact` 0x13bd40,
+and `Boarder_InstanceBounce` 0x125a00 reads the controller (+0xe4) then. A first contact runs the object's event-1
+script, which makes the object a `cRollerNode` (`cRollerNode::cRollerNode` 0x13d6c0: flags `& ~0x22 | 0x45`, 0x80
+kept, the node at +0xe4). The bounce then asks the node's vf +0x54 (0x17dda0, `cCounterNode::vf9`: node +0x14 ≠ 0),
+which is 0 for a roller, so it takes the moving object's way: no push out, s = √max(a² − (1 − b)·k, 0) − a ≈ −0.4/v_in,
+then the impact check at that s, which stumbles the rider when up · n < 0. The port read the flags and the controller
+before the contact (`walls::instance_collisions`), so ours bounced off the new roller as a fixed object: that was
+14166 r0 and every other first contact. Now `WallEnv::reread` (`knockables::reread`) answers them after the contact.
+
+Inferred: the new roller is not paired with the rider in the same call. Its box comes from the tree as copied, in the
+model's frame (`World_RayCastInstance` moves the shape into the object's frame, not the tree), so
+`Broadphase_FitBox` 0x14fa70 meets nothing near the rider. With the tree boxes of ours' spawns (near the origin) and
+rec28's first contacts right without a kick, this holds on rec28.
+
+The test (`tests/ground_motion.rs`):
+- ours: the contact runs on the course's `Knockables` (`contact_ours`: the event-1 script; the roller kept for the
+  race, the flags its spawn sets put back, as the recording brings the game's from the next sample;
+  TRICKY_NOCONTACT=1: not run). The flags had to be put back: the replay runs a frame more than once, and a spawn's
+  flags left in the course made the later runs miss the object.
+- the runner: `Instance_OnPlayerContact`'s stub runs the same and puts a roller node at the object's +0xe4
+  (vtable 0x36d790, +0x14 0), `Boarder_InstanceBounce`, 0x17dda0 and `Boarder_GetSpeedStat` 0x11d7b0 (the stats
+  block's +0x12 and +0x1e now written) as the original. The rollers' loop runs as the original on the recorded
+  rollers (`W::put_rollers`: a `cRollerNode` per roller, its proxy +0x2c0 → +0x84 the node, the pair entries at
+  rider+0x700 in the recorded order; `Obj_HasId`, vf +0x5c, `RigidBody_AddImpulse`, `Roller_OnHit` the original;
+  `Collide_BoarderSphTree` 0x2394a8 by its port, `SphereTree::body`, checked in tests/sphtree.rs).
+- ours' speed stat is now set for every rider (before, only with a `rollers` window; a moving object's bounce reads it).
+
+`ground_ticks_against_the_running_game`, before → after (ours | the runner under `fadd=g1`):
+
+| | every field (runner) | pos (ours / runner) | vel (ours / runner) | state (ours / runner) |
+|---|---|---|---|---|
+| rec19 | 55,898 (=) | 56,013 / 56,080 (=) | 52,869 / 56,073 (=) | 56,019 / 56,019 (=) |
+| rec22 | 159,395 (=) | 159,656 / 159,656 (=) | 151,501 / 159,590 (=) | 159,671 / 159,671 (=) |
+| rec23 | 142,145 (=) | 142,916 / 142,916 (=) | 136,870 / 142,574 (=) | 142,986 / 142,986 (=) |
+| rec26 | 62,700 → 62,701 | 62,819 → 62,820 / 62,828 → 62,829 | 59,484 / 62,752 → 62,753 | 62,826 (=) |
+| rec28 | 74,329 → 74,343 | 74,530 → 74,543 / 74,531 → 74,544 | 70,831 → 70,841 / 74,399 → 74,411 | 74,541 → 74,542 / 74,539 → 74,542 |
+| rec29 | 68,984 → 68,996 | 69,039 → 69,050 / 69,040 → 69,051 | 65,709 → 65,718 / 69,007 → 69,017 | 69,050 → 69,051 / 69,048 → 69,051 |
+
+On rec28 the first contacts (450, 535, 717, 731, 747 r0, 6125, 6135 r4, 12574, 12575, 14166 r0) now have the game's
+position and velocity to the bit in the runner, and the game's position in ours (ours' velocity an ulp or so off at
+450 and 747: IEEE adds), and the runner's four stumbles (12579, 13221 r3, 14166, 14835) are down to 13221
+r3. Left (row F4b3k1a): 13221 r3 (no roller in its list; rider 2 stumbles in ours where the game's rider 3 does: a
+rider hit), and rec22's five stumbles, which need the mesa attract replay recorded again with `L700:78 rollers`. The
+3 → 6 misses at 165xx–167xx are the race's end, which the test does not replay.
+
 ## F4b3d2: the half-pipe turn in the spin replay (2026-11-20, notes)
 
 Proven (`SpinState_Update` 0x100908, mode 2, stick settled, st+0x5c 0): the half-pipe turn reads the frame's nose

@@ -347,6 +347,17 @@ impl Knockables {
     }
 }
 
+/// A touched object as `Instance_OnPlayerContact` 0x13bd40 left it, which `Boarder_InstanceCollisions` 0x125088 reads
+/// again: its flags (+0xe8, the course's) and its controller (+0xe4): a roller's (made by the contact's event-1
+/// script, or there before) answers its vf +0x54 (0x17dda0: node +0x14 ≠ 0) with 0, so `Boarder_InstanceBounce`
+/// 0x125a00 shares the knock by the masses. STANDIN: the course's other controllers are not kept (row E7b2): the
+/// controller the query gave.
+pub fn reread(course: &CourseGround, o: &crate::walls::Touched) -> crate::walls::Touched {
+    let rolling = course.knock.lock().unwrap_or_else(|e| e.into_inner()).rollers.iter().any(|r| r.object == o.id);
+    let controller = if rolling { Some(false) } else { o.controller };
+    crate::walls::Touched { flags: course.object_flags(o.id as usize), controller, ..*o }
+}
+
 /// Two boxes (min, max) meet.
 pub fn overlap(alo: V4, ahi: V4, blo: V4, bhi: V4) -> bool {
     (0..3).all(|k| alo[k] <= bhi[k] && blo[k] <= ahi[k])

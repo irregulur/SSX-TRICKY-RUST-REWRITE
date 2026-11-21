@@ -498,6 +498,17 @@ Part of the port notes (index: [README.md](README.md)); units and wording as des
   awake one left, else `cRollerNode::cRollerNode` on the cast record's sphere tree (+0x30) or, with a velocity in the
   op, the object's group's (`World_GetInstanceSphTree` 0x260ca0). The object's flags lose 0x20, so the rider's
   query no longer finds it; the rider then meets it only in the rollers' loop (`roller::rider_kick`).
+- Proven (F4b3k1): `Boarder_InstanceCollisions` reads the object's flags (+0xe8) again after the contact, and
+  `Boarder_InstanceBounce` reads its controller (+0xe4) then, so the first contact (the one whose script makes the
+  roller) bounces as a moving object: the roller's vf +0x54 (0x17dda0, `cCounterNode`'s: node +0x14 ≠ 0) is 0 for a
+  roller, so no push out and s = √max(a² − (1 − b)·k, 0) − a, about −0.4/v_in (a few thousandths of a cm/s). The
+  spawn keeps 0x80 (`& ~0x22 | 0x45`). The impact check still runs, at that s, so with up · n < 0 the rider
+  stumbles. Inferred: the new roller is not in the rider's pairs in that call. Its constructor boxes it from the
+  tree as copied, and the world's trees stay in the model's frame (`World_RayCastInstance` 0x25bf48 puts the shape
+  into the object's frame, not the tree), so the box is far from the rider and `Broadphase_FitBox` 0x14fa70 (→
+  `Broadphase_ToggleOverlap` 0x150248, which pairs at once) pairs it with nothing until its first update; rec28's
+  first contacts come right without it. Checked on rec28 (`checking.md` F4b3k1): every first contact's position and velocity to
+  the bit. The port: `WallEnv::reread` (`knockables::reread`: the course's flags, a roller's controller).
 - The port: `CourseGround` keeps the flags (now changeable), the `.ssf` and a `Knockables` (rollers newest first,
   waiting script threads, the knocks for the sound). `GroundEnv::instance_collisions` (rider/ground_tick.rs) runs
   `walls::instance_collisions` and the rollers' loop on the course; `CollisionWorld::tick_knockables` runs every
@@ -506,7 +517,7 @@ Part of the port notes (index: [README.md](README.md)); units and wording as des
 - STANDINs: the rider's pairs and the rollers' pairs are boxes that meet (for the race's broadphase); the body is
   the bind pose's (G5); the rider's handle 1 / 2; the thread's rider velocity is the one at its start; only op 0
   sub-type 0 and new threads are done by these threads (the port's `logic.rs` does the rest, E9b2); no other
-  controller is kept (E7b2), so a touched object is never `controller` in `Touched`; the air's
+  controller is kept (E7b2), so a touched object has a `controller` in `Touched` only once it is a roller; the air's
   `Boarder_InstanceCollisions` is not called (the app's air is not `AirMotion_Update` yet, E8p). Without the course's files the old ball props stay.
 - Inferred: the pairs' order and pass in the frame (rollers, then pairs, then threads) is our choice.
 

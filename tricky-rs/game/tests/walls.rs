@@ -98,6 +98,8 @@ struct Script {
     speed: f32,
     touch: Option<(V4, V4)>,
     ev1: i32,
+    /// what the contact makes of the object (its flags and controller), which the caller reads again
+    after: Option<(u32, Option<bool>)>,
     log: Vec<Call>,
 }
 
@@ -198,6 +200,9 @@ impl WallEnv for Env {
     }
     fn contact(&mut self, o: u32, _: &mut WallRider, c: &Contact, rec: &CastRecord) {
         self.0.log.push(Call::Contact(o, contact_words(c), record_words(rec)));
+    }
+    fn reread(&mut self, o: &Touched) -> Touched {
+        self.0.after.map_or(*o, |(flags, controller)| Touched { flags, controller, ..*o })
     }
     fn sfx_object(&mut self, _: &WallRider, o: u32) {
         self.0.log.push(Call::SfxObject(o));
@@ -309,10 +314,16 @@ fn walls_match_the_original() {
     });
     let l = lg.clone();
     r.stub(knock_fn, move |c, _| l(Call::Knock(c.f(12).to_bits())));
-    let l = lg.clone();
+    let (l, s, fx) = (lg.clone(), script.clone(), fixed.clone());
     r.stub(0x13bd40, move |c, m| {
         let o = c.gpr(4) as u32;
-        l(Call::Contact(if o == 0 { 0 } else { 1 }, rn(m, c.gpr(6) as u32), rn(m, c.gpr(7) as u32)))
+        l(Call::Contact(if o == 0 { 0 } else { 1 }, rn(m, c.gpr(6) as u32), rn(m, c.gpr(7) as u32)));
+        // the contact's script may change the object's flags and give it a controller (a roller)
+        if let Some((flags, controller)) = s.borrow().after {
+            m.write_u32(o + 0xe8, flags);
+            m.write_u32(o + 0xe4, if controller.is_some() { ctrl } else { 0 });
+            *fx.borrow_mut() = controller.unwrap_or(true);
+        }
     });
     let l = lg.clone();
     r.stub(0x216c50, move |c, _| {
@@ -400,7 +411,10 @@ fn walls_match_the_original() {
         r.mem.write_f32(phys + 4, o.bounce);
         r.mem.write_u32(object + 0xe4, if o.controller.is_some() { ctrl } else { 0 });
         *fixed.borrow_mut() = o.controller.unwrap_or(true);
-        let sc = Script { cast: (t, rec), query: (t, rec, o), crash: g.pick(&[-1.0f32, -2.5]), speed: g.pick(&[150.0f32, 900.0]), touch: None, ev1: g.pick(&[-1i32, 12]), log: vec![] };
+        let mut sc = Script { cast: (t, rec), query: (t, rec, o), crash: g.pick(&[-1.0f32, -2.5]), speed: g.pick(&[150.0f32, 900.0]), touch: None, ev1: g.pick(&[-1i32, 12]), after: None, log: vec![] };
+        if g.next() % 4 == 0 {
+            sc.after = Some((g.pick(&[0x80u32, 0, 0x80 | 0x45]), g.pick(&[None, Some(true), Some(false)])));
+        }
         *script.borrow_mut() = sc.clone();
         let mut env = Env(sc);
         let which = g.next() % 4;

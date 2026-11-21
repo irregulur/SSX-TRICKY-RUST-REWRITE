@@ -122,8 +122,11 @@ struct Walls {
     /// the knocked objects among the rider's pairs (object index, body), as recorded (`pine.py record ... rollers`,
     /// [`rollers_of`]; F4b3k1): what the rollers' loop of `Boarder_InstanceCollisions` 0x125088 kicks
     rollers: Vec<(u32, tricky_game::roller::RollerBody)>,
-    /// the rider's speed stat (`Boarder_GetSpeedStat` 0x11d7b0), which a kick's impulse divides by
+    /// the rider's speed stat (`Boarder_GetSpeedStat` 0x11d7b0), which a kick's impulse and a moving object's
+    /// bounce divide by
     stat: f32,
+    /// the stats block's bytes it reads (+0x12, +0x1e), for the runner's
+    speed: (u8, u8),
 }
 
 /// The course the recording was made on, from the player's disc: TRICKY_DISC (the image) and TRICKY_COURSE (its
@@ -140,7 +143,7 @@ static FLAGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::n
 /// The walls for a rider whose first sample is `a` (recordings with the bodies only).
 fn walls_of(course: &Option<std::sync::Arc<tricky_game::course_ground::CourseGround>>, a: &[u8], st: &[u8]) -> Option<Walls> {
     let course = course.clone().filter(|_| 0x700 <= a.len())?;
-    Some(Walls { course, body: body_of(a), up: frame_of(a, st, None)[2], rollers: Vec::new(), stat: 0.0 })
+    Some(Walls { course, body: body_of(a), up: frame_of(a, st, None)[2], rollers: Vec::new(), stat: 0.0, speed: (st[0x12], st[0x1e]) })
 }
 
 /// Rider `me`'s knocked objects at sample `t` (window `rollers`, F4b3k3) as `roller::RollerBody`s, with the
@@ -214,20 +217,77 @@ fn wall_cast(course: &tricky_game::course_ground::CourseGround, body: &CollBody,
 
 /// `World_QueryInstances` 0x25b878 with `cWorldBoarder`(the body, 1), front faces only (`Boarder_InstanceCollisions`
 /// sets the shape's +0x2f0), on the course: t, the record (object = index + 1) and the object, as
-/// `ground_tick::touch_query` (F4b3k1). TRICKY_INSTDBG lists the hits.
-fn instance_query(course: &tricky_game::course_ground::CourseGround, body: &CollBody) -> (f32, tricky_game::walls::CastRecord, tricky_game::walls::Touched) {
+/// `ground_tick::touch_query` (F4b3k1), and the sphere tree hit (the record's +0x30). TRICKY_INSTDBG lists the hits.
+fn instance_query(course: &tricky_game::course_ground::CourseGround, body: &CollBody) -> (f32, tricky_game::walls::CastRecord, tricky_game::walls::Touched, Option<(usize, usize)>) {
     let mut q = tricky_game::worldboarder::WorldBoarder::new(body, 1);
     q.front_only = true;
     let skip = wall_skip();
     let (t, h) = course.query_instances(&mut q, false, &|i| skip.contains(&i));
-    let Some(h) = h else { return (t, Default::default(), Default::default()) };
+    let Some(h) = h else { return (t, Default::default(), Default::default(), None) };
     let o = h.object.unwrap_or(0);
     let phys = course.ssf.object_physics.get(o).and_then(|p| course.ssf.physics.get(*p as usize));
     let touched = tricky_game::walls::Touched { id: o as u32, flags: course.object_flags(o), mass: phys.map_or(0.0, |p| p.mass()), bounce: phys.map_or(0.0, |p| p.bounce()), controller: None };
     if std::env::var("TRICKY_INSTDBG").is_ok() {
         eprintln!("INSTDBG t {t} object {o} flags {:#x} mass {} bounce {} at {:?} n {:?}", touched.flags, touched.mass, touched.bounce, h.pos, h.normal);
     }
-    (t, tricky_game::walls::CastRecord { pos: h.pos, normal: h.normal, object: o as u32 + 1 }, touched)
+    (t, tricky_game::walls::CastRecord { pos: h.pos, normal: h.normal, object: o as u32 + 1 }, touched, h.tree)
+}
+
+/// `Instance_OnPlayerContact` 0x13bd40 on the course (F4b3k1): the object's event-1 script on the course's
+/// `knockables::Knockables`, which may make the object a roller (kept for the rest of the race, as the game keeps
+/// the node at +0xe4: `knockables::reread` then answers its controller). The flags the spawn sets (`& ~0x22 | 0x45`,
+/// 0x80 kept) are put back: the replay is run again from the same frame, and the game's come from the next sample.
+/// TRICKY_NOCONTACT=1: not run. STANDIN: the rider's handle 0 and the rider taken as a computer (the scripts' ops
+/// that read them are not the spawn's).
+fn contact_ours(course: &tricky_game::course_ground::CourseGround, object: u32, vel: V4, c: &tricky_game::walls::Contact, rec: &tricky_game::walls::CastRecord, tree: Option<(usize, usize)>) {
+    if std::env::var("TRICKY_NOCONTACT").is_ok() {
+        return;
+    }
+    let rider = tricky_game::knockables::Rider { id: 0, human: false, vel };
+    let record = tricky_game::knockables::record_context(rec.pos, rec.normal, tree);
+    let flags = course.object_flags(object as usize);
+    course.knock.lock().unwrap().contact(course, object, rider, c, record);
+    course.set_flags(object as usize, flags);
+}
+
+/// The rider's body (rider+0x470) as the runner holds it.
+fn body_at(mem: &mut r5900::Mem, rd: u32) -> CollBody {
+    let mut b = CollBody::new();
+    b.center = rv(mem, rd + 0x480);
+    b.radius = mem.read_f32(rd + 0x490);
+    b.x24 = mem.read_u32(rd + 0x494) as i32;
+    b.count = (mem.read_u32(rd + 0x498) as i32).clamp(0, 18);
+    for k in 0..18u32 {
+        b.spheres[k as usize] = (rv(mem, rd + 0x4a0 + 0x20 * k), mem.read_f32(rd + 0x4b0 + 0x20 * k));
+    }
+    b
+}
+
+/// A roller node's fields from +0x30 on (the rigid body, +0xc8..+0xe8, +0xf0, +0x100 the body's inertia, +0x130
+/// the centre of mass, +0x140 asleep, the tree's directions +0x160 and centre +0x1e0, the box +0x2a0 / +0x2b0), as
+/// tests/roller.rs lays them out.
+fn put_roller_node(m: &mut r5900::Mem, at: u32, b: &tricky_game::roller::RollerBody) {
+    let rb = at + 0x30;
+    m.write_f32(rb + 8, b.rb.inv_mass);
+    for k in 0..9 {
+        m.write_f32(rb + 0xc + 4 * k as u32, b.rb.inv_inertia[k]);
+        m.write_f32(at + 0x100 + 4 * k as u32, b.body_inertia[k]);
+    }
+    for (o, v) in [(0x30, b.rb.pos), (0x40, b.rb.q), (0x50, b.rb.p), (0x60, b.rb.l), (0x70, b.rb.v), (0x80, b.rb.w)] {
+        wv(m, rb + o, v);
+    }
+    for (o, v) in [(0xc8, b.energy), (0xcc, b.mass), (0xd0, b.xd0), (0xd4, b.xd4), (0xd8, b.e), (0xdc, b.mu), (0xe0, b.bounce_speed), (0xe4, b.awake), (0xe8, b.knock)] {
+        m.write_f32(at + o, v);
+    }
+    wv(m, at + 0xf0, b.xf0);
+    wv(m, at + 0x130, b.com);
+    m.write_u32(at + 0x140, b.asleep);
+    for k in 0..8 {
+        wv(m, at + 0x160 + 16 * k as u32, b.tree.dirs[k]);
+    }
+    wv(m, at + 0x1e0, b.tree.centre);
+    wv(m, at + 0x2a0, b.lo);
+    wv(m, at + 0x2b0, b.hi);
 }
 
 /// TRICKY_WALL_SKIP: the instances the walls leave out.
@@ -244,6 +304,8 @@ struct WallTest<'a> {
     body: CollBody,
     /// the rider's speed stat (a roller's kick, F4b3k1)
     stat: f32,
+    /// the sphere tree the last object query hit (the contact's record +0x30)
+    tree: Option<(usize, usize)>,
 }
 impl tricky_game::walls::WallEnv for WallTest<'_> {
     /// `World_RayCast` 0x25aff8 with `cWorldBoarder`(rider+0x470, 1), its ground normal set
@@ -254,7 +316,9 @@ impl tricky_game::walls::WallEnv for WallTest<'_> {
     /// record and the object (its flags, its physics record's mass and bounce). STANDIN: no controller, as
     /// `ground_tick::touch_query` (row E7b2)
     fn query_objects(&mut self, _: &tricky_game::walls::WallRider) -> (f32, tricky_game::walls::CastRecord, tricky_game::walls::Touched) {
-        instance_query(self.course, &self.body)
+        let (t, rec, o, tree) = instance_query(self.course, &self.body);
+        self.tree = tree;
+        (t, rec, o)
     }
     /// +0x2e4 and +0x2f0, which the test does not compare
     fn accumulate_impact(&mut self, _: &mut tricky_game::walls::WallRider, _: V4) {}
@@ -287,7 +351,14 @@ impl tricky_game::walls::WallEnv for WallTest<'_> {
         self.stat
     }
     fn knock(&mut self, _: &mut tricky_game::walls::WallRider, _: f32) {}
-    fn contact(&mut self, _: u32, _: &mut tricky_game::walls::WallRider, _: &tricky_game::walls::Contact, _: &tricky_game::walls::CastRecord) {}
+    /// `Instance_OnPlayerContact` 0x13bd40: [`contact_ours`]
+    fn contact(&mut self, object: u32, r: &mut tricky_game::walls::WallRider, c: &tricky_game::walls::Contact, rec: &tricky_game::walls::CastRecord) {
+        contact_ours(self.course, object, r.vel, c, rec, self.tree);
+    }
+    /// `knockables::reread`: the flags read again, a roller's controller
+    fn reread(&mut self, o: &tricky_game::walls::Touched) -> tricky_game::walls::Touched {
+        tricky_game::knockables::reread(self.course, o)
+    }
     fn sfx_object(&mut self, _: &tricky_game::walls::WallRider, _: u32) {}
     fn sfx_wall(&mut self, _: &tricky_game::walls::WallRider) {}
 }
@@ -305,7 +376,7 @@ impl Env for E {
             let mut body = w.body;
             body.x24 = r.mask as i32;
             let mut wr = tricky_game::walls::WallRider { pos: r.p.pos, vel: r.vel, ground: r.p.normal, knocks: 0.0, mode: 2, state: r.state, up: w.up };
-            let mut t = WallTest { g: &mut *r, course: &course, body, stat: w.stat };
+            let mut t = WallTest { g: &mut *r, course: &course, body, stat: w.stat, tree: None };
             let hit = tricky_game::walls::wall_collide(&mut wr, &mut t);
             // the body as `Boarder_Translate` left it, for the touch objects after (F4b3k1)
             let body = t.body;
@@ -344,8 +415,11 @@ impl Env for E {
     /// static touch objects when the recording kept the objects' flags ([`FLAGGED`], F4b3k4; TRICKY_INSTANCES=1:
     /// always, 0: never; without the flags they make it worse: rec22, rec23, the objects the game had made rollers or
     /// `cDeadNode`s are bounced off), then (F4b3k1) a kick for each knocked object among the rider's
-    /// pairs (`roller::rider_kick`, the rollers recorded, [`rollers_of`]; TRICKY_NOROLL=1: not). Their contact
-    /// scripts and sounds are not run; the keyframed objects among the pairs (types 0x100..0x103) are not either.
+    /// pairs (`roller::rider_kick`, the rollers recorded, [`rollers_of`]; TRICKY_NOROLL=1: not). A roller the static
+    /// objects' contact made in this call is not among them: `cRollerNode::cRollerNode` 0x13d6c0 boxes it from the
+    /// tree as copied (the world's, in the model's frame: far from the rider), so `Broadphase_FitBox` 0x14fa70 pairs
+    /// it with nothing until its first update. The rollers' scripts and sounds are not run; the keyframed objects
+    /// among the pairs (types 0x100..0x103) are not either.
     fn instance_collisions(&mut self, r: &mut Rider) {
         self.log.push(Ev::Instances);
         let Some(w) = &mut self.walls else { return };
@@ -354,7 +428,7 @@ impl Env for E {
         body.x24 = r.mask as i32;
         let mut rollers = std::mem::take(&mut w.rollers);
         let mut wr = tricky_game::walls::WallRider { pos: r.p.pos, vel: r.vel, ground: r.p.normal, knocks: 0.0, mode: 2, state: r.state, up: w.up };
-        let mut t = WallTest { g: &mut *r, course: &course, body, stat: w.stat };
+        let mut t = WallTest { g: &mut *r, course: &course, body, stat: w.stat, tree: None };
         let statics = match std::env::var("TRICKY_INSTANCES").as_deref() {
             Ok("0") => false,
             Ok(_) => true,
@@ -422,6 +496,10 @@ struct W {
     rc: Option<runner_course::RunnerCourse>,
     /// its instances' base (0 without it), where `World_QueryInstances`' stub points the object it hit (F4b3k4)
     inst0: Rc<Cell<u32>>,
+    /// the rider's knocked objects for the rollers' loop ([`W::put_rollers`], F4b3k1): their nodes and pair entries,
+    /// and each node's sphere tree, which `Collide_BoarderSphTree`'s stub answers from
+    roll_nodes: Vec<(u32, u32)>,
+    roll_trees: Rc<RefCell<Vec<(u32, tricky_game::sphtree::SphereTree)>>>,
 }
 
 /// `Boarder_WallCollide` 0x126250 stubbed: logged, answering `wall`.
@@ -450,11 +528,15 @@ impl W {
                 m.write_f32(rd + 0x4b0 + 0x20 * k as u32, *r);
             }
             wv(m, rd + 0x4ac0, w.up);
+            // what `Boarder_GetSpeedStat` 0x11d7b0 reads of the stats block (a moving object's bounce, F4b3k1)
+            m.write_u8(self.stats + 0x12, w.speed.0);
+            m.write_u8(self.stats + 0x1e, w.speed.1);
             self.r.unstub(0x126250);
             // `Boarder_InstanceCollisions` 0x125088 as the original when the objects' flags are the game's and the
             // runner has the course's instances (F4b3k4); else the stub
             if FLAGGED.load(std::sync::atomic::Ordering::Relaxed) && self.inst0.get() != 0 {
                 self.r.unstub(0x125088);
+                self.put_rollers(&w.rollers);
             } else {
                 let l = self.log.clone();
                 self.r.stub(0x125088, move |_, _| l.borrow_mut().push(Ev::Instances));
@@ -463,6 +545,33 @@ impl W {
             stub_wall(&mut self.r, &self.log, &self.wall, rd);
         }
         *self.course.borrow_mut() = walls.map(|w| w.course.clone());
+    }
+
+    /// The rider's pair list (rider+0x700) holding the knocked objects recorded (F4b3k1), for the rollers' loop of
+    /// `Boarder_InstanceCollisions` 0x125088: each a `cRollerNode` (vtable 0x36d790, +0x14 0, +0x28 its object in the
+    /// runner's course, +0x344 itself, its proxy +0x2c0 whose +0x84 is the node) with the recorded body, and a pair
+    /// entry (+0 the roller's proxy, +4 the rider's, +0xc the rider's next) in the list's order. TRICKY_NOROLL=1: none.
+    fn put_rollers(&mut self, rollers: &[(u32, tricky_game::roller::RollerBody)]) {
+        let (m, rd) = (&mut self.r.mem, self.rd);
+        let rollers = if std::env::var("TRICKY_NOROLL").is_ok() { &[][..] } else { rollers };
+        assert!(rollers.len() <= self.roll_nodes.len(), "more rollers than nodes");
+        let mut trees = self.roll_trees.borrow_mut();
+        trees.clear();
+        m.write_u32(rd + 0x700, self.roll_nodes.first().filter(|_| !rollers.is_empty()).map_or(0, |e| e.1));
+        for (i, (o, b)) in rollers.iter().enumerate() {
+            let (node, entry) = self.roll_nodes[i];
+            m.write_u32(node + 8, 0x36d790);
+            m.write_u32(node + 0x14, 0);
+            m.write_u32(node + 0x28, self.inst0.get() + 0x100 * o);
+            m.write_u32(node + 0x344, node);
+            m.write_u32(node + 0x2c0 + 0x84, node);
+            put_roller_node(m, node, b);
+            m.write_u32(entry, node + 0x2c0);
+            m.write_u32(entry + 4, rd + 0x700);
+            m.write_u32(entry + 8, 0);
+            m.write_u32(entry + 0xc, self.roll_nodes.get(i + 1).filter(|_| i + 1 < rollers.len()).map_or(0, |e| e.1));
+            trees.push((node, b.tree.clone()));
+        }
     }
 
     /// The course built in the runner by the game's loaders (`runner_course`, F4h5m), with the objects' boxes and
@@ -631,14 +740,32 @@ fn world() -> Option<W> {
     let l = log.clone();
     // Boarder_InstanceCollisions 0x125088 (E8b): logged; as the original with the objects' flags (`W::put_walls`,
     // F4b3k4): its `World_QueryInstances` 0x25b878 answered by the course's ([`instance_query`]: t, the point +0x10,
-    // the normal +0x20, the object +0x38 as the runner's course's instance), `Instance_OnPlayerContact` 0x13bd40 (the
-    // event scripts) stubbed, `Boarder_InstanceBounce` 0x125a00 the original
+    // the normal +0x20, the object +0x38 as the runner's course's instance), `Instance_OnPlayerContact` 0x13bd40 as
+    // [`contact_ours`] (F4b3k1: an object that is then a roller gets a `cRollerNode` at +0xe4, the vtable 0x36d790 and
+    // +0x14 0, which is all `Boarder_InstanceBounce` asks of it: vf +0x54, 0x17dda0), `Boarder_InstanceBounce`
+    // 0x125a00 the original
     r.stub(0x125088, move |_, _| l.borrow_mut().push(Ev::Instances));
-    r.allow(0x125088);
-    r.allow(0x125a00);
-    r.stub(0x13bd40, |_, _| {});
+    for a in [0x125088, 0x125a00, 0x17dda0, 0x11d7b0] {
+        r.allow(a);
+    }
     let inst0 = Rc::new(Cell::new(0u32));
-    let (c, i0) = (course.clone(), inst0.clone());
+    let tree = Rc::new(Cell::new(None::<(usize, usize)>));
+    let node = r.mem.alloc(0x350);
+    r.mem.write_u32(node + 8, 0x36d790);
+    let (c, i0, tr) = (course.clone(), inst0.clone(), tree.clone());
+    r.stub(0x13bd40, move |cpu, mem| {
+        let course = c.borrow().clone().expect("Instance_OnPlayerContact ran without the course");
+        let inst = cpu.gpr(4) as u32;
+        let object = inst.wrapping_sub(i0.get()) / 0x100;
+        let (cp, rp) = (cpu.gpr(6) as u32, cpu.gpr(7) as u32);
+        let ct = tricky_game::walls::Contact { pos: rv(mem, cp), dir: rv(mem, cp + 0x10), normal: rv(mem, cp + 0x20), speed_in: mem.read_f32(cp + 0x30) };
+        let rec = tricky_game::walls::CastRecord { pos: rv(mem, rp + 0x10), normal: rv(mem, rp + 0x20), object: object + 1 };
+        contact_ours(&course, object, rv(mem, rd + 0x150), &ct, &rec, tr.get());
+        if course.knock.lock().unwrap().rollers.iter().any(|x| x.object == object) {
+            mem.write_u32(inst + 0xe4, node);
+        }
+    });
+    let (c, i0, tr) = (course.clone(), inst0.clone(), tree.clone());
     r.stub(0x25b878, move |cpu, mem| {
         let course = c.borrow().clone().expect("World_QueryInstances ran without the course");
         let mut b = CollBody::new();
@@ -649,7 +776,8 @@ fn world() -> Option<W> {
         for k in 0..18u32 {
             b.spheres[k as usize] = (rv(mem, rd + 0x4a0 + 0x20 * k), mem.read_f32(rd + 0x4b0 + 0x20 * k));
         }
-        let (t, h, o) = instance_query(&course, &b);
+        let (t, h, o, tree) = instance_query(&course, &b);
+        tr.set(tree);
         let out = cpu.gpr(6) as u32;
         wv(mem, out + 0x10, h.pos);
         wv(mem, out + 0x20, h.normal);
@@ -804,7 +932,40 @@ fn world() -> Option<W> {
     for s in &mut seqs {
         *s = (r.mem.alloc(0x80), r.mem.alloc(0x10), r.mem.alloc(0x10));
     }
-    Some(W { r, rd, stats, motion, log, hit, wall, meter, handler, pad, seqs, air, landing, course, real_cast, states_real: false, rc: None, inst0 })
+    // the rollers' loop of `Boarder_InstanceCollisions` (F4b3k1, [`W::put_rollers`]): `Obj_HasId` 0x110838, the
+    // roller's vf +0x5c 0x13b7a8 (its object), `RigidBody_AddImpulse` 0x154338 and `Roller_OnHit` 0x13f448 (vf +0x64
+    // 0x149e28, vf +0x74 0x149e10) as the original; `Collide_BoarderSphTree` 0x2394a8 by its port
+    // (`SphereTree::body`, checked in tests/sphtree.rs) on the recorded roller's tree; the hit's script
+    // (`Instance_GetEventScript` 0x25fe78 the course's, `cScriptNode` 0x13b8c0 not run, `MemPool_Alloc` 0x23d3b0 a
+    // scratch block)
+    for a in [0x110838, 0x13b7a8, 0x154338, 0x13f448, 0x149e28, 0x149e10] {
+        r.allow(a);
+    }
+    let roll_trees: Rc<RefCell<Vec<(u32, tricky_game::sphtree::SphereTree)>>> = Rc::new(RefCell::new(Vec::new()));
+    let rt = roll_trees.clone();
+    r.stub(0x2394a8, move |cpu, mem| {
+        let node = (cpu.gpr(4) as u32).wrapping_sub(0x150);
+        assert_eq!(cpu.gpr(5) as u32, rd + 0x470, "Collide_BoarderSphTree: the rider's body");
+        let rt = rt.borrow();
+        let tree = &rt.iter().find(|(n, _)| *n == node).expect("Collide_BoarderSphTree: a roller's tree").1;
+        let touch = tree.body(&body_at(mem, rd));
+        if let Some((pen, at)) = touch {
+            wv(mem, cpu.gpr(6) as u32, pen);
+            wv(mem, cpu.gpr(7) as u32, at);
+        }
+        cpu.set_gpr(2, touch.is_some() as u64);
+    });
+    let (c, i0) = (course.clone(), inst0.clone());
+    r.stub(0x25fe78, move |cpu, _| {
+        let course = c.borrow().clone().expect("Instance_GetEventScript ran without the course");
+        let o = (cpu.gpr(5) as u32).wrapping_sub(i0.get()) / 0x100;
+        cpu.set_gpr(2, course.ssf.event_script(o as usize, cpu.gpr(6) as usize) as i64 as u64);
+    });
+    let pool = r.mem.alloc(0x100);
+    r.stub(0x23d3b0, move |cpu, _| cpu.set_gpr(2, pool as u64));
+    r.stub(0x13b8c0, |_, _| {});
+    let roll_nodes = (0..16).map(|_| (r.mem.alloc(0x350), r.mem.alloc(0x10))).collect();
+    Some(W { r, rd, stats, motion, log, hit, wall, meter, handler, pad, seqs, air, landing, course, real_cast, states_real: false, rc: None, inst0, roll_nodes, roll_trees })
 }
 
 impl W {
@@ -2740,16 +2901,18 @@ fn ground_ticks_against_the_running_game() {
                     rider.vel = riders[me].vel;
                     rider.boost_level = boost;
                     unrevert(&mut rider, p.hit, &walls_of(&course, a, &stats[me]));
+                    // the rollers as the riders meet them: the controllers (list 3, `cRollerNode`) step before the
+                    // riders (list 8), so the second sample's (TRICKY_ROLLERS=a: the first's) (F4b3k1)
+                    let mut walls = walls_of(&course, a, &stats[me]);
+                    if let Some(wl) = &mut walls {
+                        wl.stat = speed_stat(&stats[me], boost, f.add);
+                    }
+                    if let (Some(wl), Some(base)) = (&mut walls, roll_base) {
+                        let at = if std::env::var("TRICKY_ROLLERS").as_deref() == Ok("a") { 0 } else { 1 };
+                        wl.rollers = rollers_of(&w[at], me, &wl.course, base);
+                    }
                     let r = if k == 0 {
                         let mut mine = rider;
-                        // the rollers as the riders meet them: the controllers (list 3, `cRollerNode`) step before the
-                        // riders (list 8), so the second sample's (TRICKY_ROLLERS=a: the first's) (F4b3k1)
-                        let mut walls = walls_of(&course, a, &stats[me]);
-                        if let (Some(wl), Some(base)) = (&mut walls, roll_base) {
-                            let at = if std::env::var("TRICKY_ROLLERS").as_deref() == Ok("a") { 0 } else { 1 };
-                            wl.rollers = rollers_of(&w[at], me, &wl.course, base);
-                            wl.stat = speed_stat(&stats[me], boost, f.add);
-                        }
                         update(&mut mine, &SURFACE_TABLE, &mut E { log: Vec::new(), hit: p.hit, wall: false, meter: 0.0, states, walls });
                         mine.vel = speed_limit(mine.vel, speed_limit_at(a, b, boost, |x, y| x - y));
                         if let Some(c) = &p.ctl {
@@ -2761,7 +2924,7 @@ fn ground_ticks_against_the_running_game() {
                         *g.hit.borrow_mut() = p.hit;
                         g.wall.set(false);
                         g.put(&rider);
-                        g.put_walls(walls_of(&course, a, &stats[me]).as_ref());
+                        g.put_walls(walls.as_ref());
                         g.real_states(states);
                         g.r.cpu.set_gpr(4, g.motion as u64);
                         g.r.call(0x10a0d8).unwrap_or_else(|e| panic!("tick {} rider {me}: {e:?}", w[0].tick));
@@ -3460,6 +3623,9 @@ impl tricky_game::walls::WallEnv for SlideWalls<'_> {
     }
     fn knock(&mut self, _: &mut tricky_game::walls::WallRider, _: f32) {}
     fn contact(&mut self, _: u32, _: &mut tricky_game::walls::WallRider, _: &tricky_game::walls::Contact, _: &tricky_game::walls::CastRecord) {}
+    fn reread(&mut self, o: &tricky_game::walls::Touched) -> tricky_game::walls::Touched {
+        *o
+    }
     fn sfx_object(&mut self, _: &tricky_game::walls::WallRider, _: u32) {}
     fn sfx_wall(&mut self, _: &tricky_game::walls::WallRider) {}
 }
