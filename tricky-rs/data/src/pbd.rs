@@ -531,13 +531,14 @@ pub struct WorldVertex {
     pub nrm: [f32; 3],
 }
 
-/// A mesh context's geometry from its VIF data (row E3a3): the packets the game sends to the vector unit as they are,
-/// read here from the packets themselves (the vector unit's program is not decompiled; inferred from the data and
-/// checked against the levels folders' exported meshes). The DMA chain is `cnt` packets (and `ref` ones, which hold
-/// no vertex data) up to `ret` / `end`. A batch is five unpacks: a V4-32 header (a GS tag, then the strip count at
-/// word 4), V2-8 strip lengths (three quadwords a vertex, so each length / 3), then per vertex (masked, `STCYCL` 1/3)
-/// V2-16 UVs (4.12, as the GS takes them; the exports flip v to 1 - v), V3-16 normals (1.15) and V3-16 positions
-/// (1.15, times the model's vertex scale).
+/// A mesh context's geometry from its VIF data (row E3a3, proven against VU1 program 5 `0x319e30` in row E3a6,
+/// `tricky-rs/game/tests/vu1world.rs`). The DMA chain is `cnt` packets plus `ref` sentinels (`+0x14` → `MSCAL 0x26`
+/// first batch, `+0x18` → `MSCAL 0x3c` continuation batches, `+0x10` → UV-scroll `STMOD 1; STROW`) up to `ret` /
+/// `end`. Each batch has five unpacks: a V4-32 header (word 0..3 GS `TRISTRIP` GIFTAG with `NLOOP = n_verts`, word 4
+/// `n_strips`, word 6 `n_verts`), V2-8 strip lengths (`x = len * 3` quadwords, `y = 0`), then per vertex (`STCYCL`
+/// CL=3 WL=1) masked V2-16 UVs (4.12; `STMASK 0x50505050` fills `z,w = 0x1000` = 1.0 for `Q`; the exports flip v to
+/// 1 - v), V3-16 normals (1.15; `STMASK 0x40404040` fills `w = 0x8000` = 1.0) and V3-16 positions (1.15, pre-scaled
+/// by the model's vertex scale in `cPS2GraphicsMan::DrawModel` 0x1e1f70).
 pub fn context_strips(b: &[u8], start: usize, scale: [f32; 3]) -> Result<Vec<Vec<WorldVertex>>, String> {
     let mut at = start;
     let mut unpacks: Vec<(u32, &[u8])> = vec![];

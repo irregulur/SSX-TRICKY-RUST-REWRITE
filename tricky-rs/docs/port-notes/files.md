@@ -363,13 +363,43 @@ there (no rewind); a level is the value / 100 when 0..200 (the duck 0..100), els
   - gari's export in the levels folder is of another build: its splines all differ and its patches' flag word is 0
     there (its show-off patches are surface 18); everything else agrees.
 - Meshes (row E3a3; `pbd::{context_strips, strip_triangles}`, checked against the levels folders' Meshes/*.obj:
-  8,325 meshes, 313,373 triangles, positions, UVs and normals). A model's node +4 is its mesh; each mesh context's
-  word 3 is its offset into the VIF block (header +0x84). Read from the packets themselves (the VU1 program is not
-  decompiled): a DMA chain of `cnt` packets (and `ref` ones, which hold no vertices) to `ret` / `end`; in it,
-  batches of five unpacks: V4-32 (a GS tag; word 4 the strip count), V2-8 (each strip's length × 3, three
-  quadwords a vertex), then per vertex (masked, `STCYCL` 1/3) V2-16 UVs (4.12; the exports write 1 − v), V3-16
-  normals (1.15) and V3-16 positions (1.15 times the model's vertex scale, model head +0x18). Each strip is drawn
-  as a triangle strip, every other triangle reversed. gari is not compared (its export is of another build).
+  8,325 meshes, 313,373 triangles, positions, UVs and normals; proven against the VU1 program in row E3a6,
+  `tricky-rs/game/tests/vu1world.rs`). A model's node +4 is its mesh; each mesh context's word 3 (+0xc) is its
+  offset into the VIF block (header +0x84), +0x10 is its UV-scroll scratch offset (16 bytes immediately past the
+  chain's `ret` tag), and +0x14 / +0x18 are the sentinel `ref` addresses for batch 0 / continuation batches.
+  - **Proven (VU1 program 5, chain `0x319e30`, 818 pairs, `BASE 0x18`, `OFFSET 0x1bd`, selected by
+    `cPS2GraphicsMan::DrawModel` 0x1e1f70):** `DrawModel` unpacks 11 quadwords to `TOPS+0..10` (4 rows of the
+    model matrix pre-scaled by the model's vertex scale `+0x18`, 3 light directions, 3 light colours + ambient) and
+    `call`s the mesh context's DMA chain.
+  - **`ref` packets (`CourseDma_ResolveMeshContext` 0x256080):** across all 11 courses + skies (3,183 contexts,
+    5,408 batches, 10,816 `ref` tags, 0 unknown), every `ref` matches one of the context's three sentinels:
+    `+0x14` (3,183, one per context) is replaced at load time with `MSCAL 0x26` (batch 0: `MVP = Clip × Model` via
+    subroutine `0x234`, copies the 7 lighting quadwords to `VU1[6..12]`, sets `vi7 = TOP + 11` and falls into
+    `0x3e`); `+0x18` (2,225, continuation batches) is replaced with `MSCAL 0x3c` (`vi7 = TOP`, directly into
+    `0x3e`); `+0x10` (5,408, one per batch) is replaced inline with `STMOD 1; STROW 0, 0` by
+    `CourseDma_PatchContext` 0x240a98 when `model+0x10 & 0x10 == 0` (true of every model on the disc), or kept as a
+    relocated `ref` to `chain_base + context+0x10` by `CourseDma_RebuildChain` 0x240c78 so `DrawModel` can write
+    `STMOD 1; STROW (int)(du * 4096), (int)(dv * 4096)` each frame (`R2 = 0x1000, R3 = 0x1000` follow in the next
+    `cnt` packet).
+  - **GS tag and header (`V4-32`, 2 quadwords at `vi7+0..1`):** `vi7+0` is copied verbatim to the output GIF buffer
+    (`vi3 = TOP + 0xde`) and kicked via `XGKICK vi3` (`0x8a`). Across all 5,408 batches it is
+    `[0x00008000 | NLOOP, 0x302e4000, 0x00000412, 0x00000000]`: `NLOOP = n_verts`, `EOP = 1`, `PRE = 1`,
+    `PRIM = 0x05c` (`TRISTRIP` 4, Gouraud `IIP`, textured `TME`, alpha-blended `ABE`, `STQ` coords `FST=0`),
+    `FLG = PACKED`, `NREG = 3`, `REGS = 0x412` (`ST`, `RGBAQ`, `XYZ2`). `vi7+1` holds `[n_strips, 0, n_verts, 0]`:
+    word 4 (`ilw.x`) is the strip count, word 6 (`ilw.z`) the vertex count for the lighting pass (`bal 0x0`), and
+    words 5 and 7 are always 0. `V2-8` strip lengths hold `x = strip_len × 3` (quadwords) and `y = 0` on all
+    27,333 strips.
+  - **Masked rows (`STCYCL` 1/3, three quadwords per vertex: UV, normal, position):** UVs (`V2-16` masked, `0x75`)
+    run under `STMOD 1`, `STROW [du*4096, dv*4096, 0x1000, 0x1000]`, `STMASK 0x50505050` (`x,y` = data + ROW;
+    `z,w` = `0x1000` → `itof12` = `1.0`, giving `STQ = (u/W, v/W, 1/W)` after `mulq`). Normals and positions
+    (`V3-16` masked, `0x79`) run under `STMOD 0`, `STROW [0, 0, 0, 0x00008000]`, `STMASK 0x40404040` (`x,y,z` =
+    sign-extended 16-bit data; `w` = `0x8000` = +32768 → `itof15` = `+1.0`).
+  - **Strip winding and ADC bit:** `0x51` loads `vi9 = 0xFFFF` (GS `XYZ2` ADC bit 15 = 1, no drawing kick). Each
+    strip starts at `0x5f`: vertex 0 sets `XYZ2.w = 0xFFFF` (`0x6a: mfir.w`), vertex 1 keeps it (`0x73: ftoi4.xyz`),
+    and vertices `2..len-1` clear it (`0x80: ftoi4.xyzw`, `ADC = 0`) so the GS draws standard alternating-winding
+    `TRISTRIP` triangles (`(i, i+1, i+2)` / `(i+2, i+1, i)`), or sets `ADC = 1` and clips at `0x8c → 0x12b` when
+    frustum-crossed. Verified on 1,026 real Elysium contexts (7,556 strips, 52,340 vertices, static and UV-scrolled)
+    through `r5900::vu1::Vu1` (`tests/vu1world.rs`). gari is not compared against the JSON export (another build).
 - The app from the disc (row E3a4; `Level::from_disc`, checked: `tricky-data/tests/level_disc.rs` against all 11
   levels folders: 28,835 patches, 25,128 instances, 8,325 world and 275 sky meshes, 12,388 collision meshes, 1,540
   splines). Proven: `Course_LoadRenderData` 0x25edf0 mounts `data/models/<file>.big` and reads `<file>.pbd`, `.ssf`,
@@ -426,7 +456,8 @@ decoder treats alike.
 - `App_GetCourseId` 0x17c360, `App_FindCourseById` 0x17c380, `App_GetCourseInfo` 0x17c3a8: wrappers (no callers)
   on the course table at gApp+100; `CourseTable_GetId` 0x186440: record i's +0x80 id (i capped at 13).
 - `App_FreeEffectsLoader` 0x17b938 (gApp+0x30, made by `App_CreateEffectsLoader`), `EffectsLoader_Delete` 0x17c468.
-- Not settled: 0x23ed48 (sets a +0x19c flag), 0x240c78 (patches a `CourseDma` chain).
+- Not settled: 0x23ed48 (sets a +0x19c flag). (`CourseDma_RebuildChain` 0x240c78 settled in E3a6: rewrites a
+  UV-scrolling world mesh's DMA chain, replacing `+0x14`/`+0x18` refs with `MSCAL 0x26`/`0x3c` and relocating `+0x10`.)
 
 ## Names from F1c batch 18 (proven)
 
