@@ -2974,12 +2974,12 @@ address,size,name,system,status
 0x1d59f0,24,ParticleSys_AdvanceTime,render,ported
 0x1d5a08,36,Rand_VuNext,common,checked
 0x1d5a30,304,ParticleSys_StepEmitter,render,checked
-0x1d5b60,10532,ParticleSys_CalcBounds,render,not started
+0x1d5b60,10532,ParticleSys_CalcBounds,render,checked
 0x1d8488,8,ParticleNode_InitMem,render,ported
-0x1d8490,1592,ParticleSys_Create,render,ported
-0x1d8ac8,52,ParticleNode_SetLifetime,render,ported
+0x1d8490,1592,ParticleSys_Create,render,checked
+0x1d8ac8,52,ParticleNode_SetLifetime,render,checked
 0x1d8b00,28,ParticleNode_FreeMem,render,not started
-0x1d8b20,164,ParticleNode_Update,render,ported
+0x1d8b20,164,ParticleNode_Update,render,checked
 0x1d8bc8,384,ParticleSys_Draw,render,checked
 0x1d8d48,56,ParticleNode_SaveState,render,checked
 0x1d8d80,64,ParticleSys_ReadReplay,render,checked

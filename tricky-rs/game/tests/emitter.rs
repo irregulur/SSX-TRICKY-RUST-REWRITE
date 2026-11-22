@@ -196,3 +196,99 @@ fn emitter_step_and_vu_random_match_the_original() {
     eprintln!("emitters stepped 0, 1, 2, 3, 4+ times: {steps:?}");
     assert!(steps.iter().all(|&n| n > 100), "every step count reached: {steps:?}");
 }
+
+#[test]
+fn particle_sys_create_bounds_and_update_match_the_original() {
+    use std::cell::RefCell;
+    use std::collections::VecDeque;
+    use std::rc::Rc;
+
+    let Some(mut r) = Runner::from_env() else { return };
+    r.float_rules = Rules::parse("add=n,mul=n,div=n,cvt=n").unwrap();
+    for a in [
+        0x102f50u32, 0x1d50b0, 0x1d5180, 0x1d52e8, 0x1d5300, 0x1d5548, 0x1d58e0, 0x1d59e0, 0x1d59f0,
+        0x1d5a08, 0x1d5a30, 0x1d5b60,
+    ] {
+        r.allow(a);
+    }
+    let rand: Rc<RefCell<VecDeque<u32>>> = Rc::new(RefCell::new(VecDeque::new()));
+    let q = rand.clone();
+    r.stub(0x23d4a8, move |c, _| c.set_gpr(2, q.borrow_mut().pop_front().expect("rand") as i32 as i64 as u64));
+
+    let ps_addr = r.mem.alloc(0x180);
+    let mat_addr = r.mem.alloc(0x40);
+    let rec_addr = r.mem.alloc(0x100);
+    let mut g = Rng(0x1d84_9000_cafe_5b60);
+
+    for case in 0..2_000 {
+        let mut ps = vec![0u32; SYS_WORDS];
+        for (i, w) in ps.iter_mut().enumerate() {
+            *w = 0xdead_0000 | i as u32;
+            r.mem.write_u32(ps_addr + 4 * i as u32, *w);
+        }
+        let mat: [V4; 4] = [
+            [g.f() * 0.1, g.f() * 0.1, g.f() * 0.1, 0.0],
+            [g.f() * 0.1, g.f() * 0.1, g.f() * 0.1, 0.0],
+            [g.f() * 0.1, g.f() * 0.1, g.f() * 0.1, 0.0],
+            [g.f() * 10.0, g.f() * 10.0, g.f() * 10.0, 1.0],
+        ];
+        for row in 0..4 {
+            put(&mut r, mat_addr + 0x10 * row as u32, mat[row]);
+        }
+        let mut rec = [0u32; 51];
+        rec[0] = 1 + g.next() % 40;
+        rec[1] = 1 + g.next() % 5;
+        rec[2] = if case % 2 == 0 { (-1.0f32).to_bits() } else { ((g.next() % 300) as f32 / 100.0).to_bits() };
+        rec[3] = g.k().to_bits();
+        rec[4] = (2.0 + (g.next() % 50) as f32).to_bits();
+        rec[5] = (0.3 + (g.next() % 200) as f32 / 100.0).to_bits();
+        rec[6] = ((g.next() % 20) as f32 / 10.0).to_bits();
+        rec[7] = ((g.next() % 50) as f32 / 100.0).to_bits();
+        rec[8] = ((g.next() % 20) as f32 / 100.0).to_bits();
+        for i in 9..33 {
+            rec[i] = (g.f() * 5.0).to_bits();
+        }
+        for i in 33..49 {
+            rec[i] = ((g.next() % 100) as f32 / 99.0).to_bits();
+        }
+        rec[49] = g.next() % 38;
+        rec[50] = g.next() % 11;
+        for (i, &w) in rec.iter().enumerate() {
+            r.mem.write_u32(rec_addr + 4 * i as u32, w);
+        }
+
+        let words: VecDeque<u32> = (0..12).map(|_| g.next() | (g.next() << 16)).collect();
+        *rand.borrow_mut() = words.clone();
+        r.cpu.set_gpr(4, ps_addr as u64);
+        r.cpu.set_gpr(5, mat_addr as u64);
+        r.cpu.set_gpr(6, rec_addr as u64);
+        r.call(0x1d8490).unwrap();
+
+        let mut ours = words.clone();
+        create(&mut ps, &mat, &rec, &mut || ours.pop_front().unwrap());
+        assert_eq!(rand.borrow().len(), ours.len(), "case {case} rand draws");
+        for (i, &w) in ps.iter().enumerate() {
+            assert_eq!(r.mem.read_u32(ps_addr + 4 * i as u32), w, "create case {case} word {i} ({:#x})", 4 * i);
+        }
+
+        // Now step ParticleNode_Update 0x1d8b20 5 ticks and compare every word
+        for t in 0..5 {
+            r.cpu.set_gpr(4, ps_addr as u64);
+            r.call(0x1d8b20).unwrap();
+            node_update(&mut ps);
+            for (i, &w) in ps.iter().enumerate() {
+                assert_eq!(r.mem.read_u32(ps_addr + 4 * i as u32), w, "update case {case} tick {t} word {i}");
+            }
+        }
+
+        // And check ParticleNode_SetLifetime 0x1d8ac8
+        let new_life = if case % 3 == 0 { 0.0 } else { 1.5 };
+        r.cpu.set_gpr(4, ps_addr as u64);
+        r.cpu.set_f(12, new_life);
+        r.call(0x1d8ac8).unwrap();
+        set_lifetime(&mut ps, new_life);
+        for (i, &w) in ps.iter().enumerate() {
+            assert_eq!(r.mem.read_u32(ps_addr + 4 * i as u32), w, "set_lifetime case {case} word {i}");
+        }
+    }
+}

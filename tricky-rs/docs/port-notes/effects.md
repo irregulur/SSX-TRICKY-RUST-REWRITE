@@ -95,8 +95,21 @@ STANDINs left in `src/spray.rs`:
   `_ClearForce` 0x1d5548 (+0xd0), `ParticleSys_SetColors` 0x1d58e0 (+0xe0 start colour less 1.5 × (c2 + c3), +0x110
   (c1 − c0) ÷ (life × +0x3c), +0xf0 / +0x100 the random c2, c3). `ParticleGroup_UpdateTrail` 0x1d9208 (from
   `cBoarderRender::vf7` 0x1356f8): moves a group slot's particles and spawns new ones along the segment from the last
-  point, five `Rand_Fx` draws each. Not yet read: 0x1d5b60 (10.5 KB, vector maths only, called once by
-  `ParticleSys_Create` on system+0x150).
+  point, five `Rand_Fx` draws each.
+- Level emitters (`E1b2g4`, `tricky-rs/game/src/emitter.rs` checked word for word in `tests/emitter.rs`, hosted in
+  `tricky-rs/src/particles.rs`): proven in `SLUS_203.26` that all five callers of `ParticleSys_Create` 0x1d8490 are
+  `cEmitterNode::cEmitterNode` 0x147cf8 / 0x147d78 (wake/world emitters), `cParticleNode::cParticleNode` 0x147f88 /
+  0x148028 (controller emitters, calling `ParticleNode_SetLifetime` 0x1d8ac8 when continuous), and
+  `CollideEmitterNode_CreateParticles` 0x148748 (collision burst emitters). `ParticleSys_Create` 0x1d8490 builds a
+  0x170-byte system (`+0` lifetime, `+4` texture index, `+8` blend kind `0..10`, `+0x10..+0x150` emitter block,
+  `+0x150..+0x170` AABB), drawing its 9 `Rand_Fx` factors via `ParticleSys_RandomizeFactors` 0x1d5180 (0x1d85c4),
+  setting time to `max_life` when continuous (`dur < 0`) or `0` when one-shot, and computing the analytical AABB via
+  `ParticleSys_CalcBounds` 0x1d5b60 (7 spawn corners — omitting the `(1,1)` force corner, matching the original —
+  plus VU1 program 6 trajectories at `t_max` and the six positive axis extrema `(W_c / (V_ext − W_c) + 0.73) *
+  4.424779` clamped to `2.7`). `ParticleNode_Update` 0x1d8b20 runs `ParticleSys_StepEmitter` 0x1d5a30 (`Rand_VuNext`
+  0x1d5a08 on wrap) for continuous systems and `ParticleSys_AdvanceTime` 0x1d59f0 counting lifetime down by 1/60 to 0
+  for one-shot bursts. `src/particles.rs` drops its `hash()` / `u()` stand-in and draws every system through
+  `particledraw::particle_sys_draw` 0x1d8bc8 (`cull::box_test` -> `draw_program6` 0x1e2a60 -> `particlevu::run6`).
 - `cParticleMan` (`tricky-rs/game/src/particleman.rs`, E1b2g3a, checked word for word in `tests/particleman.rs`):
   12 trail slots (`0xf0` bytes each from `+0x10`; `+0xc` active count) sharing a pool of 250 (`0xfa`) particles of
   `0x80` bytes (`+0xb50` base, `+0xb54` free count, `+0xb58` free head, `+0xb5c` used count; 32,000 bytes allocated
