@@ -215,6 +215,13 @@ fn wall_cast(course: &tricky_game::course_ground::CourseGround, body: &CollBody,
     (t, h.map_or(Default::default(), |h| tricky_game::walls::CastRecord { pos: h.pos, normal: h.normal, object: h.object.map_or(0, |o| o as u32 + 1) }))
 }
 
+fn air_wall_cast(course: &tricky_game::course_ground::CourseGround, body: &CollBody) -> (f32, tricky_game::walls::CastRecord) {
+    let mut q = tricky_game::worldboarder::WorldBoarder::new(body, 0);
+    let skip = wall_skip();
+    let (t, h) = course.ray_cast(&mut q, false, None, &|i| skip.contains(&i));
+    (t, h.map_or(Default::default(), |h| tricky_game::walls::CastRecord { pos: h.pos, normal: h.normal, object: h.object.map_or(0, |o| o as u32 + 1) }))
+}
+
 /// `World_QueryInstances` 0x25b878 with `cWorldBoarder`(the body, 1), front faces only (`Boarder_InstanceCollisions`
 /// sets the shape's +0x2f0), on the course: t, the record (object = index + 1) and the object, as
 /// `ground_tick::touch_query` (F4b3k1), and the sphere tree hit (the record's +0x30). TRICKY_INSTDBG lists the hits.
@@ -481,10 +488,12 @@ struct W {
     handler: u32,
     pad: u32,
     seqs: [(u32, u32, u32); 2],
-    /// the air motion object (+0x20 the rider) and, while `landing` is set, World_RayCast's answer placed 99.9 cm
-    /// along the normal from the start of the last line made (`land_runner`)
+    /// the air motion object (+0x20 the rider), while `landing` is set World_RayCast's answer placed 99.9 cm
+    /// along the normal from the start of the last line made (recordings without `4aa0`/`8c0`), and while
+    /// `down_course` is set `AirMotion_Update`'s down ray (`cWorldLine` kind 1) answered from `course`
     air: u32,
     landing: Rc<Cell<bool>>,
+    down_course: Rc<Cell<bool>>,
     /// the course `World_RayCast`'s stub answers `Boarder_WallCollide`'s cast from (F4h5k; [`W::put_walls`])
     course: Rc<RefCell<Option<std::sync::Arc<tricky_game::course_ground::CourseGround>>>>,
     /// the course built in the runner ([`W::load_course`]): `Boarder_WallCollide`'s cast then runs as the
@@ -786,15 +795,15 @@ fn world() -> Option<W> {
     });
     // the world under the probe, as in tests/probe.rs
     let l = log.clone();
-    let (landing, line_from) = (Rc::new(Cell::new(false)), Rc::new(Cell::new([0.0f32; 4])));
-    let lf = line_from.clone();
+    let (landing, down_course, line_q) = (Rc::new(Cell::new(false)), Rc::new(Cell::new(false)), Rc::new(Cell::new(([0.0f32; 4], [0.0f32; 4], 0u32))));
+    let lq = line_q.clone();
     r.stub(0x25d7f0, move |cpu, mem| {
-        let (from, to) = (rv(mem, cpu.gpr(5) as u32), rv(mem, cpu.gpr(6) as u32));
-        lf.set(from);
+        let (from, to, kind) = (rv(mem, cpu.gpr(5) as u32), rv(mem, cpu.gpr(6) as u32), cpu.gpr(7) as u32);
+        lq.set((from, to, kind));
         l.borrow_mut().push(Ev::Line(cpu.f(12).to_bits(), b4(from), b4(to), cpu.gpr(7)));
     });
     let h = hit.clone();
-    let (ld, lf) = (landing.clone(), line_from.clone());
+    let (ld, dc, lq) = (landing.clone(), down_course.clone(), line_q.clone());
     let (l, c) = (log.clone(), course.clone());
     let real_cast = Rc::new(Cell::new(false));
     let rc = real_cast.clone();
@@ -805,6 +814,24 @@ fn world() -> Option<W> {
         if mem.read_u32(cpu.gpr(5) as u32 + 0x40) == 0x3a77d8 && rc.get() {
             l.borrow_mut().push(Ev::Wall(mem.read_u32(rd + 0x494)));
             return false;
+        }
+        if mem.read_u32(cpu.gpr(5) as u32 + 0x40) != 0x3a77d8 && !ld.get() && dc.get() && lq.get().2 == 1 {
+            if let Some(course) = c.borrow().clone() {
+                let (from, to, _) = lq.get();
+                let mut q = tricky_game::worldline::WorldLine::new(0.5, from, to, 1);
+                let (t, ch) = course.ray_cast(&mut q, false, None, &|_| false);
+                if let (true, Some(ch)) = (t >= 0.0, ch) {
+                    let out = cpu.gpr(6) as u32;
+                    mem.write_u32(out, ch.kind);
+                    wv(mem, out + 0x10, ch.pos);
+                    wv(mem, out + 0x20, ch.normal);
+                    mem.write_u32(out + 0x34, ch.surface as u32);
+                    cpu.set_f(0, t);
+                } else {
+                    cpu.set_f(0, -1.0);
+                }
+                return true;
+            }
         }
         match *h.borrow() {
         _ if mem.read_u32(cpu.gpr(5) as u32 + 0x40) == 0x3a77d8 => {
@@ -818,7 +845,12 @@ fn world() -> Option<W> {
             for k in 0..18u32 {
                 b.spheres[k as usize] = (rv(mem, rd + 0x4a0 + 0x20 * k), mem.read_f32(rd + 0x4b0 + 0x20 * k));
             }
-            let (t, h) = wall_cast(&course, &b, rv(mem, cpu.gpr(5) as u32 + 0x2e0));
+            let shape = cpu.gpr(5) as u32;
+            let (t, h) = if mem.read_u32(shape + 0x2d0) != 0 {
+                wall_cast(&course, &b, rv(mem, shape + 0x2e0))
+            } else {
+                air_wall_cast(&course, &b)
+            };
             let out = cpu.gpr(6) as u32;
             wv(mem, out + 0x10, h.pos);
             wv(mem, out + 0x20, h.normal);
@@ -829,7 +861,7 @@ fn world() -> Option<W> {
         Some(h) => {
             let out = cpu.gpr(6) as u32;
             mem.write_u32(out, h.kind);
-            let f = lf.get();
+            let f = lq.get().0;
             wv(mem, out + 0x10, if ld.get() { [f[0] + h.normal[0] * 99.9, f[1] + h.normal[1] * 99.9, f[2] + h.normal[2] * 99.9, f[3]] } else { h.point });
             wv(mem, out + 0x20, h.normal);
             mem.write_u32(out + 0x34, h.surface);
@@ -883,7 +915,7 @@ fn world() -> Option<W> {
     // clips and states), `Score_LandTrick` 0x1569b0 (0 points), `Boarder_StartCelebrate` 0x11f3b8,
     // `Boarder_IsTricky` 0x11f430 (no), `Speech_OnAirTime` 0x233448, `Boarder_SpawnLandingPuffs` 0x136e90,
     // `Sfx_UpdateAir` 0x217d50 and the rider's virtuals +0x6c, +0x84, +0x9c (put at 0x1010, 0x1020, 0x1030)
-    for a in [0x108378, 0x12ba78, 0x15ffb8] {
+    for a in [0x108378, 0x12ba78, 0x15ffb8, 0x1029d0] {
         r.allow(a);
     }
     for a in [0x123ec8, 0x123f00, 0x1049a0, 0x15f050, 0x109308, 0x1569b0, 0x11f3b8, 0x11f430, 0x233448, 0x136e90, 0x217d50, 0x1010, 0x1020, 0x1030] {
@@ -900,7 +932,12 @@ fn world() -> Option<W> {
     // (from `Boarder_WallCollide` 0x126250..0x126540, F4h5k: only the vtable set at +0x40, which `World_RayCast`'s
     // stub tells the wall's cast by)
     // (and from `Boarder_InstanceCollisions` 0x125088..0x1257a0 when it runs as the original, F4b3k4)
-    let in_wall = |cpu: &r5900::Cpu| (0x126250..0x126540).contains(&(cpu.gpr(31) as u32)) || (0x125088..0x1257a0).contains(&(cpu.gpr(31) as u32));
+    let dc_w = down_course.clone();
+    let in_wall = move |cpu: &r5900::Cpu| {
+        let ra = cpu.gpr(31) as u32;
+        (0x126250..0x126540).contains(&ra) || (0x125088..0x1257a0).contains(&ra) || (dc_w.get() && (0x108378..0x109308).contains(&ra))
+    };
+    let in_wall2 = in_wall.clone();
     let (l, h) = (log.clone(), hit.clone());
     let rc = real_cast.clone();
     r.hook(0x257810, move |cpu, mem| {
@@ -908,7 +945,9 @@ fn world() -> Option<W> {
             return false;
         }
         if in_wall(cpu) {
-            mem.write_u32(cpu.gpr(4) as u32 + 0x40, 0x3a77d8);
+            let s = cpu.gpr(4) as u32;
+            mem.write_u32(s + 0x40, 0x3a77d8);
+            mem.write_u32(s + 0x2d0, cpu.gpr(6) as u32);
             return true;
         }
         l.borrow_mut().push(Ev::Call(0x257810));
@@ -917,7 +956,7 @@ fn world() -> Option<W> {
     });
     let l = log.clone();
     r.stub(0x257ca0, move |cpu, _| {
-        if !in_wall(cpu) {
+        if !in_wall2(cpu) {
             l.borrow_mut().push(Ev::Call(0x257ca0));
         }
     });
@@ -965,7 +1004,7 @@ fn world() -> Option<W> {
     r.stub(0x23d3b0, move |cpu, _| cpu.set_gpr(2, pool as u64));
     r.stub(0x13b8c0, |_, _| {});
     let roll_nodes = (0..16).map(|_| (r.mem.alloc(0x350), r.mem.alloc(0x10))).collect();
-    Some(W { r, rd, stats, motion, log, hit, wall, meter, handler, pad, seqs, air, landing, course, real_cast, states_real: false, rc: None, inst0, roll_nodes, roll_trees })
+    Some(W { r, rd, stats, motion, log, hit, wall, meter, handler, pad, seqs, air, landing, down_course, course, real_cast, states_real: false, rc: None, inst0, roll_nodes, roll_trees })
 }
 
 impl W {
@@ -2595,6 +2634,7 @@ fn ground_ticks_against_the_running_game() {
     // the rider whose state manager is at rider − 0x880: its ground motion object is 0x30 further on (window `-3d0:10`)
     let km6 = ticks[0].extra.iter().position(|(o, _)| *o == -0x3d0);
     let kpose = pose_windows(&ticks);
+    let kf = ticks[0].extra.iter().position(|(o, _)| *o == 0x4aa0);
     let head = std::fs::read_to_string(path).unwrap().lines().next().unwrap().to_string();
     let addr: Vec<u32> = head.split_whitespace().skip(3).take(n).map(|h| u32::from_str_radix(h, 16).unwrap()).collect();
     let mut runners = Vec::new();
@@ -2652,6 +2692,7 @@ fn ground_ticks_against_the_running_game() {
     let mut tumbles = [0usize; 2];
     let mut getups = vec![[0usize; 3]; 1 + runners.len()];
     let mut landings = vec![[0usize; 3]; 1 + runners.len()];
+    let mut crash_landings = vec![[0usize; 3]; 1 + runners.len()];
     let kt = ticks[0].chased.iter().position(|(s, _)| s == "5ae0>4f0").filter(|_| std::env::var("TRICKY_TUMBLE").map_or(true, |v| v != "off"));
     let mut missed_all = [0usize; 3];
     // pushed ticks under fadd=g1 by whether the rider was also hit (the game's bump record +0x40 + 0x20·j +8 holds
@@ -2899,6 +2940,7 @@ fn ground_ticks_against_the_running_game() {
             let mut bare = vec![false; n];
             let mut rose = vec![false; n];
             let mut landed = vec![false; n];
+            let mut crash_landed = vec![false; n];
             for &me in &order {
                 let (a, b) = (&w[0].riders[me], &w[1].riders[me]);
                 // a rider an earlier one stumbled out of the cruise in this frame ticks with the boost off (F4b3r)
@@ -3028,26 +3070,53 @@ fn ground_ticks_against_the_running_game() {
                         riders[me].pos = pos;
                         rose[me] = true;
                     }
-                    // landing in the frame (F4b3x2), then the speed limit (0x1179a4: motion 2 by then); the runner's
-                    // `AirMotion_Update` (F4b3x3; one that does not land is left where it started)
-                    if ma == (1, 2) && air && !missed[me] && std::env::var("TRICKY_NOLAND").is_err() {
+                    // landing in the frame (F4b3x2, F4b3x5), then the speed limit (0x1179a4: motion 2 or 5 by then); the
+                    // runner's `AirMotion_Update` (F4b3x3; one that does not land is left where it started); with the
+                    // frame (`4aa0`) and pivot bone (`8c0`/`44d8`) recorded, the down ray runs on the course and the
+                    // probe clamps the position to the second sample's ground; crash landings (`ma == (1, 5)`) too
+                    if (ma == (1, 2) || (ma == (1, 5) && std::env::var("TRICKY_NOCRASHLAND").is_err())) && air && !missed[me] && std::env::var("TRICKY_NOLAND").is_err() {
                         let board = if std::env::var("TRICKY_LANDBOARD").is_ok_and(|v| v == "a") { a } else { b };
-                        let (pos, vel) = if k == 0 {
-                            land_ours(start.0, start.1, a, b, board, &stats[me]).unwrap_or(start)
+                        let frame_bone = (std::env::var("TRICKY_LANDCLAMP").as_deref() != Ok("off"))
+                            .then(|| {
+                                let f = kf.map(|kf| {
+                                    let x = &w[0].extra[kf].1[me];
+                                    std::array::from_fn(|r| vec4(x, 0x10 * r))
+                                })?;
+                                let bone = pose_of(&w[0], me, kpose, &table)?.pivot;
+                                Some((f, bone))
+                            })
+                            .flatten();
+                        // the first sample's clips, and layer 0's sequence when recorded (a grab's flag 4,
+                        // `AnimCtl_TestClipFlag`)
+                        let c = ctl_of(&w[0], &w[0], me, ka, addr[me], 0, b).unwrap_or_else(|| {
+                            let c = &w[0].extra[ka].1[me];
+                            Ctl { clips: [u32_le(c, 8), u32_le(c, 0xc)], seq: None, handler: Vec::new(), pad: 0, finish: 0, rider: b.to_vec() }
+                        });
+                        let res = if k == 0 {
+                            land_ours(start.0, start.1, a, b, board, &stats[me], &c, &table, frame_bone, course.as_deref())
                         } else {
-                            // the first sample's clips, and layer 0's sequence when recorded (a grab's flag 4,
-                            // `AnimCtl_TestClipFlag`)
-                            let c = ctl_of(&w[0], &w[0], me, ka, addr[me], 0, b).unwrap_or_else(|| {
-                                let c = &w[0].extra[ka].1[me];
-                                Ctl { clips: [u32_le(c, 8), u32_le(c, 0xc)], seq: None, handler: Vec::new(), pad: 0, finish: 0, rider: b.to_vec() }
-                            });
-                            land_runner(&mut runners[k - 1].1, start.0, start.1, a, b, board, &stats[me], &c).unwrap_or(start)
+                            land_runner(&mut runners[k - 1].1, start.0, start.1, a, b, board, &stats[me], &c, frame_bone, course.as_ref())
                         };
-                        riders[me].vel = speed_limit(vel, speed_limit_at(a, b, boost, if k == 0 { |x, y| x - y } else { r5900::ps2float::fsub }));
-                        if air_pos {
-                            riders[me].pos = pos;
+                        if ma == (1, 2) {
+                            let (pos, vel, push) = res.filter(|(_, _, cr, _)| !cr).map(|(p, v, _, pu)| (p, v, pu)).unwrap_or((start.0, start.1, [0.0; 4]));
+                            riders[me].vel = speed_limit(vel, speed_limit_at(a, b, boost, if k == 0 { |x, y| x - y } else { r5900::ps2float::fsub }));
+                            if air_pos {
+                                riders[me].pos = pos;
+                            }
+                            if push != [0.0; 4] {
+                                f.body[me].translate(push);
+                            }
+                            landed[me] = true;
+                        } else if let Some((pos, vel, true, push)) = res {
+                            riders[me].vel = speed_limit(vel, speed_limit_at(a, b, boost, if k == 0 { |x, y| x - y } else { r5900::ps2float::fsub }));
+                            if air_pos {
+                                riders[me].pos = pos;
+                            }
+                            if push != [0.0; 4] {
+                                f.body[me].translate(push);
+                            }
+                            crash_landed[me] = true;
                         }
-                        landed[me] = true;
                     }
                     if ma == (5, 5) && clip.0.wrapping_sub(0x2dc) >= 2 {
                         if let Some(m) = kt.map(|kt| &w[1].chased[kt].1[me]).filter(|m| m.len() >= 0x100) {
@@ -3140,7 +3209,7 @@ fn ground_ticks_against_the_running_game() {
             }
             if k == 0 {
                 let mut again = false;
-                for i in (0..n).filter(|&i| flown[i] || slid[i] || rose[i] || landed[i]) {
+                for i in (0..n).filter(|&i| flown[i] || slid[i] || rose[i] || landed[i] || crash_landed[i]) {
                     if sub4(riders[i].vel, vec4(&w[1].riders[i], 0x150)).iter().any(|x| x.abs() >= 1.0) {
                         missed[i] = true;
                         missed_all[match u32_le(&w[1].riders[i], 0x424) { 1 => 0, 4 => 1, _ => 2 }] += 1;
@@ -3209,9 +3278,19 @@ fn ground_ticks_against_the_running_game() {
                 landings[k][0] += 1;
                 landings[k][1] += (riders[i].vel == vec4(b, 0x150)) as usize;
                 landings[k][2] += (riders[i].pos == vec4(b, 0x140)) as usize;
-                if riders[i].vel != vec4(b, 0x150) && std::env::var("TRICKY_DBG").is_ok() {
+                if (riders[i].vel != vec4(b, 0x150) || (k == runners.len() && riders[i].pos != vec4(b, 0x140))) && std::env::var("TRICKY_DBG").is_ok() {
                     let (o, g) = (riders[i].vel, vec4(b, 0x150));
-                    eprintln!("DBG landing way {k} tick {tick} rider {i}: hits {} ulps {:?}, position off {:?}", f.hits[i], (0..3).map(|c| o[c].to_bits() as i64 - g[c].to_bits() as i64).collect::<Vec<_>>(), sub4(riders[i].pos, vec4(b, 0x140)));
+                    eprintln!("DBG landing way {k} tick {tick} rider {i}: hits {} pushes {} ulps {:?}, position off {:?}", f.hits[i], f.pushes[i], (0..3).map(|c| o[c].to_bits() as i64 - g[c].to_bits() as i64).collect::<Vec<_>>(), sub4(riders[i].pos, vec4(b, 0x140)));
+                }
+            }
+            for i in (0..n).filter(|&i| crash_landed[i]) {
+                let b = &w[1].riders[i];
+                crash_landings[k][0] += 1;
+                crash_landings[k][1] += (riders[i].vel == vec4(b, 0x150)) as usize;
+                crash_landings[k][2] += (riders[i].pos == vec4(b, 0x140)) as usize;
+                if k == runners.len() && (riders[i].vel != vec4(b, 0x150) || riders[i].pos != vec4(b, 0x140)) && std::env::var("TRICKY_DBG").is_ok() {
+                    let (o, g) = (riders[i].vel, vec4(b, 0x150));
+                    eprintln!("DBG crash_land tick {tick} rider {i}: hits {} pushes {} ulps {:?}, position off {:?}", f.hits[i], f.pushes[i], (0..3).map(|c| o[c].to_bits() as i64 - g[c].to_bits() as i64).collect::<Vec<_>>(), sub4(riders[i].pos, vec4(b, 0x140)));
                 }
             }
             for i in (0..n).filter(|&i| rose[i]) {
@@ -3322,7 +3401,8 @@ fn ground_ticks_against_the_running_game() {
         eprintln!("  riders in the air the whole frame, their flight step replayed (TRICKY_NOAIR: as recorded) [frames, velocity right, position right] by way: {flights:?}");
         eprintln!("  wiped-out riders tumbling the whole frame, the velocity their motion left them taken from its recorded body (5ae0>4f0; TRICKY_TUMBLE=off: as the others) [frames, velocity right]: {tumbles:?}; with no body recorded (the second sample's velocity): {bodiless}");
         eprintln!("  wiped-out riders sliding the whole frame, their slide replayed [frames, velocity right, position right] by way: {slides:?}");
-        eprintln!("  riders landing in the frame, their landing's velocity replayed [frames, velocity right, position right] by way: {landings:?}");
+        eprintln!("  riders landing in the frame, their landing replayed [frames, velocity right, position right] by way: {landings:?}");
+        eprintln!("  riders crash-landing in the frame (motion 1->5) [frames, velocity right, position right] by way: {crash_landings:?}");
         eprintln!("  riders getting up the whole frame, their get-up replayed [frames, velocity right, position right] by way: {getups:?}");
         eprintln!("  riders whose own motion was replayed but ended the frame 1 cm/s or more from the game's, taken as the others (in the air, motion 4, sliding): {missed_all:?}");
         eprintln!("  riders leaving the snow in a replayed frame, their take-off replayed for their pushes and hits (TRICKY_NOLIFT: as recorded): {lifted}");
@@ -3691,35 +3771,96 @@ fn get_up_ours(pos: V4, vel: V4, a: &[u8], b: &[u8], stat60: f32, hit: Option<Hi
     (pos, vel)
 }
 
-/// Our landing (F4b3x3): `tricky_game::air_motion::update_by` (`AirMotion_Update` 0x108378) from (pos, vel) with
-/// the first sample's time scale (+0x12c), orientation (+0x170, +0x1d0, +0x1d4), surface, side and switch, the
-/// board (+0x180, +0x1a0) of `board`, both rays answered with the second sample's ground (normal +0x2a0, surface
-/// +0x290), and the COP1 adds by PCSX2's adder (`fadd=g1`, F4g: the slow-downs' and `Landing_CheckAngles`'s,
-/// `check_angles_by`). `None`: it did not land (no `Landing_ChooseState`), as `land_runner`. STANDIN, as
-/// `land_runner`: the down ray's hit 99.9 cm along the normal from its start and the probe's height 0.1 cm (a
-/// landing not clamped to the ground: the clamp's pivot needs the body's bone, not recorded), the bone and the
-/// board's frame 0; the clip type taken as no grab (a grab not at its safe point crashes, motion 5, not 2).
-fn land_ours(pos: V4, vel: V4, a: &[u8], b: &[u8], board: &[u8], stats: &[u8]) -> Option<(V4, V4)> {
+/// Our landing (F4b3x3, F4b3x5): `tricky_game::air_motion::update_by` (`AirMotion_Update` 0x108378) from (pos, vel)
+/// with the first sample's time scale (+0x12c), orientation (+0x170, +0x1d0, +0x1d4), surface, side and switch, the
+/// board (+0x180, +0x1a0) of `board`, and the COP1 adds by PCSX2's adder (`fadd=g1`, F4g: the slow-downs' and
+/// `Landing_CheckAngles`'s, `check_angles_by`). With `frame_bone` (the first sample's `4aa0` frame and `8c0` pivot
+/// bone when `44d8 == 0`, F4b3x5), the down ray casts `cWorldLine(0.5, from, to, 1)` on `course` (falling back to the
+/// second sample's ground) and `Boarder_ProbeGround` (`probe::probe`) runs on the second sample's ground (`+0x2d0`,
+/// `+0x2a0`, `+0x290`, `+0x2e0`), clamping `pos` to the ground when `height < 0`. Without `frame_bone` (recordings
+/// before rec20): STANDIN as before (hit 99.9 cm along normal, height 0.1 cm, unclamped). Returns `(pos, vel,
+/// crashed)` when `Landing_ChooseState` (`false`) or `Boarder_Wipeout` (`true`) ran.
+fn land_ours(
+    pos: V4,
+    vel: V4,
+    a: &[u8],
+    b: &[u8],
+    board: &[u8],
+    stats: &[u8],
+    c: &Ctl,
+    table: &[u8],
+    frame_bone: Option<([V4; 4], [f32; 3])>,
+    course: Option<&tricky_game::course_ground::CourseGround>,
+) -> Option<(V4, V4, bool, V4)> {
     use tricky_game::air_motion::{update_by, AirEnv, AirRider, Ray};
     use tricky_game::landing::{check_angles_by, LandingState};
     fn g1(x: f32, y: f32) -> f32 {
         r5900::ps2float::add_by(x, y, r5900::ps2float::Round::Guard)
     }
-    struct LandEnv {
+    struct LandEnv<'a> {
         normal: V4,
+        point: V4,
         surface: u32,
+        kind: u32,
+        kind_a: u32,
+        side: V4,
+        x244: f32,
+        stat60: f32,
         board: V4,
         up: V4,
         stability: u8,
+        clip_type: u32,
+        clip_flag4: bool,
+        clamp: bool,
+        body: CollBody,
+        pushed: V4,
+        course: Option<&'a tricky_game::course_ground::CourseGround>,
         landed: bool,
+        crashed: bool,
     }
-    impl AirEnv for LandEnv {
+    impl AirEnv for LandEnv<'_> {
         fn predict_tick(&mut self, _: &mut AirRider) {}
-        fn down_ray(&mut self, _: &mut AirRider, from: V4, _: V4) -> Ray {
+        fn down_ray(&mut self, _: &mut AirRider, from: V4, to: V4) -> Ray {
+            if self.clamp {
+                if let Some(course) = self.course {
+                    let mut q = tricky_game::worldline::WorldLine::new(0.5, from, to, 1);
+                    let (t, h) = course.ray_cast(&mut q, false, None, &|_| false);
+                    return match (t >= 0.0, h) {
+                        (true, Some(h)) => Ray { frac: t, point: h.pos, normal: h.normal, word: h.surface as u32 },
+                        _ => Ray { frac: -1.0, ..Default::default() },
+                    };
+                }
+                return Ray { frac: 0.4, point: self.point, normal: self.normal, word: self.surface };
+            }
             let n = self.normal;
             Ray { frac: 0.4, point: [from[0] + n[0] * 99.9, from[1] + n[1] * 99.9, from[2] + n[2] * 99.9, from[3]], normal: n, word: self.surface }
         }
         fn probe_ground(&mut self, r: &mut AirRider) -> bool {
+            if self.clamp {
+                let mut pr = probe::Rider {
+                    pos: r.pos,
+                    fwd: r.orient.fwd,
+                    normal: r.normal,
+                    ground: r.ground,
+                    plane_fwd: [0.0; 4],
+                    side: self.side,
+                    fall: [0.0; 4],
+                    x244: self.x244,
+                    stat60: self.stat60,
+                    height: r.height,
+                    surface: r.surface,
+                    surface_ticks: r.surface_ticks as u32,
+                    kind: self.kind_a,
+                };
+                let hit = (self.kind != 3).then_some(Hit { kind: self.kind, point: self.point, normal: self.normal, surface: self.surface });
+                let found = probe::probe(&mut pr, hit);
+                r.normal = pr.normal;
+                r.ground = pr.ground;
+                r.height = pr.height;
+                r.surface = pr.surface;
+                r.surface_ticks = pr.surface_ticks as i32;
+                return found;
+            }
             r.normal = self.normal;
             r.surface = self.surface;
             r.height = 0.1;
@@ -3733,11 +3874,13 @@ fn land_ours(pos: V4, vel: V4, a: &[u8], b: &[u8], board: &[u8], stats: &[u8]) -
         }
         fn blend_out_all(&mut self, _: &mut AirRider) {}
         fn check_angles(&mut self, r: &mut AirRider) -> Option<(f32, f32)> {
-            let s = LandingState { clip_type: 0, clip_flag4: false, surface: r.surface, board: self.board, vel: r.vel, up: self.up, stability: self.stability };
+            let s = LandingState { clip_type: self.clip_type as i32 as i64, clip_flag4: self.clip_flag4, surface: r.surface, board: self.board, vel: r.vel, up: self.up, stability: self.stability };
             check_angles_by(&s, r.normal, g1).map(|l| (l.pitch, l.roll))
         }
         fn crash_virtual(&mut self, _: &mut AirRider, _: V4, _: V4, _: V4) {}
-        fn wipeout(&mut self, _: &mut AirRider, _: &CrashRecord) {}
+        fn wipeout(&mut self, _: &mut AirRider, _: &CrashRecord) {
+            self.crashed = true;
+        }
         fn score_crash(&mut self, _: &mut AirRider) -> f32 {
             0.0
         }
@@ -3759,12 +3902,30 @@ fn land_ours(pos: V4, vel: V4, a: &[u8], b: &[u8], board: &[u8], stats: &[u8]) -
         fn virtual_9c(&mut self, _: &mut AirRider) {}
         fn rail_try_capture(&mut self, _: &mut AirRider) {}
         fn instance_collisions(&mut self, _: &mut AirRider) {}
-        fn wall_ray(&mut self, _: &mut AirRider) -> Ray {
+        fn wall_ray(&mut self, r: &mut AirRider) -> Ray {
+            if self.clamp {
+                if let Some(course) = self.course {
+                    let mut body = self.body;
+                    body.x24 = r.mask as i32;
+                    let (t, h) = air_wall_cast(course, &body);
+                    return Ray { frac: t, point: h.pos, normal: h.normal, word: 0 };
+                }
+            }
             Ray { frac: -1.0, ..Default::default() }
         }
-        fn translate(&mut self, _: &mut AirRider, _: V4) {}
+        fn translate(&mut self, _: &mut AirRider, by: V4) {
+            self.body.translate(by);
+            for i in 0..4 {
+                self.pushed[i] += by[i];
+            }
+        }
         fn wall_done(&mut self, _: &mut AirRider) {}
     }
+    let (frame, bone) = frame_bone.unwrap_or(([[0.0; 4]; 4], [0.0; 3]));
+    let clip0 = c.clips[0];
+    let clip_type = if clip0 == animctl::NONE { 0 } else { u32_le(table, clip0 as usize * 0x1c) };
+    let clip_flag4 = c.seq.as_ref().is_some_and(|(bytes, _)| bytes.len() > 0x74 && (bytes[0x74] & 8) != 0);
+    let x244 = if std::env::var("TRICKY_LAND244").as_deref() == Ok("a") { f32_at(a, 0x244) } else { f32_at(b, 0x244) };
     let mut r = AirRider {
         timescale: f32_at(a, 0x12c),
         pos,
@@ -3775,27 +3936,67 @@ fn land_ours(pos: V4, vel: V4, a: &[u8], b: &[u8], board: &[u8], stats: &[u8]) -
         slope_kind: -1,
         surface: u32_le(a, 0x290),
         surface_ticks: u32_le(a, 0x29c) as i32,
+        frame,
+        bone,
         normal: vec4(a, 0x2a0),
         height: f32_at(a, 0x1bc),
+        ground: vec4(a, 0x2d0),
         switch: u32_le(a, 0x1b4),
         stance: u32_le(stats, 0x40),
         mask: u32_le(a, 0x494),
         ..Default::default()
     };
-    let mut env = LandEnv { normal: vec4(b, 0x2a0), surface: u32_le(b, 0x290), board: vec4(board, 0x180), up: vec4(board, 0x1a0), stability: stats[0x16], landed: false };
+    let use_course = course.filter(|_| std::env::var("TRICKY_LANDRAY").as_deref() != Ok("b"));
+    let mut env = LandEnv {
+        normal: vec4(b, 0x2a0),
+        point: vec4(b, 0x2d0),
+        surface: u32_le(b, 0x290),
+        kind: u32_le(b, 0x2e0),
+        kind_a: u32_le(a, 0x2e0),
+        side: vec4(a, 0x330),
+        x244,
+        stat60: f32_at(stats, 0x60),
+        board: vec4(board, 0x180),
+        up: vec4(board, 0x1a0),
+        stability: stats[0x16],
+        clip_type,
+        clip_flag4,
+        clamp: frame_bone.is_some(),
+        body: body_of(a),
+        pushed: [0.0; 4],
+        course: use_course,
+        landed: false,
+        crashed: false,
+    };
     update_by(&mut r, &SURFACE_TABLE, &mut env, g1);
-    env.landed.then_some((r.pos, r.vel))
+    if (env.landed || env.crashed) && frame_bone.is_some() && u32_le(a, 0x428) == 0x10 {
+        let mut sr = SpinRider { pos: r.pos, quat: r.orient.q, spin: r.spin, flip: r.flip, bone: r.bone, ..Default::default() };
+        tricky_game::spin::spin_exit(&mut sr);
+        r.pos = sr.pos;
+    }
+    (env.landed || env.crashed).then_some((r.pos, r.vel, env.crashed, env.pushed))
 }
 
-/// The runner's landing (F4b3x3): `AirMotion_Update` 0x108378 on the air motion object from (pos, vel), with the
-/// first sample's time scale (+0x12c), orientation (+0x170, +0x1d0, +0x1d4), side (+0x330), surface and clips
-/// (`c`, laid out as `lay` does), the board (+0x180..+0x1a0) of `board`, and both rays (down, then `Boarder_ProbeGround`
-/// 0x128ae8) answered with the second sample's ground: normal (+0x2a0), kind (+0x2e0), surface (+0x290). `None`: it
-/// did not land (no `Landing_ChooseState`). STANDIN: each hit point is put 99.9 cm along the normal from its line's
-/// start (the probe's line starts 100 cm below the board), so the probe's height is about 0.1 cm, a landing not
-/// clamped to the ground (the clamp's pivot needs the body's bone, not recorded): the position is the flight
-/// step's, as ours; the bone is 0, the predicted landing's surface (+0x57f0) none.
-fn land_runner(g: &mut W, pos: V4, vel: V4, a: &[u8], b: &[u8], board: &[u8], stats: &[u8], c: &Ctl) -> Option<(V4, V4)> {
+/// The runner's landing (F4b3x3, F4b3x5): `AirMotion_Update` 0x108378 on the air motion object from (pos, vel), with
+/// the first sample's time scale (+0x12c), orientation (+0x170, +0x1d0, +0x1d4), side (+0x330), surface and clips
+/// (`c`, laid out as `lay` does), and the board (+0x180..+0x1a0) of `board`. With `frame_bone` (F4b3x5: `4aa0` frame
+/// and `8c0` pivot bone when `44d8 == 0`), the down ray casts on `course` (when present) and `Boarder_ProbeGround`
+/// 0x128ae8 answers the second sample's ground (`+0x2d0`, `+0x2a0`, `+0x2e0`, `+0x290`), clamping `pos` to the
+/// ground when `height < 0`, followed by `SpinControl_Exit` 0x1029d0 when leaving state 0x10. Without `frame_bone`
+/// (recordings before rec20): STANDIN as before (hit 99.9 cm along normal, unclamped). Returns `(pos, vel, crashed,
+/// wall_push)` when `Landing_ChooseState` (`false`) or `Boarder_Wipeout` (`true`) ran.
+fn land_runner(
+    g: &mut W,
+    pos: V4,
+    vel: V4,
+    a: &[u8],
+    b: &[u8],
+    board: &[u8],
+    stats: &[u8],
+    c: &Ctl,
+    frame_bone: Option<([V4; 4], [f32; 3])>,
+    course: Option<&std::sync::Arc<tricky_game::course_ground::CourseGround>>,
+) -> Option<(V4, V4, bool, V4)> {
     let rd = g.rd;
     let m = &mut g.r.mem;
     m.write_f32(g.stats + 0x60, f32_at(stats, 0x60));
@@ -3803,38 +4004,79 @@ fn land_runner(g: &mut W, pos: V4, vel: V4, a: &[u8], b: &[u8], board: &[u8], st
     m.write_u32(g.stats + 0x74, 0);
     wv(m, rd + 0x140, pos);
     wv(m, rd + 0x150, vel);
-    for o in [0x170, 0x2a0, 0x330] {
+    for o in [0x170, 0x2a0, 0x2d0, 0x330] {
         wv(m, rd + o, vec4(a, o as usize));
     }
     for o in [0x180, 0x190, 0x1a0] {
         wv(m, rd + o, vec4(board, o as usize));
     }
-    for o in [0x12c, 0x1bc, 0x1d0, 0x1d4, 0x244] {
+    for o in [0x12c, 0x1bc, 0x1d0, 0x1d4] {
         m.write_f32(rd + o, f32_at(a, o as usize));
     }
-    for o in [0x1b4, 0x290, 0x29c] {
+    let x244 = if std::env::var("TRICKY_LAND244").as_deref() == Ok("a") { f32_at(a, 0x244) } else { f32_at(b, 0x244) };
+    m.write_f32(rd + 0x244, x244);
+    for o in [0x1b4, 0x290, 0x29c, 0x2e0] {
         m.write_u32(rd + o, u32_le(a, o as usize));
     }
     m.write_u32(rd + 0x44d8, 0);
-    for o in (0x8c0..0x8d0).chain(0x4aa0..0x4ae0).step_by(4) {
-        m.write_u32(rd + o, 0);
+    let body0 = body_of(a);
+    if let Some((frame, bone)) = frame_bone {
+        for r in 0..4u32 {
+            wv(m, rd + 0x4aa0 + 0x10 * r, frame[r as usize]);
+        }
+        for i in 0..3u32 {
+            m.write_f32(rd + 0x8c8 + 4 * i, bone[i as usize]);
+        }
+        wv(m, rd + 0x480, body0.center);
+        m.write_f32(rd + 0x490, body0.radius);
+        m.write_u32(rd + 0x494, body0.x24 as u32);
+        m.write_u32(rd + 0x498, body0.count as u32);
+        for (k, (c, r)) in body0.spheres.iter().enumerate() {
+            wv(m, rd + 0x4a0 + 0x20 * k as u32, *c);
+            m.write_f32(rd + 0x4b0 + 0x20 * k as u32, *r);
+        }
+    } else {
+        for o in (0x8c0..0x8d4).chain(0x4aa0..0x4ae0).step_by(4) {
+            m.write_u32(rd + o, 0);
+        }
     }
     m.write_u32(rd + 0x57f0, u32::MAX);
     for (at, v) in lay(c, rd + 0x46c0, g.seqs[0]) {
         g.r.mem.write_u32(at, v);
     }
-    *g.hit.borrow_mut() = Some(Hit { kind: u32_le(b, 0x2e0), point: [0.0; 4], normal: vec4(b, 0x2a0), surface: u32_le(b, 0x290) });
+    let kind = u32_le(b, 0x2e0);
+    if frame_bone.is_some() {
+        *g.hit.borrow_mut() = (kind != 3).then(|| Hit { kind, point: vec4(b, 0x2d0), normal: vec4(b, 0x2a0), surface: u32_le(b, 0x290) });
+        *g.course.borrow_mut() = course.cloned();
+        g.landing.set(false);
+        g.down_course.set(course.is_some() && std::env::var("TRICKY_LANDRAY").as_deref() != Ok("b"));
+    } else {
+        *g.hit.borrow_mut() = Some(Hit { kind, point: [0.0; 4], normal: vec4(b, 0x2a0), surface: u32_le(b, 0x290) });
+        g.landing.set(true);
+        g.down_course.set(false);
+    }
     g.wall.set(false);
-    g.landing.set(true);
     let from = g.log.borrow().len();
     g.r.cpu.set_gpr(4, g.air as u64);
     let ran = g.r.call(0x108378);
     g.landing.set(false);
-    let landed = g.log.borrow()[from..].iter().any(|e| matches!(e, Ev::Call(0x109308)));
-    if std::env::var("TRICKY_DBG").is_ok_and(|v| v == "land") {
-        eprintln!("LAND {ran:?} {landed} clips {:x?} seq {:?} {:?}", c.clips, c.seq.as_ref().map(|s| s.1), &g.log.borrow()[from..]);
+    g.down_course.set(false);
+    let (landed, crashed) = {
+        let log = g.log.borrow();
+        let landed = log[from..].iter().any(|e| matches!(e, Ev::Call(0x109308)));
+        let crashed = log[from..].iter().any(|e| matches!(e, Ev::Wipeout(..)));
+        if std::env::var("TRICKY_DBG").is_ok_and(|v| v == "land") {
+            eprintln!("LAND {ran:?} {landed} {crashed} clips {:x?} seq {:?} {:?}", c.clips, c.seq.as_ref().map(|s| s.1), &log[from..]);
+        }
+        (landed, crashed)
+    };
+    if ran.is_ok() && (landed || crashed) && frame_bone.is_some() && u32_le(a, 0x428) == 0x10 {
+        g.r.mem.write_u32(g.handler + 0x740 + 0x70, rd);
+        g.r.cpu.set_gpr(4, (g.handler + 0x740) as u64);
+        g.r.call(0x1029d0).unwrap_or_else(|e| panic!("SpinControl_Exit: {e:?}"));
     }
-    (ran.is_ok() && landed).then(|| (rv(&mut g.r.mem, rd + 0x140), rv(&mut g.r.mem, rd + 0x150)))
+    let pushed = if frame_bone.is_some() { sub4(rv(&mut g.r.mem, rd + 0x480), body0.center) } else { [0.0; 4] };
+    (ran.is_ok() && (landed || crashed)).then(|| (rv(&mut g.r.mem, rd + 0x140), rv(&mut g.r.mem, rd + 0x150), crashed, pushed))
 }
 
 /// The runner's get-up: `Boarder_UpdateMotion` 0x11c770 on the handler, motion 6 (`GetUpMotion_Update` on handler

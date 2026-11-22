@@ -2608,3 +2608,49 @@ Checked (`computer_pad_words_against_the_running_game`):
 - `TRICKY_GMODE=0` breaks `+0x894` counters (`278` misses on rec25, `17` on rec26, `80` on rec28, `74` on rec29, `25`
   on rec30) and dispatch pad words, while `mode != 0` gives 0 misses across all 5 recordings; verified `pine.py`'s new
   `mode 2` header end-to-end on `rec31_mode.txt` (481 ticks, `course 3 mode 2`, 0 object-field misses). Row F4b3k2 done.
+
+## F4b3x5: landing down ray, pivot-bone ground clamp, `SpinControl_Exit`, and crash landings (2026-11-21, done)
+
+Proven (`AirMotion_Update` 0x108378, `Boarder_ProbeGround` 0x128ae8, `SpinControl_Exit` 0x1029d0, `Boarder_Wipeout`
+0x11d830, `Landing_ChooseState` 0x109308):
+- Across all six recordings with the `4aa0` (board frame), `8c0` (pivot bone 0, `+0x8c8..+0x8d4`), `44d8` (pivot
+  index), and `5ae0>4f0` (tumble body) windows (`rec24`, `rec25`, `rec26`, `rec28`, `rec29`, `rec30`), `rider+0x44d8`
+  is `0` on **2,291 / 2,291** landings (100%).
+- When `AirMotion_Update` 0x108378 lands from control state `0x10` (`SpinControl`), it clamps `rider+0x140` to
+  `ground - off` (`pivot_offset`), and then `Landing_ChooseState` 0x109308 (or `Boarder_Wipeout` 0x11d830 on a crash
+  landing) calls `Boarder_SetState`, which runs `SpinControl_Exit` 0x1029d0 (`spin::spin_exit`), adding `+off` back
+  onto `rider+0x140` and zeroing spin/flip (`+0x1d0`, `+0x1d4`). Without `SpinControl_Exit`, every clamped landing
+  from state `0x10` left `pos` off by `-off` (up to ~90 cm); with it, all landings match bit for bit.
+- `rec24 2395 r1` (F4b3k5): rider 2 is upside-down in state `0x10` (`ma == (1, 5)`), misses the ground height check
+  (`height = 96.63 cm`), hits the course wall via the air's `cWorldBoarder(rider+0x470, 0)` sweep (`wall_ray` →
+  `wall_push` → `wall_bump` crash → `Boarder_Wipeout` → `SpinControl_Exit`), and then hits rider 1 in
+  `Boarder_RiderCollisions` with its pre-collision velocity (`[172.28, 723.19, -3263.62]`, matching `5ae0>4f0 + 0xe0`)
+  and translated body, stumbling rider 1 (`3 → 2`).
+- `rec24 4792 r5` (F4b3k5): rider 4 is sliding wiped out (`0x2dd -> 0x2dd`) and was already fixed once `F4b3p` wired
+  the slide's walls (`1,410 / 1,410` slides exact, 0 hits/state misses at `4792 r5`).
+
+Changed (`tricky-rs/game/tests/ground_motion.rs`):
+- Wired `4aa0` frame, `8c0` pivot bone (`+0x8c8..+0x8d4`, fixing the old zeroing loop `0x8c0..0x8d0` that skipped
+  `+0x8d0`), real `down_ray` (`cWorldLine(0.5, from, to, 1)` on `CourseGround`), real `Boarder_ProbeGround`
+  (`probe::probe` on `b`'s `+0x2d0/+0x2a0/+0x290/+0x2e0`), layer-0 clip type & flag 4 (`bytes[0x74] & 8`) in
+  `land_ours`, air wall sweep (`cWorldBoarder(body, 0)`, `air_wall_cast` + runner original cast, translating
+  `f.body[me]` by `wall_push`), and `SpinControl_Exit` 0x1029d0 (`spin::spin_exit` / runner `0x1029d0`) when leaving
+  state `0x10` into both `land_ours` and `land_runner`.
+- Replayed air crash-landings (`ma == (1, 5)`) through `land_ours` / `land_runner` alongside normal landings
+  (`ma == (1, 2)`), keeping the pre-rec20 unclamped fallback for old recordings (`rec16`, `rec18`) without `4aa0`/`8c0`.
+
+Checked (`ground_ticks_against_the_running_game`, `TRICKY_FLOAT_RULES="add=n,fadd=g1"`):
+
+| Recording | Course | Landings (vel & pos exact, ours & g1 runner) | Crash landings `1→5` (g1 runner: vel / pos) | Tumbles (`5ae0>4f0`, bodiless = 0) | Ground ticks `fadd=g1` (`state`, `pos`, `every field`) |
+|---|---|---|---|---|---|
+| rec24 | Snowdream | **439 / 439** vel, **439 / 439** pos (was 436 vel, 130 pos) | **44 / 44** vel, **41 / 44** pos | 2,390 / 2,421 (0) | `state` 140,243 → **140,246** (+3: 3× `2395 r1`), `pos` 140,220 → **140,223**, `hit too` pos 836 → **839** / vel 821 → **824** |
+| rec25 | Snowdream | **447 / 447** vel, **447 / 447** pos | **43 / 43** vel, **40 / 43** pos | 2,294 / 2,327 (0) | `state` 147,063 → **147,068** (+5), `pos` 147,038 → **147,041**, `every field` 146,262 → **146,264** |
+| rec26 | Mesa Blanca | **276 / 276** vel, **276 / 276** pos | 13 / 15 vel, 12 / 15 pos | 1,146 / 1,147 (0) | `state` 62,826 / 62,831, `pos` 62,829, `bumps` 330/330, `shoves` 8/8 |
+| rec28 | Mesa Blanca | **290 / 290** vel, **290 / 290** pos | 6 / 9 vel, 6 / 9 pos | **1,025 / 1,025** (0) | `state` 74,544 / 74,549, `pos` 74,545 |
+| rec29 | Mesa replay | **274 / 274** vel, **274 / 274** pos | 6 / 9 vel, 6 / 9 pos | **996 / 996** (0) | `state` 69,053 / 69,055, `pos` 69,052, `bumps` 550/550 |
+| rec30 | Mesa + replay | **471 / 471** vel, **471 / 471** pos | 14 / 20 vel, 13 / 20 pos | 1,662 / 1,664 (0) | `state` 100,793 / 100,799, `pos` 100,769, `shoves` 42/42 |
+| **Total (rec24–30)** | Snow + Mesa | **2,197 / 2,197 (100%) vel & pos** | **126 / 140** vel, **118 / 140** pos | **9,513 / 9,580** (0 bodiless) | Backward compat verified: `rec18` (178/178 vel, 52 pos, 54,606), `rec16` (203/203 vel, 48 pos, 51,746) |
+
+- Note on `ours` vs `g1 runner` crash-landings (`rec24`: `ours` `[44, 41, 13]` = IEEE runner `[44, 41, 13]` vs g1
+  runner `[44, 44, 41]`): the difference on air wall-ray crash positions is `CourseGround`'s nearest patch
+  tessellation vs PCSX2's toward-zero patch cache, already tracked by row **F4h5n**. Row F4b3x5 done.
