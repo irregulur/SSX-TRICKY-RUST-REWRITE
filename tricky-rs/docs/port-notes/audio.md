@@ -1828,3 +1828,41 @@ In the app: `ui::AudioLevels` keeps the seven slots through `sfxcalc::set_volume
 AUDIO.INF from the disc (TRICKY_DISC) with BANKS.INF and applies `IGLEVELSCALING` and the course's section when a
 course starts; the board loops' volume is multiplied by slot 4's float and truncated, as the monitor scales an
 instance (+0x60). Not made: the master volume's and the music's calls (STANDIN in `src/ui.rs`).
+
+## EA MIDI sequencer & `.eam` files (E1b2g7d3b7b1, `data/src/eam.rs`, `game/src/sndmidi.rs`)
+
+Proven (`SLUS_203.26`, every function checked word-for-word in the R5900 function runner, `tests/sndmidi.rs`, and
+all 9 crowd `.eam` files from `DATA/AUDIO/AUDIO.BIG` replayed start-to-EOT bit-for-bit):
+
+- **`.eam` format (`tricky_data::eam`)**: `"MD"` (LE `u16` `0x444d`) skips 8 bytes, `"MIDx"` (LE `u32` `0x7844494d`)
+  skips 4 bytes, otherwise raw stream at offset 0 (`SndMidi_Play` 0x2d4440). All 9 files referenced by `CROWD.INF`
+  (`Ahh10..30.eam`, `Anticipation10..30.eam`, `Cheer10..30.eam` in `DATA/AUDIO/AUDIO.BIG`) use `"MIDx"`.
+- **Event records (`SndMidi_RunEvents` 0x2d3f00)**: packed 3- or 4-byte records `[delta: u8, status: u8, data1: u8,
+  (data2: u8)]` where `delta` is the **post-delay** in MIDI ticks to wait after running the event (`+0x27` starts at
+  `1`, so the first event runs on MIDI tick 1). Commands (`status & 0xf0`, channel `status & 0x0f`):
+  - `0x80` Note Off (4 bytes): consumes velocity, calls `SndHandle_Release` 0x2dfda0 on the first active voice with
+    matching `(slot, chan, note)` and `vel >= 0`, then marks `voice+7 = 0xff`.
+  - `0x90` Note On (4 bytes): scans the 24 MIDI voices at `0x350ef0` round-robin from `0x3507e8` for a free voice
+    (`SndVoice_Validate` 0x2d50f0 `< 0`), builds `SndPlayOpts` (`SndPlayOpts_Init` 0x2d4a60) with `vol = (ch_vol *
+    master_vol_hi) >> 7`, `pan = ((ch_pan << 6) + master_pan) & 0xffff`, `bend`, `pitch`, `vel`, uses `drum_bank`
+    (`+0x2e >= 0`, `note = 0x3c`, `prog = data1`) on channel 9 else `main_bank` (`+0x2c`, `prog = i8(ch+3)`), calls
+    `SND_PlayBankSound` 0x2d1718, and stores `(handle, slot, chan, note, vel)`.
+  - `0xb0` Control Change (4 bytes): `7` channel volume (`0..127`), `10` pan via `Snd_MidiPanToPan` 0x2d6910 (128-entry
+    `u16` table at `0x351998`), `0x14` loop start (`+0x0c = ptr`), `0x1e` loop end (`+0x26 >= 0x7f` reloads count from
+    `data2`, non-zero decrements and jumps to `+0x0c`), others skip `data2`.
+  - `0xc0` Program Change (3 bytes): sets channel program byte `ch+3 = data1` (`Ahh`: `0x10`, `Anticipation`: `0x11`,
+    `Cheer`: `0x12` on `Crowd.bnk`).
+  - `0xe0` Pitch Bend (4 bytes): `bend = (((msb << 7) + lsb) / 128) & 0x7f` (signed round toward zero).
+  - `0xf0` with `data1 == 0x2f` (3 bytes): End of Track — waits until `SndMidi_VoicesDone` 0x2d3938 returns 1, then
+    calls `SndMidi_Stop` 0x2d4368. Any other status (3 bytes, e.g. `0xff 0xf8` in all 9 crowd files for 255-tick wait
+    extensions) is a no-op that waits `delta` ticks (~2000 ticks = 20 s per crowd `.eam`).
+- **Clock (`SND_RunTicks` 0x2d05a0 → `SND_Tick` 0x2d0698 → `SndMidi_Tick` 0x2d4108)**: `SND_Tick` runs at **100 Hz**.
+  Each playing slot (`state == 3` in the 16 × `0x70`-byte table at `0x3507f0`) updates any active linear fade
+  (`SndMidi_UpdateFade` 0x2d3838), computes `target = (ticks * tempo) / 100` (unsigned `divu`, `tempo = (opts_speed *
+  100) >> 12`, `100` at default `0x1000`), and calls `SndMidi_RunEvents` while `midi_ticks <= target`.
+- **`cMidiSys` (`0x222080..0x222798`)**: `MidiSys_Init` 0x222080 sets up `cBankSys` + `SndMidi_Init` + 32-byte
+  `MIDIBANKS` queue at `+0xa48` and `gMidiSys` `0x343124`; `MidiSys_PushEvent` 0x222160 queues `(bank_kind, file_data)`;
+  `MidiSys_PlayPending` 0x222358 scales volume, starts `SndMidi_Play` when cull == 0.0 and bank state == 1, registers
+  with `BankMonitor_AddInstance` (engine 2) + `BankInstance_SetHandleCopy1`, and schedules delay echoes via
+  `MidiSys_PlayEventCallback` 0x222798 (`0x39fd80`). Hosting `SndMidi` + `Crowd.bnk` audio playback in the app is row
+  E1b2g7d3b7b2.

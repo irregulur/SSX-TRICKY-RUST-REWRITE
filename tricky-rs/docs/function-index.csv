@@ -816,7 +816,7 @@ address,size,name,system,status
 0x147a80,88,cTrickTriggerNode::~cTrickTriggerNode,world,not started
 0x147ad8,456,cTrickTriggerNode::Update,world,not started
 0x147ca0,84,cTrickTriggerNode::SaveSnapshot,world,checked
-0x147cf8,128,cEmitterNode::cEmitterNode,world,not started
+0x147cf8,128,cEmitterNode::cEmitterNode,world,ported
 0x147d78,152,cEmitterNode::cEmitterNode,world,checked
 0x147e10,76,cEmitterNode::~cEmitterNode,world,not started
 0x147e60,196,cEmitterNode::Update,world,not started
@@ -3547,7 +3547,7 @@ address,size,name,system,status
 0x20df08,1316,cBXAudio::vf13_20df08,audio,checked
 0x20e430,768,cBXAudio::vf14_20e430,audio,ported
 0x20e730,776,cBXAudio::ListenerLocate,audio,checked
-0x20ea38,180,cBXAudio::vf15_20ea38,audio,not started
+0x20ea38,180,cBXAudio::vf15_20ea38,audio,ported
 0x20eaf0,560,cBXAudio::PlayFESound,audio,not started
 0x20ed20,312,Audio_GetListenerRider,audio,ported
 0x20ee58,776,Audio_InGameUpdate,audio,ported
@@ -3781,11 +3781,11 @@ address,size,name,system,status
 0x221ef8,120,IniReader_ReadString,audio,ported
 0x221f70,100,IniReader_ReadFloat,audio,ported
 0x221fd8,100,IniReader_ReadInt,audio,ported
-0x222080,124,MidiSys_Init,audio,not started
-0x222100,92,cMidiSys::~cMidiSys,audio,not started
-0x222160,500,MidiSys_PushEvent,audio,ported
-0x222358,1084,MidiSys_PlayPending,audio,ported
-0x222798,240,MidiSys_PlayEventCallback,audio,not started
+0x222080,124,MidiSys_Init,audio,checked
+0x222100,92,cMidiSys::~cMidiSys,audio,checked
+0x222160,500,MidiSys_PushEvent,audio,checked
+0x222358,1084,MidiSys_PlayPending,audio,checked
+0x222798,240,MidiSys_PlayEventCallback,audio,checked
 0x222888,124,StaticInit_MidiSys,audio,not started
 0x222908,80,cMidiSys::__tf,runtime,host
 0x222998,20,SndEvent_Init,audio,checked
@@ -6546,32 +6546,32 @@ address,size,name,system,status
 0x2d35f8,288,SND_ApplyFxBusLevels,lib-snd,not started
 0x2d3718,96,SndHandle_AddFx,lib-snd,not started
 0x2d3780,96,SndHandle_RemoveFx,lib-snd,not started
-0x2d37e8,76,SndMidi_Validate,lib-snd,not started
-0x2d3838,252,SndMidi_UpdateFade,lib-snd,not started
-0x2d3938,140,SndMidi_VoicesDone,lib-snd,not started
-0x2d39c8,452,SndMidi_NoteOn,lib-snd,not started
-0x2d3b90,160,SndMidi_NoteOff,lib-snd,not started
-0x2d3c30,488,SndMidi_OnController,lib-snd,not started
-0x2d3e18,228,SndMidi_OnPitchBend,lib-snd,not started
-0x2d3f00,520,SndMidi_RunEvents,lib-snd,not started
-0x2d4108,288,SndMidi_Tick,lib-snd,not started
-0x2d4228,160,SndMidi_Init,lib-snd,not started
-0x2d42c8,64,SndMidi_Shutdown,lib-snd,not started
-0x2d4308,92,SndMidi_StopAll,lib-snd,not started
-0x2d4368,212,SndMidi_Stop,lib-snd,ported
-0x2d4440,356,SndMidi_Play,lib-snd,ported
-0x2d45a8,184,SndMidi_SetPitch,lib-snd,ported
-0x2d4660,220,SndMidi_SetPan,lib-snd,ported
-0x2d4740,200,SndMidi_Pause,lib-snd,ported
-0x2d4808,124,SndMidi_Resume,lib-snd,ported
-0x2d4888,240,SndMidi_SetVolume,lib-snd,ported
-0x2d4978,144,SndMidi_Fade,lib-snd,ported
-0x2d4a08,88,SndMidi_GetState,lib-snd,ported
+0x2d37e8,76,SndMidi_Validate,lib-snd,checked
+0x2d3838,252,SndMidi_UpdateFade,lib-snd,checked
+0x2d3938,140,SndMidi_VoicesDone,lib-snd,checked
+0x2d39c8,452,SndMidi_NoteOn,lib-snd,checked
+0x2d3b90,160,SndMidi_NoteOff,lib-snd,checked
+0x2d3c30,488,SndMidi_OnController,lib-snd,checked
+0x2d3e18,228,SndMidi_OnPitchBend,lib-snd,checked
+0x2d3f00,520,SndMidi_RunEvents,lib-snd,checked
+0x2d4108,288,SndMidi_Tick,lib-snd,checked
+0x2d4228,160,SndMidi_Init,lib-snd,checked
+0x2d42c8,64,SndMidi_Shutdown,lib-snd,checked
+0x2d4308,92,SndMidi_StopAll,lib-snd,checked
+0x2d4368,212,SndMidi_Stop,lib-snd,checked
+0x2d4440,356,SndMidi_Play,lib-snd,checked
+0x2d45a8,184,SndMidi_SetPitch,lib-snd,checked
+0x2d4660,220,SndMidi_SetPan,lib-snd,checked
+0x2d4740,200,SndMidi_Pause,lib-snd,checked
+0x2d4808,124,SndMidi_Resume,lib-snd,checked
+0x2d4888,240,SndMidi_SetVolume,lib-snd,checked
+0x2d4978,144,SndMidi_Fade,lib-snd,checked
+0x2d4a08,88,SndMidi_GetState,lib-snd,checked
 0x2d4a60,80,SndPlayOpts_Init,lib-snd,checked
 0x2d4ab0,56,SndVoice_IsPicked,lib-snd,not started
 0x2d4ae8,1136,SndVoice_Alloc,lib-snd,not started
 0x2d4f58,404,SndVoice_Release,lib-snd,not started
-0x2d50f0,88,SndVoice_Validate,lib-snd,not started
+0x2d50f0,88,SndVoice_Validate,lib-snd,ported
 0x2d5148,172,SndVoice_CalcVolume,lib-snd,not started
 0x2d51f8,144,Snd_CentsToPitchMult,lib-snd,ported
 0x2d5288,196,SNDVoice_CalcPitchMult,lib-snd,ported
@@ -6584,7 +6584,7 @@ address,size,name,system,status
 0x2d65f0,36,Snd_PanCurve,lib-snd,not started
 0x2d6618,652,SND_BuildPanTable,lib-snd,not started
 0x2d68a8,100,SND_GetPanLevels,lib-snd,not started
-0x2d6910,24,Snd_MidiPanToPan,lib-snd,not started
+0x2d6910,24,Snd_MidiPanToPan,lib-snd,checked
 0x2d6928,236,Snd_Rand,lib-snd,not started
 0x2d6a18,180,SndHandle_SetPitchBend,lib-snd,ported
 0x2d6ad0,52,Dts_InstallEncoder,lib-snd,not started

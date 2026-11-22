@@ -14,6 +14,7 @@ pub mod compress;
 pub mod huffenc;
 pub mod course;
 pub mod disc;
+pub mod eam;
 pub mod ini;
 pub mod inp;
 pub mod intro;
