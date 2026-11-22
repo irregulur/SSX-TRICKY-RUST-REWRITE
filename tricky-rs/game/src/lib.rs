@@ -117,6 +117,7 @@ pub mod inputring;
 pub mod probe;
 pub mod ps2f;
 pub mod bankmon;
+pub mod bankhost;
 pub mod banksys;
 pub mod ragdoll;
 pub mod prerace;

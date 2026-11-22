@@ -12,6 +12,7 @@ use bevy::audio::{PlaybackMode, Volume};
 use bevy::prelude::*;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
+use tricky_game::bankhost::{BankHost, BankPlay};
 use tricky_game::crowdhost::{self, CrowdHost, MidiVoiceAction};
 use tricky_game::race::SpeechCall;
 use tricky_game::rider::RiderSpeech;
@@ -38,8 +39,6 @@ struct Loaded {
     audio: Option<Vec<u8>>,
     /// DATA/CONFIG/CROWD.INF
     crowd: Option<Vec<u8>>,
-    /// DATA/AUDIO/AUDIO.BIG -> `|data\audio\Crowd.bnk` (decoded via `tricky_data::bnk`)
-    crowd_bank: Option<tricky_data::bnk::Bank>,
 }
 
 /// One live Bevy voice driven by `CrowdHost`'s `SndMidi` sequencer on `Crowd.bnk`.
@@ -75,9 +74,12 @@ pub struct RaceSpeech {
     ring: SoundRing,
     /// the rider event bits' sound (+0x7420)
     event: sndqueue::EventSound,
-    /// the course's ambient banks (BANKS.INF's `SWAP` list, +0x38e0) and the one in the bank manager's slot 6
+    /// the course's ambient banks (BANKS.INF's `SWAP` list, +0x38e0)
     ambient: sndqueue::AmbientBanks,
-    slot6: Slot6,
+    /// hosted `cBankSys` (`tricky_game::bankhost`, 14 slots + `SndSys_PlayPending` 0x20c948, row E1b2g7d5d)
+    banks: BankHost,
+    /// decoded WAV `AudioSource` handles cached per `(bank_handle, program)` from `BankHost`'s `BNKl` banks
+    bank_wavs: HashMap<(u32, u32), (Handle<AudioSource>, tricky_data::bnk::Layer)>,
     /// the audio system's `+0x372c` crowd boxes (`Audio_LoadCrowd` 0x2209c8, `tricky_game::crowdhost`, rows E1b2g7d3b7a / E1b2g7d3b7b2)
     crowd: CrowdHost,
     /// decoded `Crowd.bnk` programs (WAV handle + layer metadata) for `SndMidi` voice playback
@@ -88,14 +90,10 @@ pub struct RaceSpeech {
     crowd_midi_acc: f32,
     /// course `.adl`/`.pbd` world crowd emitters (`WorldEmitter_Update` 0x22bf60 keys `0x61..=0x63`, row E1b2g7d3b7c)
     crowd_emitters: crowdhost::WorldCrowdTrack,
-    /// the course the banks are for, and its `BANK` (slot 2)
+    /// the course the banks are for
     course: Option<usize>,
-    course_bank: Vec<u8>,
-    /// the banks' samples (`audio/world/`)
-    world: std::path::PathBuf,
-    /// the bank sounds playing, by handle, and the last handle given
+    /// the bank sounds playing, by `SND_PlayBankSound` handle
     bank: HashMap<u32, Entity>,
-    handle: u32,
 }
 
 #[derive(Component)]
@@ -131,148 +129,128 @@ impl RingEnv for Bank<'_> {
     }
 }
 
+/// Adapter wiring `sndqueue::AmbientEnv` onto the hosted `cBankManager` slot 6 (`BankManager_LoadBank`
+/// 0x20a520 / `BankManager_UnloadBank` 0x20a508, row E1b2g7d5d).
+struct BankSlot6<'a> {
+    banks: &'a mut BankHost,
+    files: &'a mut Files,
+}
+
+impl sndqueue::AmbientEnv for BankSlot6<'_> {
+    fn state(&mut self) -> i32 {
+        self.banks.slot_state(6)
+    }
+    fn unload(&mut self) {
+        self.banks.unload_bank(6);
+    }
+    fn load(&mut self, name: &[u8]) {
+        self.banks.load_bank(6, name, 0x10, |p| self.files.load(p).ok().flatten());
+    }
+}
+
 /// What the event sound (`sndqueue::EventSound`) asks of the audio system.
 struct EventSfx<'a, 'b> {
     bank: Bank<'a>,
-    handle: &'b mut u32,
     ambient: &'b mut sndqueue::AmbientBanks,
-    slot6: &'b mut Slot6,
-}
-
-/// The bank manager's slot 6, the ambient bank in it.
-// STANDIN: the bank manager (`BankManager_LoadBank` 0x20a520 / `BankManager_UnloadBank` 0x20a508): a load is in at
-// once (the bank's samples are read from `audio/world/` when played)
-#[derive(Default)]
-struct Slot6 {
-    state: i32,
-    name: Vec<u8>,
-}
-
-impl sndqueue::AmbientEnv for Slot6 {
-    fn state(&mut self) -> i32 {
-        self.state
-    }
-    fn unload(&mut self) {
-        self.state = 0;
-        self.name.clear();
-    }
-    fn load(&mut self, name: &[u8]) {
-        self.state = 1;
-        self.name = name.to_vec();
-    }
+    banks: &'b mut BankHost,
+    files: &'b mut Files,
+    played: bool,
 }
 
 impl QueueEnv for EventSfx<'_, '_> {
-    // STANDIN: the sound manager's slots (`SndMgr_GetSlot` 0x211f38)
-    fn get_slot(&mut self, _: u32) -> u32 {
-        0
+    /// `SndMgr_GetSlot` 0x211f38: channel slot address in `BankHost`.
+    fn get_slot(&mut self, ch: u32) -> u32 {
+        BankHost::slot_addr(ch)
     }
     fn rider_listener(&mut self) -> u32 {
         rider_id(0)
     }
-    /// `SndSys_PlayPending` 0x20c948: a handle given (the entry is played and taken off by the caller, [`play_bank_sound`])
+    /// `SndSys_PlayPending` 0x20c948: reserves the next `SND_PlayBankSound` handle; caller executes `play_from_queue`.
     fn play_pending(&mut self) -> u64 {
-        *self.handle += 1;
-        *self.handle as u64
+        self.played = true;
+        self.banks.peek_next_voice_handle() as u64
     }
 }
 
 impl sndqueue::EventSoundEnv for EventSfx<'_, '_> {
-    /// `Audio_FindBankName` 0x21a640 then `Audio_LoadAmbientBank` 0x21a548
+    /// `Audio_FindBankName` 0x21a640 then `Audio_LoadAmbientBank` 0x21a548 on `cBankManager` slot 6.
     fn load_ambient_bank(&mut self, name: &str) -> i64 {
         let index = self.ambient.find(name.as_bytes());
-        // (not in the list the game would read the word before the flags; every course lists both banks)
         if index < 0 {
             return -1;
         }
-        self.ambient.load(index as usize, self.slot6)
+        let mut slot6 = BankSlot6 { banks: self.banks, files: self.files };
+        self.ambient.load(index as usize, &mut slot6)
     }
     fn stop_bank_sound(&mut self, h: u32) {
         self.bank.stop(h);
     }
 }
 
-/// The bank file a queue entry's kind names (`SndSys_PlayPending` 0x20c948 plays from the kind's bank): kind 2 the
-/// course's `BANK` of BANKS.INF, kind 6 the ambient bank in slot 6.
-fn kind_bank(kind: u32, course: &[u8], slot6: &Slot6) -> Option<String> {
-    let path = match kind {
-        2 => course,
-        6 if slot6.state == 1 => &slot6.name,
-        _ => return None,
+/// Play a `SND_PlayBankSound` 0x2d1718 result emitted by `BankHost::play_from_queue` (`SndSys_PlayPending` 0x20c948)
+/// directly from the bank decoded by `tricky_data::bnk`.
+fn spawn_bank_play(
+    play: &BankPlay,
+    banks: &BankHost,
+    cache: &mut HashMap<(u32, u32), (Handle<AudioSource>, tricky_data::bnk::Layer)>,
+    vol: f32,
+    audio: &mut Assets<AudioSource>,
+    commands: &mut Commands,
+) -> Option<Entity> {
+    let key = (play.bank_handle, play.program);
+    let (src, layer) = if let Some(entry) = cache.get(&key) {
+        entry.clone()
+    } else {
+        let bank = banks.bank(play.bank_handle)?;
+        let prog = bank.programs.get(&(play.program as usize))?;
+        let layer = prog.layers.first()?.clone();
+        let bytes = if layer.loops() {
+            layer.loop_wav().unwrap_or_else(|| layer.wav())
+        } else {
+            layer.wav()
+        };
+        let src = audio.add(AudioSource { bytes: bytes.into() });
+        cache.insert(key, (src.clone(), layer.clone()));
+        (src, layer)
     };
-    let s = String::from_utf8_lossy(path);
-    let file = s.rsplit(['\\', '/']).next()?;
-    Some(file.trim_end_matches(".bnk").trim_end_matches(".BNK").to_string())
-}
-
-/// The queue's top entry played and taken off (`SndSys_PlayPending` 0x20c948): sound `id` of its kind's bank at the
-/// record's volume byte, looping when the bank's program loops.
-// STANDIN: the sound driver (`SND_PlayBankSound` 0x2d1718), for the bank's sample exported to `audio/world/<bank>/`
-// (tools/bnk/levelaudio.py on AUDIO.BIG), its pitch and level from bnk2wav's json beside it
-fn play_bank_sound(q: &mut Queue, bank: Option<String>, dir: &std::path::Path, vol: f32, audio: &mut Assets<AudioSource>, commands: &mut Commands) -> Option<Entity> {
-    let i = q.count.max(0) as usize;
-    q.count -= 1;
-    let (id, volume) = (q.id[i], q.record[i][0]);
-    let bank = bank?;
-    let folder = dir.join(&bank);
-    let looped = folder.join(format!("{bank}_{id}_loop.wav"));
-    let (file, mode) = if looped.is_file() { (looped, PlaybackMode::Loop) } else { (folder.join(format!("{bank}_{id}.wav")), PlaybackMode::Despawn) };
     if std::env::var("TRICKY_SPEECHLOG").is_ok() {
-        println!("speech: the event sound plays {} at volume {volume}", file.display());
+        println!(
+            "speech: SND_PlayBankSound(bank={}, prog={}, vol={}, note={})",
+            play.bank_handle, play.program, play.volume, play.note
+        );
     }
-    let bytes = std::fs::read(&file).ok()?;
-    let (mut root, mut level, mut detune) = (60.0, 127.0, 0.0);
-    if let Some(e) = std::fs::read_to_string(folder.join(format!("{bank}.json"))).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()).and_then(|v| v.get(id.to_string()).cloned()) {
-        let g = |k: &str, d: f64| e.get(k).and_then(|x| x.as_f64()).unwrap_or(d) as f32;
-        (root, level, detune) = (g("root", 60.0), g("vol", 127.0), g("detune", 0.0));
-    }
-    let speed = 2f32.powf((detune - (root - 60.0) * 100.0) / 1200.0);
-    let settings = PlaybackSettings { mode, volume: Volume::Linear(vol * volume as f32 / 127.0 * level / 127.0), speed, ..default() };
-    Some(commands.spawn((AudioPlayer(audio.add(AudioSource { bytes: bytes.into() })), settings, PlacingSound)).id())
+    let mode = if layer.loops() { PlaybackMode::Loop } else { PlaybackMode::Despawn };
+    let gain = vol * (play.volume as f32 / 127.0) * (play.velocity as f32 / 127.0) * (layer.vol as f32 / 127.0);
+    let speed = crowdhost::pitch_speed(layer.root, play.note, layer.detune, layer.bend_range, play.bend, play.pitch);
+    let settings = PlaybackSettings { mode, volume: Volume::Linear(gain), speed, ..default() };
+    Some(commands.spawn((AudioPlayer(src), settings, PlacingSound)).id())
 }
 
 /// What `Sfx_OnPlacingChange` asks of the audio system, with the announcer's passing line behind it.
 struct Placing<'a, 'b> {
     bank: Bank<'a>,
     ring: &'a mut SoundRing,
-    handle: &'a mut u32,
-    /// the handle `play_pending` gave, its sound started once the queue is back
-    played: Option<u32>,
+    next_handle: u32,
+    /// set when `SndSys_PlayPending` was requested; caller runs `BankHost::play_from_queue`
+    played: bool,
     announcer: &'a mut Announcer,
     env: Env<'b>,
     riders: &'a [SpeechRider],
 }
 
 impl QueueEnv for Placing<'_, '_> {
-    // STANDIN: the sound manager's slots (`SndMgr_GetSlot` 0x211f38), for the volume `SndSys_PlayPending` scales by
-    fn get_slot(&mut self, _: u32) -> u32 {
-        0
+    /// `SndMgr_GetSlot` 0x211f38: channel slot address in `BankHost`.
+    fn get_slot(&mut self, ch: u32) -> u32 {
+        BankHost::slot_addr(ch)
     }
     fn rider_listener(&mut self) -> u32 {
         rider_id(0)
     }
-    /// `SndSys_PlayPending` 0x20c948: the queue's top sound played ([`play_top`]); its handle.
+    /// `SndSys_PlayPending` 0x20c948: reserves the next `SND_PlayBankSound` handle; caller executes `play_from_queue`.
     fn play_pending(&mut self) -> u64 {
-        *self.handle += 1;
-        self.played = Some(*self.handle);
-        *self.handle as u64
+        self.played = true;
+        self.next_handle as u64
     }
-}
-
-/// The queue's top sound played and taken off (`SndSys_PlayPending` 0x20c948): kind 0 is the main bank, zbxsfx's
-/// program played as `boardsound` plays it.
-// STANDIN: the sound driver (`SND_PlayBankSound` 0x2d1718), for the bank's exported sample (tools/bnk/bnk2wav.py)
-fn play_top(q: &mut Queue, sfx: Option<&crate::boardsound::BoardSounds>, vol: f32, commands: &mut Commands) -> Option<Entity> {
-    let i = q.count.max(0) as usize;
-    q.count -= 1;
-    let name = format!("sfx_{}", q.id[i]);
-    if std::env::var("TRICKY_SPEECHLOG").is_ok() {
-        println!("speech: the placing sound {name}");
-    }
-    let bs = sfx?;
-    let h = bs.get(&name)?;
-    let settings = PlaybackSettings { mode: PlaybackMode::Despawn, volume: Volume::Linear(vol * bs.level(&name)), speed: bs.pitch(&name, 64.0), ..default() };
-    Some(commands.spawn((AudioPlayer(h), settings, PlacingSound)).id())
 }
 
 impl PlacingChangeEnv for Placing<'_, '_> {
@@ -560,11 +538,11 @@ fn wav(s: &tricky_game::sndmt::Sound) -> Vec<u8> {
 #[allow(clippy::too_many_arguments)]
 pub fn race_speech(
     mut rs: ResMut<RaceSpeech>, sounds: Res<crate::sound::Sounds>, game: Res<ui::Game>, mode: Res<Mode>, race: Res<RaceRes>, time: Res<Time>,
-    mut audio: ResMut<Assets<AudioSource>>, mut commands: Commands, sfx: Option<Res<crate::boardsound::BoardSounds>>,
+    mut audio: ResMut<Assets<AudioSource>>, mut commands: Commands,
     (playing, mut crowd_sinks): (Query<Entity, With<PlacingSound>>, Query<&mut AudioSink, With<CrowdPlayer>>),
     mut rider: ResMut<crate::RiderRes>, mut opponents: ResMut<crate::Opponents>,
     cam: Query<&GlobalTransform, With<Camera3d>>, music: Res<crate::pathmusic::PathMusic>,
-    (list, level, mut levels, career): (Res<crate::LevelList>, Res<crate::LevelRes>, ResMut<ui::AudioLevels>, Res<ui::CareerRes>),
+    (list, mut levels, career): (Res<crate::LevelList>, ResMut<ui::AudioLevels>, Res<ui::CareerRes>),
 ) {
     // what the riders asked of the audio object this frame, taken whatever happens (rider `k` of the race: the player, then the others)
     let mut asks = vec![(0, std::mem::take(&mut rider.0.speech))];
@@ -584,12 +562,7 @@ pub fn race_speech(
                     let banks = files.load("data/config/banks.inf").ok().flatten();
                     let audio = files.load("data/config/audio.inf").ok().flatten();
                     let crowd = files.load("data/config/crowd.inf").ok().flatten();
-                    let crowd_bank = files
-                        .load(r"|data\audio\Crowd.bnk")
-                        .ok()
-                        .flatten()
-                        .and_then(|b| tricky_data::bnk::parse(&b));
-                    Some(Loaded { host, files, banks, audio, crowd, crowd_bank })
+                    Some(Loaded { host, files, banks, audio, crowd })
                 })();
                 *s2.lock().unwrap() = Some(loaded);
             });
@@ -622,9 +595,11 @@ pub fn race_speech(
             levels.load_levels(&tricky_data::audiocfg::levels(a, b"IGLEVELSCALING", key.as_bytes()));
         }
         let banks = sys.banks.as_deref().map(|b| tricky_data::audiocfg::ingame_banks(b, key.as_bytes())).unwrap_or_default();
+        rs.bank_wavs.clear();
+        rs.banks.load_ingame_banks(&banks, |p| sys.files.load(p).ok().flatten());
+        rs.banks.unload_bank(6);
+        rs.bank_wavs.clear();
         rs.ambient = sndqueue::AmbientBanks { names: banks.swaps.into_iter().take(200).collect(), ..Default::default() };
-        rs.course_bank = banks.loads.iter().rfind(|l| l.slot == 2).map(|l| l.path.clone()).unwrap_or_default();
-        rs.slot6 = Slot6::default();
         // `Audio_LoadCrowd` 0x2209c8 from `Audio_LoadInGameConfig` 0x211098: 1 box (Audio_RiderCount in 1P), bank kind 3 (Crowd.bnk)
         if let Some(c) = sys.crowd.as_deref() {
             rs.crowd.load_crowd_with(c, key.as_bytes(), 1, 3, |p| sys.files.load(p).ok().flatten());
@@ -645,7 +620,7 @@ pub fn race_speech(
         }
         rs.crowd_emitters.load(crowd_ems);
         if rs.crowd_progs.is_empty() {
-            if let Some(bank) = &sys.crowd_bank {
+            if let Some(bank) = rs.banks.bank_in_slot(3) {
                 for (&prog_id, prog) in &bank.programs {
                     if let Some(layer) = prog.layers.first() {
                         let bytes = if layer.loops() {
@@ -659,10 +634,8 @@ pub fn race_speech(
                 }
             }
         }
-        let given = std::path::absolute(&level.0.dir).unwrap_or(level.0.dir.clone());
-        rs.world = given.parent().and_then(|p| p.parent()).map(|p| p.join("audio").join("world")).unwrap_or_default();
         if std::env::var("TRICKY_SPEECHLOG").is_ok() {
-            println!("speech: course {key}: {} ambient banks, bank {:?}, samples in {}", rs.ambient.names.len(), String::from_utf8_lossy(&rs.course_bank), rs.world.display());
+            println!("speech: course {key}: {} ambient banks, bank slot 2 loaded={}", rs.ambient.names.len(), rs.banks.slot_state(2) == 1);
         }
     }
     let calls = &race.0.speech[..];
@@ -681,7 +654,7 @@ pub fn race_speech(
         }
         rs.ring = SoundRing::default();
         rs.event = Default::default();
-        rs.slot6 = Slot6::default();
+        rs.banks.unload_bank(6);
         rs.ambient.clear_loaded();
         for (_, v) in rs.crowd_voices.drain() {
             commands.entity(v.entity).try_despawn();
@@ -704,6 +677,9 @@ pub fn race_speech(
     rs.bank.retain(|_, e| alive.contains(e));
     let mut stops = Vec::new();
     let vol = if sounds.effects { 1.0 } else { 0.0 };
+    let channel_slots: [f32; 7] = std::array::from_fn(|ch| levels.slot(ch));
+    // `AsyncSys_Update` 0x209408 (first in `Audio_UpdateSystems` 0x21eb70): completes queued slot-6 ambient bank loads
+    rs.banks.update(|p| sys.files.load(p).ok().flatten());
     let pos = std::iter::once(rider.0.pos).chain(opponents.0.iter().map(|o| o.rider.pos)).map(game_pos).collect();
     let riders = speech_riders(r, &rider.0, &opponents.0, &career);
     let view = cam.iter().next().map_or([0.0; 3], |t| game_pos(t.translation()));
@@ -729,8 +705,8 @@ pub fn race_speech(
                 let mut p = Placing {
                     bank: Bank { bank: &mut rs.bank, alive: &alive, stops: Vec::new() },
                     ring: &mut rs.ring,
-                    handle: &mut rs.handle,
-                    played: None,
+                    next_handle: rs.banks.peek_next_voice_handle(),
+                    played: false,
                     announcer: &mut rs.announcer,
                     env,
                     riders: &riders,
@@ -740,10 +716,13 @@ pub fn race_speech(
                 stops.append(&mut p.bank.stops);
                 let played = p.played;
                 env = p.env;
-                if let Some(h) = played {
-                    if let Some(e) = play_top(&mut rs.queue, sfx.as_deref(), vol, &mut commands) {
-                        rs.bank.insert(h, e);
-                        alive.insert(e);
+                if played {
+                    let (_, play) = rs.banks.play_from_queue(&mut rs.queue, &channel_slots);
+                    if let Some(play) = play {
+                        if let Some(e) = spawn_bank_play(&play, &rs.banks, &mut rs.bank_wavs, vol, &mut audio, &mut commands) {
+                            rs.bank.insert(play.voice_handle, e);
+                            alive.insert(e);
+                        }
                     }
                 }
             }
@@ -754,7 +733,13 @@ pub fn race_speech(
             }
             SpeechCall::EventSound(Some(kind)) => rs.event.queue(kind),
             SpeechCall::EventSound(None) => {
-                let mut e = EventSfx { bank: Bank { bank: &mut rs.bank, alive: &alive, stops: Vec::new() }, handle: &mut rs.handle, ambient: &mut rs.ambient, slot6: &mut rs.slot6 };
+                let mut e = EventSfx {
+                    bank: Bank { bank: &mut rs.bank, alive: &alive, stops: Vec::new() },
+                    ambient: &mut rs.ambient,
+                    banks: &mut rs.banks,
+                    files: &mut sys.files,
+                    played: false,
+                };
                 rs.event.stop(&mut e);
                 stops.append(&mut e.bank.stops);
             }
@@ -828,16 +813,23 @@ pub fn race_speech(
     let mut bank = Bank { bank: &mut rs.bank, alive: &alive, stops };
     rs.ring.update(r.line_frame, &mut bank);
     // `Audio_PlayEventSound` 0x21d0c0, from `Audio_InGameUpdate` at 0x20ef24
-    let given = rs.handle;
-    let mut ev = EventSfx { bank, handle: &mut rs.handle, ambient: &mut rs.ambient, slot6: &mut rs.slot6 };
+    let mut ev = EventSfx {
+        bank,
+        ambient: &mut rs.ambient,
+        banks: &mut rs.banks,
+        files: &mut sys.files,
+        played: false,
+    };
     rs.event.update(&mut rs.queue, &mut ev);
-    let played = *ev.handle != given;
+    let played = ev.played;
     let bank = ev.bank;
     if played {
-        let i = rs.queue.count.max(0) as usize;
-        let file = kind_bank(rs.queue.kind[i], &rs.course_bank, &rs.slot6);
-        if let Some(e) = play_bank_sound(&mut rs.queue, file, &rs.world, vol, &mut audio, &mut commands) {
-            bank.bank.insert(rs.handle, e);
+        let (h, play) = rs.banks.play_from_queue(&mut rs.queue, &channel_slots);
+        rs.event.handle = h;
+        if let Some(play) = play {
+            if let Some(e) = spawn_bank_play(&play, &rs.banks, &mut rs.bank_wavs, vol, &mut audio, &mut commands) {
+                bank.bank.insert(play.voice_handle, e);
+            }
         }
     }
     for e in bank.stops {

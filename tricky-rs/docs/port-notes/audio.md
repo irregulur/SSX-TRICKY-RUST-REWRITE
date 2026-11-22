@@ -1897,3 +1897,21 @@ Proven (`SLUS_203.26`):
   (`pbd.hash.lists[1]`, `AudioTGroups_Bind` 0x22a5f0); `WorldCrowdTrack::tick` runs in `src/racespeech.rs` every frame
   before `CrowdSys_UpdateBoxes` 0x220968. Verified on Garibaldi (`gari.pbd` + `gari.adl`) in
   `crowdhost::tests::world_crowd_emitters_from_disc_drive_crowd_box_and_cheers`.
+
+## Hosting `cBankSys` and `SndSys_PlayPending` in `racespeech.rs` (E1b2g7d5d, `game/src/bankhost.rs`, `src/racespeech.rs`)
+
+Proven (`SLUS_203.26`):
+- `Audio_CreateSystem` 0x20daac constructs `cBXAudio::cBXAudio(this, 0xe, 4, param_1)` -> **14 bank slots** (`0..=13`)
+  and queue depth 4 (`BankSys_Init` 0x20c560).
+- `Audio_LoadInGameConfig` 0x211098 calls `AsyncSys_AllocBuffer(this, 0, 0)` (0x21123c), loads `BANKS.INF` slots
+  `0..=5` synchronously via `BankManager_LoadIfChanged` 0x20a460 (`MAIN` 0 `zbxsfx.bnk`, `BOARD` 1 `zboard.bnk`,
+  `BANK` 2 course bank, `CROWD` 3 `Crowd.bnk`, `AUX` 4, `TRICKY` 5), allocates static fixed buffers on slot 6
+  (`0x19000` ambient swap, kind 1) and slot 8 (`0x89800`, kind 1), and links slots `9..=11` to slot 8
+  (`BankManager_LinkSlots` 0x20a608).
+- `Audio_UpdateSystems` 0x21eb70 ticks `AsyncSys_Update` 0x209408 before `CrowdSys_UpdateBoxes` 0x220968.
+- `BankHost` (`tricky-rs/game/src/bankhost.rs`) hosts `banksys` + `sndplay::play_pending` 0x20c948 on `pf::Mem`
+  with the 7 `SndMgr_GetSlot` 0x211f38 channel volume floats (`audio+0x3848 + 12*ch + 8`), decoding `.bnk` files
+  directly from `TRICKY_DISC` via `tricky_data::bnk`. In `tricky-rs/src/racespeech.rs`, `BankHost` replaces `Slot6`,
+  `kind_bank`, `play_bank_sound`, `play_top`, the `audio/world/` stand-in path, and the `get_slot` stand-ins; slot 3
+  also feeds `Crowd.bnk` directly into `crowd_progs`. Verified on real disc `BANKS.INF` + Garibaldi banks + slot 6
+  async swap + `SndSys_PlayPending` volume scaling (`bankhost::tests::*`, `racespeech::tests::*`).
