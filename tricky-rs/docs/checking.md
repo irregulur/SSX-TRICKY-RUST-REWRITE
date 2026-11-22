@@ -2654,3 +2654,39 @@ Checked (`ground_ticks_against_the_running_game`, `TRICKY_FLOAT_RULES="add=n,fad
 - Note on `ours` vs `g1 runner` crash-landings (`rec24`: `ours` `[44, 41, 13]` = IEEE runner `[44, 41, 13]` vs g1
   runner `[44, 44, 41]`): the difference on air wall-ray crash positions is `CourseGround`'s nearest patch
   tessellation vs PCSX2's toward-zero patch cache, already tracked by row **F4h5n**. Row F4b3x5 done.
+
+## F4b3p1: `Boarder_Translate` inside `Boarder_WallCollide` moves `f.body[me]` before rider collisions (2026-11-21, done)
+
+Proven (`WipeoutMotion_Update` 0x10c2f0, `GroundMotion_Update` 0x10a0d8, `Boarder_WallCollide` 0x126250,
+`Boarder_Translate` 0x1267a0, `Boarder_RiderCollisions` 0x123fc8):
+- On `rec17` (Elysium) ticks `10932..10941`, riders 1 and 2 slide wiped out (`clips 0x2dc`) beside a sloped wall
+  (normal `[0.5697, -0.6863, 0.4521]`). On tick `10937` (order `[5, 4, 3, 2, 1, 0]`, rider 2 ticks before rider 1),
+  both bodies start `0.1145 cm` apart (`DBGT tick 10937`), and rider 2's `Boarder_WallCollide` 0x126250 hits the wall
+  at `t = 1.2589569`, pushing rider 2 by `1.1 * t * n = [+0.789, -0.950, +0.626]` cm — directly into rider 1 — via
+  `Boarder_Translate` 0x1267a0, which translates `rider+0x470` (`f.body[2]`) before rider 2's
+  `Boarder_RiderCollisions` 0x123fc8 runs.
+- In `tricky-rs/game/tests/ground_motion.rs`, both `slide_ours`/`slide_runner` and `GroundMotion_Update`'s `prep[me]`
+  passed `body_of(a)` (ignoring earlier rider pushes in the frame) into `Boarder_WallCollide` /
+  `Boarder_InstanceCollisions` and discarded the translated body afterwards instead of writing it back to
+  `f.body[me]`. As a result, `f.body[2]` stayed `0.1145 cm` away from `f.body[1]` on `10937` (missing the bump and
+  making `10937` r1/r2 "missed"), and on `10932`, `10933`, `10938`, and `10941` (`t = 2.549, 3.526, 1.531, 0.026`)
+  left equal-and-opposite slide position offsets on riders 1–2 (part of `F4b3z`).
+
+Changed (`tricky-rs/game/tests/ground_motion.rs`):
+- Seeded `walls.body` from `f.body[me]` (after earlier riders' pushes in the frame) and copied the post-motion
+  `rider+0x470` body (`wl.body` / `body_at(&mut g.r.mem, g.rd)`) back into `f.body[me]` for both ground ticks
+  (`prep[me]`) and wipe-out slides (`slide_ours` / `slide_runner`; `TRICKY_WALLBODY=off` disables for A/B).
+
+Checked (`ground_ticks_against_the_running_game`, `TRICKY_FLOAT_RULES="add=n,fadd=g1"`):
+
+| Recording | Course | Bumps equal | Slides `g1` (vel / pos exact) | Missed slides | Notes |
+|---|---|---|---|---|---|
+| rec17 (`TRICKY_WALLBODY=off`) | Elysium | 464 / 466 | 686 / 686 vel, 680 / 686 pos | 14 | Misses `10937` 1↔2 bump, `10933`/`10937` r1–r2, `10932`/`10938`/`10941` pos |
+| **rec17 (now)** | **Elysium** | **466 / 466 (100%)** | **690 / 690 vel, 690 / 690 pos (100%)** | **10 (-4)** | `DBGT 10937 2->1`: gap `-1.0156 cm`; all of `10932..10941` bit-exact |
+| rec19 | Mesa | 284 / 286 | **272 / 272** vel & pos | 2 | `every field` 55,911 |
+| rec26 | Mesa | **330 / 330** | **433 / 433** vel & pos | 9 | Landings 276/276 |
+| rec28 | Mesa | 610 / 612 | **290 / 290** vel & pos | 1 (-1) | Missed `[20, 5, 2]` → `[20, 4, 1]`, landings 290/290 |
+| rec30 | Mesa + replay | 764 / 766 | **424 / 424** vel & pos | 7 | Landings 471/471, shoves 42/42 |
+| rec14 | Garibaldi | 244 / 248 | 224 / 224 vel, 220 / 224 pos | 17 | `9092, 9095, 9098` remain in `F4b3z` |
+
+Row F4b3p1 done.
