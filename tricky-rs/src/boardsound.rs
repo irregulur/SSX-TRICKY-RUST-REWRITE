@@ -59,35 +59,20 @@ fn board_in(r: &Rider) -> BoardIn {
     }
 }
 
-/// The rider's motion as the audio system reads it (+0x424: 1 air, 2 ground, 3 a rail, 5 wiped out, 6 recovering).
-// STANDIN: the app's rider has no motion word (`Boarder_EnterMotionState` 0x11c710); read from its own state
-fn motion(r: &Rider) -> u32 {
-    if r.crashed > 0.0 {
-        5
-    } else if r.recover.is_some() {
-        6
-    } else if r.rail.is_some() {
-        3
-    } else if r.grounded {
-        2
-    } else {
-        1
-    }
-}
-
-/// The rider's sound loops as the audio system runs them (row E1b2g7d5i): `Audio_InitRiderSounds` 0x210a38 starts
-/// them when a ride starts (`sndqueue::start_rider_loops`: the scrape, glide and carve loops), and every frame each
-/// loop's bank instance is updated by the callback its queue entry carries (`sndqueue::update_loop`), its volume
-/// (+0x64) and bend heard on the loop's sample, through the bank monitor's fall-off from the listener
-/// (`BankInstance_UpdatePositional` 0x20b700). A surface change restarts a loop with the new surface's sample.
+/// The rider's sound loops as the audio system runs them (rows E1b2g7d5i, E1b2g7d5j3b1): `Audio_InitRiderSounds`
+/// 0x210a38 starts them when a ride starts (`sndqueue::start_rider_loops`: the scrape, glide and carve loops), and
+/// every frame `cController::vf7` 0x21e9d0 iterates the 64 bank-monitor instance slots (`bankmon::COUNT`) in index
+/// order (`BankInstance_Update` 0x21e8f0): each slot runs its callback (`sndqueue::update_loop`) then
+/// `BankInstance_UpdatePositional` 0x20b700. New or restarted loops take the lowest free slot via
+/// `BankMonitor_FindFreeInstance` 0x20bce8. A surface change restarts a loop with the new surface's sample.
 #[derive(Resource, Default)]
 pub struct RiderLoops {
     /// the audio system's queue the starts push on (`cSndPlayOpts::cSndPlayOpts` 0x226848's header)
     q: Option<Queue>,
     /// the race's riders as `Race_GetRider` lists them: the player's first, then the opponents
     riders: Vec<LoopRider>,
-    /// the playing loops
-    voices: Vec<Voice>,
+    /// the bank monitor's 64 instance slots (`bankmon::COUNT`, `BankMonitor_Init` 0x20bb98 / `BankMonitor_FindFreeInstance` 0x20bce8)
+    slots: Vec<Option<Voice>>,
     /// the snow program records' words (cBXAudio + table + surface · 0x50), kept between runs
     words: HashMap<(u32, u32), [i32; 0x14]>,
     handle: u32,
@@ -112,6 +97,36 @@ struct Voice {
     /// the distance last seen (+0x5c, −1 unknown) and whether the voice plays (+8)
     last: F,
     playing: bool,
+    /// azimuth and elevation halfwords from `cBXAudio::ListenerLocate` 0x20e730 (`(0, 0)` when career +0x1670 is mono)
+    pan: (i16, i16),
+}
+
+/// Convert a Bevy world vector (x right, y up, -z ahead) into the game's right-handed space (x, -z, y; z up).
+fn game_vec(v: Vec3) -> [f32; 3] {
+    [v.x, -v.z, v.y]
+}
+
+/// `Game_UpdateCameras` 0x17f390: build the 4x4 transposed view matrix written at `race + 0xc0 + 0x80 * view`
+/// (`m[0..3]` hold camera right `R = F × U`, up `U`, forward `F` in columns 0, 1, 2; `m[3]` holds
+/// `[-dot(R, cam), -dot(U, cam), -dot(F, cam), 1]`, cm), so `cBXAudio::ListenerLocate` 0x20e730 maps world cm
+/// into `(+X right, +Y up, +Z ahead)`.
+pub fn listener_matrix(cam: &GlobalTransform) -> [[f32; 4]; 4] {
+    let r = game_vec(cam.right().as_vec3());
+    let u = game_vec(cam.up().as_vec3());
+    let f = game_vec(cam.forward().as_vec3());
+    let c = game_vec(cam.translation() * 100.0);
+    let dot3 = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    [
+        [r[0], u[0], f[0], 0.0],
+        [r[1], u[1], f[1], 0.0],
+        [r[2], u[2], f[2], 0.0],
+        [-dot3(r, c), -dot3(u, c), -dot3(f, c), 1.0],
+    ]
+}
+
+/// `BankMonitor_FindFreeInstance` 0x20bce8 (n = 1): lowest free slot index in `0..bankmon::COUNT`.
+fn find_free_slot<T>(slots: &[Option<T>]) -> Option<usize> {
+    slots.iter().position(Option::is_none)
 }
 
 /// The riders' addresses as the loops carry them (the instance's owner, +0x80): this, then 0x10000 apart.
@@ -193,11 +208,18 @@ impl sndqueue::LoopUpdateEnv for LoopEnv<'_> {
 }
 
 impl RiderLoops {
-    /// The queue's entries `played` started, top first, made into looping voices (`SND_PlayBankSound` 0x2d1718,
-    /// `BankMonitor_AddInstance` 0x20bd68: the fall-off and cull distances from the entry, the distance known at
-    /// once since the entry has a position, `d`).
+    fn ensure_slots(&mut self) {
+        if self.slots.len() != bankmon::COUNT as usize {
+            self.slots.resize_with(bankmon::COUNT as usize, || None);
+        }
+    }
+
+    /// The queue's entries `played` started, top first, placed into the lowest free bank-monitor slot via
+    /// `BankMonitor_FindFreeInstance` 0x20bce8 (`BankMonitor_AddInstance` 0x20bd68: fall-off and cull distances from
+    /// the entry, distance known at once since the entry has a position, `d`).
     // STANDIN: the sound driver, for the bank's exported loop sample (tools/bnk/bnk2wav.py), silent until updated
-    fn take_played(&mut self, played: Vec<(u32, (f32, f32))>, owner: usize, d: F, bs: &BoardSounds, commands: &mut Commands) {
+    fn take_played(&mut self, played: Vec<(u32, (f32, f32))>, owner: usize, d: F, pan: (i16, i16), bs: &BoardSounds, commands: &mut Commands) {
+        self.ensure_slots();
         let q = self.q.as_mut().expect("the queue");
         for (h, (cull, far)) in played.into_iter().rev() {
             let i = q.count.max(0) as usize;
@@ -206,29 +228,69 @@ impl RiderLoops {
             let (far, cull) = (F(f32::from_bits(q.a6c[i])), F(f32::from_bits(q.a70[i])));
             q.count -= 1;
             let (id, update) = (q.id[i], q.a44[i][1]);
+            let Some(slot) = find_free_slot(&self.slots) else { continue };
             let name = format!("board_{id}");
             if let Some(src) = bs.get_loop(&name) {
                 let e = commands.spawn((AudioPlayer::new(src), PlaybackSettings { mode: PlaybackMode::Loop, volume: Volume::Linear(0.0), ..default() }, RiderLoop)).id();
                 if std::env::var("TRICKY_BOARDLOG").is_ok() {
-                    println!("board loop {name}: handle {h}, update {update:#x}");
+                    println!("board loop {name}: slot {slot} handle {h}, update {update:#x}");
                 }
-                self.voices.push(Voice { owner, inst: LoopInstance { addr: h, volume: 0 }, update, name, e, bend: 0x40, far, cull, last: d, playing: true });
+                self.slots[slot] = Some(Voice { owner, inst: LoopInstance { addr: h, volume: 0 }, update, name, e, bend: 0x40, far, cull, last: d, playing: true, pan });
             }
         }
     }
     fn stop(&mut self, commands: &mut Commands) {
-        for v in self.voices.drain(..) {
-            commands.entity(v.e).try_despawn();
+        for slot in &mut self.slots {
+            if let Some(v) = slot.take() {
+                commands.entity(v.e).try_despawn();
+            }
         }
         self.q = None;
     }
 
-    /// One frame of the loops: started for a new ride, else each updated, and their voices set. `riders` are the
-    /// race's riders, the player's first; `ear` is the listener (the camera), `dt` the monitor's step, `scale` the
-    /// loops' slot's volume (`SndMgr_GetSlot` 0x211f38 with 4, the instances' +0x60).
+    /// `BankInstance_UpdatePositional` 0x20b700 on one occupied slot: culled beyond cull distance and restarted
+    /// within it, Doppler pitch of the distance closed, volume falling off to none at fall-off distance (30 when 0),
+    /// then scaled by channel slot 4 and truncated.
+    #[allow(clippy::too_many_arguments)]
+    fn update_positional(
+        v: &mut Voice, d: F, pan: (i16, i16), dt: f32, bs: &BoardSounds, fx: f32, scale: f32, motion: u32,
+        sinks: &mut Query<&mut AudioSink, With<RiderLoop>>,
+    ) {
+        if v.cull.ee() != 0.0 {
+            v.playing = if v.playing { d.ee() <= v.cull.ee() } else { d.ee() < v.cull.ee() };
+        }
+        let (mut vol, mut pitch) = (0, F(1.0));
+        if v.playing {
+            if v.last.ee() != -1.0 {
+                pitch = bankmon::doppler_pitch(v.last - d, F(dt));
+            }
+            v.pan = pan;
+            let far = if v.far.ee() == 0.0 { F(30.0) } else { v.far };
+            vol = bankmon::instance_distance_volume(v.inst.volume as u32, d, far).min(0x7f);
+        }
+        v.last = d;
+        // the volume scaled by the slot's float, truncated
+        let vol = tricky_game::sndlib::cvt_w((F(vol as f32) * F(scale)).ee());
+        if let Ok(mut sink) = sinks.get_mut(v.e) {
+            // the volume (0..127) on the bank program's own level; the bend as the driver bends the voice
+            // (`SndHandle_SetPitchBend` 0x2d6a18 → `SNDVoice_CalcPitchMult`) on the monitor's pitch (4096 = 1).
+            // STANDIN: Bevy's `AudioSink` has no stereo pan API yet; `v.pan` holds the exact `ListenerLocate` angles.
+            sink.set_volume(Volume::Linear(vol as f32 / 127.0 * bs.level(&v.name) * fx));
+            let p = tricky_game::sndlib::cvt_w((pitch * F(4096.0)).ee()).clamp(0, 0x3fff) as f32 / 4096.0;
+            sink.set_speed((bs.pitch(&v.name, v.bend as f32) * p).clamp(0.25, 4.0));
+        }
+        if std::env::var("TRICKY_BOARDLOG").is_ok() && v.inst.volume != 0 {
+            println!("board loop {}: volume {} heard {vol} at {} m, pan {:?}, bend {} motion {motion}", v.name, v.inst.volume, d.ee(), v.pan, v.bend);
+        }
+    }
+
+    /// One frame of the loops: started for a new ride, else each of the 64 monitor slots updated in index order
+    /// (`cController::vf7` 0x21e9d0 -> `BankInstance_Update` 0x21e8f0). `riders` are the race's riders, the player's
+    /// first; `ear` is the listener (the camera), `pan_on` is `career.sound_mode() != 0` (`0x32ca00` / career+0x1670),
+    /// `dt` the monitor's step, `scale` channel slot 4's volume (`SndMgr_GetSlot` 0x211f38 with 4, instance +0x60).
     #[allow(clippy::too_many_arguments)]
     fn frame(
-        &mut self, ride: Option<usize>, riders: &[&Rider], ear: Option<&GlobalTransform>, dt: f32, bs: &BoardSounds, fx: f32, scale: f32,
+        &mut self, ride: Option<usize>, riders: &[&Rider], ear: Option<&GlobalTransform>, pan_on: bool, dt: f32, bs: &BoardSounds, fx: f32, scale: f32,
         pm: &mut crate::pathmusic::PathMusic, commands: &mut Commands, sinks: &mut Query<&mut AudioSink, With<RiderLoop>>,
     ) {
         // a new ride, or a field of another size (a new heat), starts them again
@@ -239,19 +301,21 @@ impl RiderLoops {
         if self.ride.is_none() {
             return;
         }
+        self.ensure_slots();
         let start = self.q.is_none();
         if start {
             self.q = Some(Queue { header: sndqueue::play_opts_header(), ..Queue::with_capacity(8) });
-            // `Audio_InitRiderSounds` 0x210a38: every rider of the race, its motion read below
+            // `Audio_InitRiderSounds` 0x210a38: every rider of the race, its motion (+0x424) read below
             self.riders = riders
                 .iter()
                 .enumerate()
                 .map(|(k, _)| LoopRider { addr: RIDER + 0x1_0000 * k as u32, flag_41c: (k == 0) as u32, ..Default::default() })
                 .collect();
         }
-        // each rider's motion; a change mutes or unmutes its loops as the motions' enter and exit routines do
+        // each rider's motion word (+0x424, `Boarder_EnterMotionState` 0x11c710); a change mutes or unmutes its loops
+        // as the motions' enter and exit routines do
         for (lr, r) in self.riders.iter_mut().zip(riders) {
-            let (old, new) = (lr.motion, motion(r));
+            let (old, new) = (lr.motion, r.motion);
             lr.motion = new;
             if !start {
                 for muted in tricky_game::states::motion_change_sfx_mutes(old, new) {
@@ -259,20 +323,19 @@ impl RiderLoops {
                 }
             }
         }
-        // each rider's emitter (+0x140) where the listener hears it (`cBXAudio::ListenerLocate` 0x20e730)
-        // STANDIN: the app's camera for the race's listener matrix (race +0xc0 + 0x80 per view), in the game's
-        // view axes as we read them (x right, y down, z ahead, cm: inferred), and the pan off (career +0x1668, which
-        // the app's host could not pan by anyway); one view, so every rider's listener is it
-        let dist: Vec<F> = riders
+        // each rider's emitter (+0x140) where the listener hears it (`cBXAudio::ListenerLocate` 0x20e730) through the
+        // `Game_UpdateCameras` 0x17f390 transposed view matrix (`+X right, +Y up, +Z ahead`, cm) and career pan flag
+        // (`0x32ca00` / career +0x1670).
+        // STANDIN (row E1b2g7d5j3b2): the app's Bevy `Camera3d` transform, for the game camera's matrix (E11d).
+        let mat = ear.map(listener_matrix);
+        let located: Vec<(F, (i16, i16))> = riders
             .iter()
-            .map(|r| match ear {
-                Some(cam) => {
-                    let v = cam.affine().inverse().transform_point3(r.pos) * 100.0;
-                    let id = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
-                    let l = tricky_game::sfxcalc::listener_locate(Some(id), [v.x, -v.y, -v.z], false);
-                    F(l.map_or(1.0, |l| l.d2)).sqrt()
+            .map(|r| {
+                let p = game_vec(r.pos * 100.0);
+                match tricky_game::sfxcalc::listener_locate(mat, p, pan_on) {
+                    Some(l) => (F(l.d2).sqrt(), l.pan.unwrap_or((0, 0))),
+                    None => (F(1.0), (0, 0)),
                 }
-                None => F(1.0),
             })
             .collect();
         let env_for = |r: &Rider, lr: &LoopRider| (board_in(r), lr.motion, r.surface as u32, r.rail_word);
@@ -287,72 +350,55 @@ impl RiderLoops {
                 };
                 sndqueue::start_rider_loops(q, &mut self.riders[k], &mut env);
                 let played = env.played;
-                self.take_played(played, k, dist[k], bs, commands);
+                let (d, pan) = located[k];
+                self.take_played(played, k, d, pan, bs, commands);
+            }
+            for slot in self.slots.iter_mut().flatten() {
+                let (d, pan) = located[slot.owner];
+                Self::update_positional(slot, d, pan, dt, bs, fx, scale, self.riders[slot.owner].motion, sinks);
             }
         } else {
-            // the monitor's instances in order, each by its own update; one an update starts is updated from the next
-            // frame (it takes the slot the reset freed)
-            let ids: Vec<u32> = self.voices.iter().map(|v| v.inst.addr).collect();
-            for h in ids {
-                let Some(k) = self.voices.iter().position(|v| v.inst.addr == h) else { continue };
-                let owner = self.voices[k].owner;
+            // `cController::vf7` 0x21e9d0 -> `BankInstance_Update` 0x21e8f0: iterate the 64 instance slots in index
+            // order; each occupied slot runs its loop callback then `BankInstance_UpdatePositional` 0x20b700. A reset
+            // frees its slot and a replacement takes the lowest free slot (`BankMonitor_FindFreeInstance` 0x20bce8).
+            for k in 0..bankmon::COUNT as usize {
+                let Some((owner, update)) = self.slots[k].as_ref().map(|v| (v.owner, v.update)) else { continue };
                 let (inp, motion, surface, rail) = env_for(riders[owner], &self.riders[owner]);
                 let q = self.q.as_mut().expect("the queue");
                 let mut env = LoopEnv {
                     bs, words: &mut self.words, inp, motion, surface, rail, handle: &mut self.handle, played: Vec::new(), pending: (0.0, 0.0),
                     reset: Vec::new(), bends: Vec::new(), cancel_break: false,
                 };
-                let v = &mut self.voices[k];
-                sndqueue::update_loop(v.update, q, &mut v.inst, &mut self.riders[owner], &mut env);
+                if let Some(v) = self.slots[k].as_mut() {
+                    sndqueue::update_loop(update, q, &mut v.inst, &mut self.riders[owner], &mut env);
+                }
                 let LoopEnv { played, reset, bends, cancel_break, .. } = env;
                 cancel |= cancel_break;
                 for (h, bend) in bends {
-                    if let Some(v) = self.voices.iter_mut().find(|v| v.inst.addr == h) {
-                        v.bend = bend;
+                    for v in self.slots.iter_mut().flatten() {
+                        if v.inst.addr == h {
+                            v.bend = bend;
+                        }
                     }
                 }
-                self.voices.retain(|v| {
-                    let keep = !reset.contains(&v.inst.addr);
-                    if !keep {
-                        commands.entity(v.e).try_despawn();
+                for slot in &mut self.slots {
+                    if let Some(v) = slot {
+                        if reset.contains(&v.inst.addr) {
+                            commands.entity(v.e).try_despawn();
+                            *slot = None;
+                        }
                     }
-                    keep
-                });
-                self.take_played(played, owner, dist[owner], bs, commands);
+                }
+                let (d, pan) = located[owner];
+                self.take_played(played, owner, d, pan, bs, commands);
+                if let Some(v) = self.slots[k].as_mut() {
+                    let (vd, vpan) = located[v.owner];
+                    Self::update_positional(v, vd, vpan, dt, bs, fx, scale, self.riders[v.owner].motion, sinks);
+                }
             }
         }
         if cancel {
             pm.cancel_break();
-        }
-        for v in self.voices.iter_mut() {
-            // the monitor's positional update (`BankInstance_UpdatePositional` 0x20b700, positions and Doppler on):
-            // culled beyond the cull distance and started again within it, the Doppler pitch of the distance
-            // closed, the volume falling off to none at the fall-off distance (30 when 0)
-            let d = dist[v.owner];
-            if v.cull.ee() != 0.0 {
-                v.playing = if v.playing { d.ee() <= v.cull.ee() } else { d.ee() < v.cull.ee() };
-            }
-            let (mut vol, mut pitch) = (0, F(1.0));
-            if v.playing {
-                if v.last.ee() != -1.0 {
-                    pitch = bankmon::doppler_pitch(v.last - d, F(dt));
-                }
-                let far = if v.far.ee() == 0.0 { F(30.0) } else { v.far };
-                vol = bankmon::instance_distance_volume(v.inst.volume as u32, d, far).min(0x7f);
-            }
-            v.last = d;
-            // the volume scaled by the slot's float, truncated
-            let vol = tricky_game::sndlib::cvt_w((F(vol as f32) * F(scale)).ee());
-            if let Ok(mut sink) = sinks.get_mut(v.e) {
-                // the volume (0..127) on the bank program's own level; the bend as the driver bends the voice
-                // (`SndHandle_SetPitchBend` 0x2d6a18 → `SNDVoice_CalcPitchMult`) on the monitor's pitch (4096 = 1)
-                sink.set_volume(Volume::Linear(vol as f32 / 127.0 * bs.level(&v.name) * fx));
-                let p = tricky_game::sndlib::cvt_w((pitch * F(4096.0)).ee()).clamp(0, 0x3fff) as f32 / 4096.0;
-                sink.set_speed((bs.pitch(&v.name, v.bend as f32) * p).clamp(0.25, 4.0));
-            }
-            if std::env::var("TRICKY_BOARDLOG").is_ok() && v.inst.volume != 0 {
-                println!("board loop {}: volume {} heard {vol} at {} m, bend {} motion {}", v.name, v.inst.volume, d.ee(), v.bend, self.riders[v.owner].motion);
-            }
         }
     }
 }
@@ -432,7 +478,7 @@ pub fn board_sound(
     time: Res<Time>, rider: Res<RiderRes>, game: Res<ui::Game>, mode: Res<Mode>, sounds: Res<crate::sound::Sounds>, bs: Res<BoardSounds>,
     list: Res<crate::LevelList>, mut rl: ResMut<RiderLoops>, mut pm: ResMut<crate::pathmusic::PathMusic>,
     mut commands: Commands, mut loops: Query<(Entity, &BoardLoop, &mut AudioSink), Without<RiderLoop>>, mut sinks: Query<&mut AudioSink, With<RiderLoop>>, mut last: Local<Last>,
-    (cam, opponents, levels, tick): (Query<&GlobalTransform, With<Camera3d>>, Res<crate::Opponents>, Res<ui::AudioLevels>, Res<crate::GameTick>),
+    (cam, opponents, levels, tick, career): (Query<&GlobalTransform, With<Camera3d>>, Res<crate::Opponents>, Res<ui::AudioLevels>, Res<crate::GameTick>, Res<ui::CareerRes>),
 ) {
     if !bs.on { return; }
     let r: &Rider = &rider.0;
@@ -452,13 +498,14 @@ pub fn board_sound(
     // `Audio_InGameUpdate` 0x20ee58 with game+0x50 / 60 → `Audio_UpdateSystems` 0x21eb70 → `cController::vf7`
     // 0x21e9d0 → `BankInstance_Update`): so a frame that ran none leaves them as they are (`GameTick`, row E1a4)
     if tick.n > 0 {
-        rl.frame(ride, &riders, cam.single().ok(), tick.dt(), &bs, fx, levels.slot(4), &mut pm, &mut commands, &mut sinks);
+        let pan_on = career.0.sound_mode() != 0;
+        rl.frame(ride, &riders, cam.single().ok(), pan_on, tick.dt(), &bs, fx, levels.slot(4), &mut pm, &mut commands, &mut sinks);
     }
     // the game values, in cm/s
     let fwd = r.forward();
     let load = r.vel.dot(fwd).abs() * 100.0;
     // the surface's sound group (`Sfx_SurfaceSoundType` 0x20f908) for the one-shots below
-    let g = tricky_game::sfxcalc::surface_sound_type(motion(r), r.rail_word, r.surface as u32);
+    let g = tricky_game::sfxcalc::surface_sound_type(r.motion, r.rail_word, r.surface as u32);
     // big air: the wind comes up as the music ducks (Audio_BigAirMusicDuck)
     // STANDIN: our wind loop (zbxsfx 32) and its level, for the game's big-air sound
     if !loops.iter().any(|l| *l.1 == BoardLoop::Wind) {
@@ -485,7 +532,7 @@ pub fn board_sound(
     }
     if r.crashed > 0.0 && !last.crashed {
         let impact = last.vel.length() * 100.0;
-        let id = if matches!(r.surface, 3 | 4) { 64 } else { 48 + (time.elapsed_secs() * 1000.0) as u32 % 3 };
+        let id = if matches!(r.prev_surface, 3 | 4) { 64 } else { 48 + (time.elapsed_secs() * 1000.0) as u32 % 3 };
         play(&mut commands, &format!("sfx_{id}"), curve(&[(100.0, 80.0), (800.0, 90.0), (1200.0, 105.0), (1600.0, 127.0)], impact) / 127.0, 1.0);
     }
     if r.grab != 0 && last.grab == 0 { play(&mut commands, "sfx_119", 0.7, 1.0); }
@@ -524,5 +571,61 @@ mod tests {
         assert_eq!(ice.1, 64);
         assert!((0..=127).contains(&ice.0));
         assert!(pow.0 <= 10);
+    }
+
+    #[test]
+    fn listener_matrix_and_pan_match_game_update_cameras_and_career_mode() {
+        // Camera at origin looking down Bevy -Z (+Y game forward, +Z game up, +X right)
+        let cam = GlobalTransform::from(Transform::IDENTITY);
+        let m = listener_matrix(&cam);
+        // Rider 3 m right, 2 m up, 5 m ahead in Bevy => game cm [300, 500, 200]
+        let p = game_vec(Vec3::new(3.0, 2.0, -5.0) * 100.0);
+        // Career default sound_mode (+0x1670 / 0x32ca00) is 2 (stereo -> pan enabled).
+        let (career, _) = tricky_game::career::CareerFile::open(None, 0, 1, None);
+        assert_eq!(career.sound_mode(), 2);
+        let stereo = tricky_game::sfxcalc::listener_locate(Some(m), p, career.sound_mode() != 0).unwrap();
+        // Proven +Y up (NOT down): x = 3.0, y = (200 + 25)*0.01 = 2.25, z = (500 - 100)*0.01 = 4.0
+        assert!((stereo.d2 - (3.0f32 * 3.0 + 2.25 * 2.25 + 4.0 * 4.0)).abs() < 1e-4);
+        let (az, el) = stereo.pan.expect("stereo pan enabled");
+        assert!(az > 0 && el > 0, "right & up should give positive azimuth/elevation, got ({az}, {el})");
+        // Mono (sound_mode == 0 -> pan off) produces identical distance and no pan angles.
+        let mono = tricky_game::sfxcalc::listener_locate(Some(m), p, false).unwrap();
+        assert_eq!(mono.d2, stereo.d2);
+        assert!(mono.pan.is_none());
+    }
+
+    #[test]
+    fn rider_motion_word_and_wipeout_surface_ten() {
+        let mut r = Rider::new(Vec3::ZERO, 0.0);
+        assert_eq!(r.motion, 1);
+        r.surface = 3; // ice
+        r.set_motion(2);
+        assert_eq!(r.motion, 2);
+        assert_eq!(r.surface, 3);
+        // `WipeoutMotion_Enter` 0x10c198 saves +0x290 into +0x310 and sets +0x290 = 10 -> surface sound type 7.
+        r.set_motion(5);
+        assert_eq!(r.motion, 5);
+        assert_eq!(r.prev_surface, 3);
+        assert_eq!(r.surface, 10);
+        assert_eq!(tricky_game::sfxcalc::surface_sound_type(r.motion, 0, r.surface as u32), 7);
+        r.set_motion(6);
+        assert_eq!(r.motion, 6);
+    }
+
+    #[test]
+    fn bank_monitor_slot_allocation_and_reuse_order() {
+        let mut slots: Vec<Option<u32>> = vec![None; bankmon::COUNT as usize];
+        // Allocate slots 0, 1, 2 sequentially (`BankMonitor_FindFreeInstance` 0x20bce8).
+        for h in 1..=3 {
+            let k = find_free_slot(&slots).unwrap();
+            assert_eq!(k as u32, h - 1);
+            slots[k] = Some(h);
+        }
+        // Resetting slot 1 lets the next start reclaim slot 1 (lowest free), preserving monitor slot order.
+        slots[1] = None;
+        let k = find_free_slot(&slots).unwrap();
+        assert_eq!(k, 1);
+        slots[k] = Some(4);
+        assert_eq!(find_free_slot(&slots), Some(3));
     }
 }

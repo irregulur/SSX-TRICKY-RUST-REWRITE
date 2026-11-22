@@ -613,7 +613,7 @@ impl Rider {
             q: o.q,
             up: o.up,
             height: 0.0,
-            surface: self.surface as u32,
+            surface: self.prev_surface as u32,
             ground,
             fall: crate::probe::fall_line(ground, o.up),
             ground_at: pos,
@@ -698,6 +698,7 @@ impl Rider {
         self.pos = to_port(w.rag.pos, 0.01);
         self.vel = to_port(w.rag.vel, 0.01);
         self.normal = to_port(w.rag.ground, 1.0);
+        self.set_motion(w.s.motion);
         self.surface = w.rag.surface.min(19) as u8;
         self.grounded = w.rag.ground_kind != 3;
         let f = to_port(w.wr.fwd, 1.0);
@@ -757,6 +758,7 @@ impl Rider {
         self.getup = -1.0;
         self.wipe = None;
         self.grounded = on_snow;
+        self.set_motion(if on_snow { 2 } else { 1 });
         self.spin = 0.0;
         self.flip = 0.0;
         self.clear_air();

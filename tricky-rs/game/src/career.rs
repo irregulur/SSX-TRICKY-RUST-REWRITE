@@ -441,6 +441,13 @@ impl Career {
         }
     }
 
+    /// `DAT_0032ca00` (`CAREER_BASE 0x32b390 + 0x1670`, i.e., `(career + 8) + 0x1668` in `cFE3DSound` /
+    /// `SoundOptions_Apply` 0x29f178): sound output mode (0 mono, 1..=3 stereo/surround, default 2). Non-zero enables
+    /// stereo panning in `cBXAudio::ListenerLocate` 0x20e730.
+    pub fn sound_mode(&self) -> u32 {
+        self.r32(0x1670)
+    }
+
     /// `Profile_SyncAudioSettings` 0x161928: the sound manager's volumes, speech level and mode into +0x1658..+0x1674
     /// (each change marks the profile changed, +0x3258); no sound manager, as it was.
     pub fn sync_audio(&mut self, audio: &mut Option<&mut dyn AudioSettings>) -> u32 {

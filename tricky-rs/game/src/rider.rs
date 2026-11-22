@@ -305,8 +305,14 @@ pub struct Rider {
     pub uber_timer: f32,
     pub stats: Stats,
     pub data: &'static RiderData,
-    /// surface-table row of the snow under the board
+    /// surface-table row of the snow under the board (`rider+0x290`; `WipeoutMotion_Enter` 0x10c198 saves this into
+    /// `prev_surface` `+0x310` and sets `+0x290 = 10`)
     pub surface: u8,
+    /// `rider+0x310`: surface saved by `WipeoutMotion_Enter` 0x10c198 before setting `+0x290 = 10`
+    pub prev_surface: u8,
+    /// `rider+0x424`: current motion state (`Boarder_SetMotion` 0x11f610 -> `Boarder_EnterMotionState` 0x11c710:
+    /// 1 air, 2 ground, 3 rail, 4 stationary/reset, 5 wipe-out, 6 wipe-out recovery)
+    pub motion: u32,
     pub grind_time: f32,
     /// on a rail: the board's angle to the direction of travel, how far it has been turned in all,
     /// and how long it has been ridden sideways
@@ -555,7 +561,7 @@ impl Rider {
     pub fn new(pos: Vec3, yaw: f32) -> Self {
         let mut r = Self { pos, vel: Vec3::ZERO, yaw, grounded: false, normal: Vec3::Y, charge: 0.0, air_time: 0.0,
                spawn: (pos, yaw), safe: (pos, yaw), safe_timer: 0.0, safe_external: false, safe_heading: None, respawns: 0, rail: None, rail_cooldown: 0.0, input: Input::default(),
-               spin: 0.0, flip: 0.0, flip_dir: 0.0, wind: 0.0, wind_flip: 0.0, cap: SPEED_CAP, steer: 0.0, grab: 0, grab_hold: 0.0, grab_out: None, grab_done: [false; 16], grab_tweaked: [false; 16], ubers_done: 0, switch_takeoff: false, from_rail: false, uber_timer: 0.0, stats: Stats::default(), data: &RIDERS[0], surface: 1, grind_time: 0.0, rail_twist: 0.0, rail_spun: 0.0, rail_side: 0.0, rail_entry: 0.0, rail_goal: 0.0, rail_held: false, rail_side_signed: 0.0, shove: 0.0, shove_side: 1.0, taunt: -1.0, taunt_clip: String::new(), fin: None, showoff: false, landed: Vec::new(), crash_kind: 0, land_kind: 0, switch: false, score: 0, boost: 0.0, boosting: false, body_height: 0.0,
+               spin: 0.0, flip: 0.0, flip_dir: 0.0, wind: 0.0, wind_flip: 0.0, cap: SPEED_CAP, steer: 0.0, grab: 0, grab_hold: 0.0, grab_out: None, grab_done: [false; 16], grab_tweaked: [false; 16], ubers_done: 0, switch_takeoff: false, from_rail: false, uber_timer: 0.0, stats: Stats::default(), data: &RIDERS[0], surface: 1, prev_surface: 1, motion: 1, grind_time: 0.0, rail_twist: 0.0, rail_spun: 0.0, rail_side: 0.0, rail_entry: 0.0, rail_goal: 0.0, rail_held: false, rail_side_signed: 0.0, shove: 0.0, shove_side: 1.0, taunt: -1.0, taunt_clip: String::new(), fin: None, showoff: false, landed: Vec::new(), crash_kind: 0, land_kind: 0, switch: false, score: 0, boost: 0.0, boosting: false, body_height: 0.0,
                last_trick: String::new(), trick_timer: 0.0, crashed: 0.0, hard_land: 0.0, crouch_v: 0.0, brake_v: 0.0, jump_c: 0.0, jump_delay: 0.0, height: 0.0,
                course_dir: None, course_pts: None, wipe: None, crash_at: None, gm: None, crash_spray: None, land_puffs_vn: None, lean: [0.0; 3], up: [0.0, 0.0, 1.0, 0.0], recover: None, ai: false, down_t: 0.0, getup: -1.0, stumble: 0.0, wall_hit: None, speed_timer: 0.0, spin_timer: 0.0, spin_used: false, tube_class: u8::MAX, gate_p: 0.0, gate_hi: 0.0, gate_lo: 0.0, gate_still: 0.0, gate_target: 0.0, gate_speed: 0.0, gate_state: 8, gate_rock_dir: 0, band: (0.005, 0.0250417), spin_base: 0.0, flip_base: 0.0, late: false, cause: "", spin_ax: Axis::default(), flip_ax: Axis::default(), air_mode2: false, rail_off: 0.0, rail_time: 0.0, rail_halves: 0, boost_was: false, chain: 0,
                ubers: Vec::new(), uber: 0.0, uber_id: 0, uber_done: false, letters: 0, multiplier: 1,
@@ -602,6 +608,21 @@ impl Rider {
         }
         self.reset = Some(started.state);
         self.reset_acc = 0.0;
+        self.set_motion(4);
+    }
+
+    /// `Boarder_SetMotion` 0x11f610 -> `Boarder_ExitMotionState` 0x11c6b0 / `Boarder_EnterMotionState` 0x11c710:
+    /// updates `rider+0x424` (`self.motion`) and applies `WipeoutMotion_Enter` 0x10c198's surface write
+    /// (`rider+0x310 = rider+0x290; rider+0x290 = 10`) when entering motion 5.
+    pub fn set_motion(&mut self, new: u32) {
+        for ch in crate::states::set_motion(&mut self.motion, new) {
+            if let crate::states::Change::Enter(s, _) = ch {
+                if s.addr == 0x10c198 {
+                    self.prev_surface = self.surface;
+                    self.surface = 10;
+                }
+            }
+        }
     }
     /// `ResetState_Update` 0x106a90 for the ticks `dt` holds, the rider standing still (motion 4 does nothing); on its
     /// placing `ResetWaitControl_Exit` 0x106a48 (the fades back, +0x448 1 and +0x44c 0) and the rider placed at its
@@ -656,6 +677,7 @@ impl Rider {
         self.recover = None;
         self.stumble = 0.0;
         self.grounded = false;
+        self.set_motion(1);
         self.charge = 0.0;
         self.air_time = 0.0;
         self.rail = None;
@@ -821,6 +843,7 @@ impl Rider {
         self.wipe = None;
         self.recover = None;
         self.rail = None;
+        self.set_motion(5);
         self.charge = 0.0;
         self.jump_c = 0.0;
         self.jump_delay = 0.0;
@@ -1210,6 +1233,7 @@ impl Rider {
         self.wind_flip = 0.0;
         self.charge = 0.0;
         self.grounded = false;
+        self.set_motion(1);
         self.air_time = 0.0;
         // the board's attitude is the game's own through the jump (row G20c3c): the quaternion rider+0x170 and the
         // axes +0x180..+0x1b0 are not touched in the air (the spin and flip are the separate angles +0x1d0 and
@@ -1279,8 +1303,7 @@ impl Rider {
             }
         }
         // `cBoarder::vf7` 0x117198, before the tick's motion: the body's height eases toward the surface's (row G16)
-        let motion = if self.crashed > 0.0 { 5 } else if self.rail.is_some() { 3 } else if self.grounded { 2 } else { 1 };
-        self.body_height = crate::pose::ease_body_height(self.body_height, motion, crate::surface::SURFACE_TABLE[(self.surface as usize).min(19)][10]);
+        self.body_height = crate::pose::ease_body_height(self.body_height, self.motion, crate::surface::SURFACE_TABLE[(self.surface as usize).min(19)][10]);
         // the lean record moves toward the target the last tick left (`cBoarder::vf7` 0x117198, before the motion),
         // and is aimed again from this tick's steer and speed at its end (`Boarder_UpdateLeanTargets` 0x129500)
         self.lean_ease(dt);
@@ -1538,6 +1561,9 @@ impl Rider {
                     if !down {
                         self.land_puffs_vn = Some(impact * 100.0);
                         self.land(None);
+                        if self.crashed <= 0.0 {
+                            self.set_motion(2);
+                        }
                         self.steer = 0.0;
                     }
                 }
@@ -1586,6 +1612,7 @@ impl Rider {
                 while tw < -std::f32::consts::PI { tw += std::f32::consts::TAU; }
                 self.pos = rp;
                 self.rail = Some((ri, d, along));
+                self.set_motion(3);
                 self.rail_grid = true;
                 self.charge = 0.0;
                 self.rail_kind = cap.kind;
@@ -1622,6 +1649,7 @@ impl Rider {
                     // the original keeps your speed along the rail, and at least 20 km/h of it
                     let along = along.signum() * s.min(along.abs().max(5.56));
                     self.rail = Some((ri, d, along));
+                    self.set_motion(3);
                     self.rail_grid = false;
                     self.charge = 0.0;
                     // `Rail_TryCapture`: how the board sits on the rail (STANDIN: the angle's sign as ours)

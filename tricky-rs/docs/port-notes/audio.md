@@ -1915,3 +1915,28 @@ Proven (`SLUS_203.26`):
   `kind_bank`, `play_bank_sound`, `play_top`, the `audio/world/` stand-in path, and the `get_slot` stand-ins; slot 3
   also feeds `Crowd.bnk` directly into `crowd_progs`. Verified on real disc `BANKS.INF` + Garibaldi banks + slot 6
   async swap + `SndSys_PlayPending` volume scaling (`bankhost::tests::*`, `racespeech::tests::*`).
+
+## Rider loops' motion word, listener view axes, career pan & bank monitor slots (E1b2g7d5j3b1, `game/src/rider.rs`, `game/src/career.rs`, `src/boardsound.rs`)
+
+Proven (`SLUS_203.26`):
+- **Listener view matrix axes (`Game_UpdateCameras` 0x17f390 → `race + 0xc0 + 0x80 * view`)**: builds camera basis
+  in game world space (`+Z` up, cm): forward `F` from rotating `(0, -1, 0)` by yaw/pitch, up `U` from rotating
+  `(0, 0, 1)` by yaw/pitch/roll and orthogonalizing `U = normalize(U - (U·F)F)`, right `R = F × U`, forms
+  `[R, -R·C; U, -U·C; F, -F·C; 0, 0, 0, 1]` on VU0 (`0x17fe58..0x17fea4`) and **transposes** it (`pextlw`/`pextuw`/
+  `pcpyld`/`pcpyud` at `0x17fec8..0x17ff04`) into `race + 0xc0 + 0x80 * view`. Thus `cBXAudio::ListenerLocate`
+  0x20e730 computes `lane(0) = R·(p - C)` (`+X` right), **`lane(1) = U·(p - C)` (`+Y` up, NOT down as previously
+  inferred)**, and `lane(2) = F·(p - C)` (`+Z` ahead), before applying `(0, +25, -100)` cm. Fixed in
+  `boardsound::listener_matrix`.
+- **Career pan flag (`DAT_0032ca00`)**: `CAREER_BASE 0x32b390 + 0x1670` (equivalently `(career + 8) + 0x1668` in
+  `cFE3DSound::vf34` 0x270b18 / `SoundOptions_Apply` 0x29f178; default `2` in `Career::new`), exposed via
+  `Career::sound_mode()` and passed into `sfxcalc::listener_locate(..., pan_on)`.
+- **Rider motion word `+0x424` and wipe-out surface `10`**: `Boarder_EnterMotionState` 0x11c710 (`1` air, `2` ground,
+  `3` rail, `4` reset/stationary, `5` wipe-out, `6` recovery) and `WipeoutMotion_Enter` 0x10c198 (`+0x310 = +0x290;
+  +0x290 = 10`, yielding `Sfx_SurfaceSoundType` `7`). Now tracked on `tricky_game::rider::Rider` (`motion`,
+  `prev_surface`, `Rider::set_motion`) and read directly in `src/boardsound.rs`.
+- **Bank monitor 64-slot allocation and update order**: `cController::vf7` 0x21e9d0 iterates slots `0..64`
+  (`bankmon::COUNT`) calling `BankInstance_Update` 0x21e8f0 (callback then `BankInstance_UpdatePositional` 0x20b700);
+  `BankMonitor_AddInstance` 0x20bd68 allocates the lowest free slot via `BankMonitor_FindFreeInstance` 0x20bce8.
+  `RiderLoops` now uses a 64-slot array with lowest-free-slot allocation and `0..64` update order.
+- Left for `E1b2g7d5j3b2` (blocked on `E11d`): feeding `listener_matrix` from the game's camera instead of Bevy's
+  `Camera3d` transform.

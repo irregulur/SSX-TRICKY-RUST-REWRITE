@@ -63,7 +63,7 @@ pub const MONITOR_DTOR: u32 = 0x222ba0;
 pub const DEBUG_PRINTF: u32 = 0x188990;
 
 const SIZE: u32 = 0xb0;
-const COUNT: u32 = 64;
+pub const COUNT: u32 = 64;
 const MINUS_ONE: u32 = 0xbf80_0000;
 
 fn f(m: &Mem, a: u32) -> F {

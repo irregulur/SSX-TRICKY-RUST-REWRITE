@@ -1909,12 +1909,13 @@ fn ride(
         for k in 0..n {
             let rr: &mut Rider = if k == 0 { &mut *r } else { &mut opponents.0[k - 1].rider };
             if sc.ended {
-                if let Some((p, yaw)) = sc.saved[k].take() { rr.pos = p; rr.yaw = yaw; rr.vel = Vec3::ZERO; rr.grounded = false; }
+                if let Some((p, yaw)) = sc.saved[k].take() { rr.pos = p; rr.yaw = yaw; rr.vel = Vec3::ZERO; rr.grounded = false; rr.set_motion(1); }
             } else if let Some(Some((p, yaw))) = sc.slot(k).and_then(|i| sc.spots.get(i)) {
                 if sc.saved[k].is_none() { sc.saved[k] = Some((rr.pos, rr.yaw)); }
                 // the scene's heights are the stage floor's own (the stage is not part of the snow)
                 rr.pos = *p;
                 rr.grounded = true;
+                rr.set_motion(2);
                 rr.yaw = *yaw;
                 rr.vel = Vec3::ZERO;
             }
