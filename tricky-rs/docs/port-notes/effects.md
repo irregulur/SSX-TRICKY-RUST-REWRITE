@@ -45,6 +45,37 @@ pass's weights reach 0.4 and the lit pass's 0.96, and the strip reads as a groov
 hand-written trail (a point every 110 cm, 5.1°, 10 cm of width, our fade) is gone. `TRICKY_TRACKDBG` prints the
 player's strip state and both passes' counts every frame.
 
+### Board effects in the app (row E1b2g3; `src/spray.rs`)
+
+`tricky-rs/src/spray.rs` now runs the game's ported board effects in place of the old LCG flake pool, drawing
+every random number from `Rand_Fx` 0x23d4a8 (`tricky_game::rand::rand_fx`):
+- `Boarder_UpdateEffects` 0x1350c0 (`effects::plan(1, 0)`): `Fx_BoardPuff_Update` 0x12eca8 (`puff::puff_update`),
+  `Fx_BoardTrail_Update` 0x12fef0 (`boardtrail::update`), `Fx_SurfaceSpray` 0x1311b0 (`surfacespray::update`),
+  `Fx_BrakeSpray_Update` 0x12e6e8 (`brakefx::brake_update`, running `Fx_BrakeFan_Update` 0x12d108), and
+  `Fx_SpeedDust_Update` 0x12f4c0 (`puff::dust_update`); `Fx_BoardTrack` 0x132648 stays in `src/tracks.rs`
+  (it makes no `Rand_Fx` draws).
+- Landing puffs and impact sprays: `Fx_SpawnLandingPuffs` 0x12e0e8 (`brakefx::spawn_landing_puffs`, runner-checked
+  in `tests/brakefx.rs`) calling `Fx_LandingSplash` 0x12ccc8 (`splash::landing_splash`, runner-checked in
+  `tests/splash.rs`) and `Fx_Spray_SpawnParticle` 0x12e330 on clean landings (`Rider::land_puffs_vn`), plus
+  `Fx_BrakeSpray_Emit` 0x12e008 (`brakespray::emit` -> `splash::emit_at_point` 0x12c7e0) on `Rider::crash_spray`.
+- Spin-boost glow trails (`cBoarderRender::vf7` 0x1356f8 on `rider+0x13c`, `Rider::spin_timer > 0`): two
+  `cParticleMan` trail groups (`ParticleGroup_Add` 0x1d9060, `ParticleGroup_UpdateTrail` 0x1d9208,
+  `ParticleGroup_Remove` 0x1d9138) using the exact `0xe0`-byte config from `0x135758..0x135900` (texture `str3`).
+- Drawing: `BoarderRender_DrawEffects` 0x135170 (`boardfx::draw_effects` -> `puff_draw`, `trail_draw`,
+  `fxdraw::surface_spray_draw`, `spray_draw` -> `fxdraw::spray_draw_particles`, `fxdraw::speed_dust_draw`) and
+  `cParticleMan::vf2` 0x1d9900 (`particleman::draw` -> `draw_slot`). `Fx_SurfaceSpray_Draw` submits its 20-quadword
+  blocks through `particledraw::draw_program6` 0x1e2a60 into VU1 program 6 (`particlevu::run6`), whose kicked GS
+  sprites are unprojected back into world space (as `src/snow.rs` does for program 7); `+0x240` sprites and
+  `+0x220` strips bucket by `(texture, GS ALPHA mode)` (`0x48` additive for modes 5/8, `0x46` multiply for 4,
+  `0x44` alpha blend for 3).
+
+STANDINs left in `src/spray.rs`:
+- fixed snow light colour (`LIGHT_COLOUR`) matching `src/tracks.rs`'s fixed sun (for `*(rider+0x5ae0) + 0x470`, G7b);
+- ground point as `rider.pos` on snow (as `src/tracks.rs`);
+- `cParticleMan` hand trail tip positions derived from `board_bone_frame` (for skeleton bones `0x2f0/0x330` and
+  `0x1f0/0x230`, G5);
+- particle sprite textures read from `chars/particles/<name>.png` with a soft-dot fallback (for the `.ssh` reader).
+
 ## Particle emitters (`Emitter_InitFromRecord`, `PBurst_*`, VU1 microcode at 0x31c288)
 
 - type2Sub0: U0 N particles born evenly over U2 s (U2 < 0: continuous, recycled every T = U5 + U7/2, pre-warmed);

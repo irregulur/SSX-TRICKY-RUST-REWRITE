@@ -197,3 +197,69 @@ fn ring_matches_the_original() {
         }
     }
 }
+
+#[test]
+fn landing_splash_matches_the_original() {
+    let Some(mut r) = Runner::from_env() else { return };
+    r.float_rules = Rules::parse("add=n,mul=n,div=n,cvt=n").unwrap();
+    r.allow(0x102f50);
+    r.allow(0x250c10);
+    r.allow(0x12c190);
+    let rand: Rc<RefCell<VecDeque<u32>>> = Rc::new(RefCell::new(VecDeque::new()));
+    let q = rand.clone();
+    r.stub(0x23d4a8, move |c, _| c.set_gpr(2, q.borrow_mut().pop_front().expect("rand") as i32 as i64 as u64));
+    let this = r.mem.alloc(0x20 + 0x3c0 * 5 + 0x10);
+    let rider = r.mem.alloc(0x5c00);
+    let cols = r.mem.alloc(0x500);
+    let (g, h, table) = (r.mem.alloc(0x800), r.mem.alloc(0x40), r.mem.alloc(0x64 * 8));
+    r.mem.write_u32(0x337c58, g);
+    r.mem.write_u32(g + 0x730, h);
+    r.mem.write_u32(h + 0x24, table);
+    let mut gen = Rng(0x12cc_c800_dead_beef);
+    let mut s = Splash::default();
+    let (mut emitted, mut skipped) = (0, 0);
+    for case in 0..10_000 {
+        if case % 3 == 0 {
+            s.count = (gen.next() % 6) as i32;
+            s.slot = (gen.next() % 5) as i32;
+        }
+        let vn = match gen.next() % 5 {
+            0 => -100.0,
+            1 => -600.0,
+            2 => -1200.0,
+            3 => -3000.0,
+            _ => gen.f() * 200.0,
+        };
+        let vel = [gen.f() * 150.0, gen.f() * 150.0, gen.f() * 150.0, 0.0];
+        let mut up = [gen.f() * 0.2, gen.f() * 0.2, 1.0, 0.0];
+        let ulen = (up[0] * up[0] + up[1] * up[1] + up[2] * up[2]).sqrt();
+        for k in 0..3 { up[k] /= ulen; }
+        let ground = gen.v();
+        let colour = gen.v();
+        let mode = [0u32, 1, 2, 3][(gen.next() % 4) as usize];
+        let sc = [0.0f32, 0.01, 0.02, 0.5, 1.0][(gen.next() % 5) as usize];
+        let idx = gen.next() % 8;
+        r.mem.write_u32(rider + 0x290, idx);
+        r.mem.write_u32(rider + 0x2e0, mode);
+        r.mem.write_u32(rider + 0x5ae0, cols);
+        r.mem.write_f32(table + 0x64 * idx + 0x58, sc);
+        put(&mut r, rider + 0x150, vel);
+        put(&mut r, rider + 0x2a0, up);
+        put(&mut r, rider + 0x2d0, ground);
+        put(&mut r, cols + 0x470, colour);
+        load(&mut r, this, &s);
+        let words: VecDeque<u32> = (0..30).map(|_| gen.next() | (gen.next() << 16)).collect();
+        *rand.borrow_mut() = words.clone();
+        r.cpu.set_gpr(4, this as u64);
+        r.cpu.set_gpr(5, rider as u64);
+        r.cpu.set_f(12, vn);
+        r.call(0x12ccc8).unwrap();
+        let mut m = words.clone();
+        let ri = LandingSplashIn { mode, scale: sc, vel, up, ground, colour };
+        landing_splash(&mut s, vn, &ri, &mut || m.pop_front().unwrap());
+        assert_eq!(rand.borrow().len(), m.len(), "case {case} rand use");
+        if m.len() < words.len() { emitted += 1; } else { skipped += 1; }
+        check(&mut r, this, &s, &format!("landing case {case}"));
+    }
+    assert!(emitted > 1000 && skipped > 1000, "{emitted} {skipped}");
+}

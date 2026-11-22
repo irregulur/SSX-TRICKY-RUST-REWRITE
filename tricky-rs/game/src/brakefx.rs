@@ -3,7 +3,7 @@
 //! over the rings of [`crate::splash`], the splash object at +0x970 of the pool).
 
 use crate::brakespray::{spawn, Pool, SprayEnv};
-use crate::splash::{Splash, RING_WORDS};
+use crate::splash::{landing_splash, LandingSplashIn, Splash, RING_WORDS};
 
 type V4 = [f32; 4];
 
@@ -253,4 +253,57 @@ pub fn brake_update(b: &mut BrakeFx, r: &FanIn, env: &mut dyn SprayEnv) {
         }
         i -= 1;
     }
+}
+
+/// What `Fx_SpawnLandingPuffs` 0x12e0e8 reads of the rider.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LandingPuffsIn {
+    /// +0x2e0
+    pub mode: u32,
+    /// surface table word +0x58
+    pub scale: f32,
+    /// +0x140
+    pub pos: V4,
+    /// +0x150
+    pub vel: V4,
+    /// +0x2a0
+    pub up: V4,
+    /// +0x2d0
+    pub ground: V4,
+    /// +0x320 (forward in ground plane)
+    pub fwd: V4,
+    /// +0x330 (board side in ground plane)
+    pub side: V4,
+    /// light set +0x470
+    pub colour: V4,
+}
+
+/// `Fx_SpawnLandingPuffs` 0x12e0e8(vn, this, rider): calls `Fx_LandingSplash` 0x12ccc8 on the splash at +0x970,
+/// then unless hit mode +0x2e0 is 2 spawns `clamp(cvt_w(-0.0009 * vn), 2, 8)` spray particles scattered ±40 cm
+/// along +0x320 and +0x330 around +0x140, raises `pool.level` to at most 1.5, and sets `pool.recent = 1.0`.
+pub fn spawn_landing_puffs(b: &mut BrakeFx, vn: f32, r: &LandingPuffsIn, env: &mut dyn SprayEnv) {
+    {
+        let mut rand = || env.rand_fx();
+        let sin = LandingSplashIn { mode: r.mode, scale: r.scale, vel: r.vel, up: r.up, ground: r.ground, colour: r.colour };
+        landing_splash(&mut b.splash, vn, &sin, &mut rand);
+    }
+    if r.mode == 2 {
+        return;
+    }
+    let count = crate::sndlib::cvt_w(vn * f32::from_bits(0xba6b_edfb)).clamp(2, 8);
+    let boost = (f32::from_bits(0x3e4c_cccd) - vn * f32::from_bits(0x3a06_d122)) * 1.5;
+    let one = |w: u32| f32::from_bits((w & 0x7f_ffff) | 0x3f80_0000);
+    for _ in 0..count {
+        let s1 = (one(env.rand_fx()) - 1.0) * 80.0 + -40.0;
+        let p = add(r.pos, scale(r.fwd, s1));
+        let s2 = (one(env.rand_fx()) - 1.0) * 80.0 + -40.0;
+        let p = add(p, scale(r.side, s2));
+        spawn(&mut b.pool, f32::from_bits(0x3dcc_cccd), r.colour, p, r.up, r.vel, env);
+    }
+    let mut l = b.pool.level + boost;
+    if 1.5 < l {
+        l = 1.5;
+    }
+    b.pool.level = l;
+    b.pool.recent = 1.0;
 }

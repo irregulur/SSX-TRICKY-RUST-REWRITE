@@ -485,14 +485,14 @@ address,size,name,system,status
 0x12c190,832,Fx_Splash_EmitRing,boarder,ported
 0x12c4d0,780,Fx_BrakeFan_Emit,boarder,ported
 0x12c7e0,1256,Fx_Splash_EmitAtPoint,boarder,ported
-0x12ccc8,1088,Fx_LandingSplash,boarder,ported
+0x12ccc8,1088,Fx_LandingSplash,boarder,checked
 0x12d108,1464,Fx_BrakeFan_Update,boarder,ported
 0x12d6c0,464,Fx_Spray_ComputeParticle,boarder,checked
 0x12d890,1736,Fx_Spray_DrawParticles,boarder,checked
 0x12df58,116,Fx_BrakeSpray_Init,boarder,not started
 0x12dfd0,56,Fx_BrakeSpray_Reset,boarder,not started
 0x12e008,220,Fx_BrakeSpray_Emit,boarder,ported
-0x12e0e8,584,Fx_SpawnLandingPuffs,boarder,not started
+0x12e0e8,584,Fx_SpawnLandingPuffs,boarder,checked
 0x12e330,948,Fx_Spray_SpawnParticle,boarder,ported
 0x12e6e8,560,Fx_BrakeSpray_Update,boarder,ported
 0x12e918,752,Fx_Spray_Draw,boarder,checked
@@ -1728,7 +1728,7 @@ address,size,name,system,status
 0x17dd00,20,cBxSortObjNode::~cBxSortObjNode,world,not started
 0x17dd18,92,cBxSortObjNode::__tf,runtime,host
 0x17dd98,8,cScriptNode::vf10_17dd98,world,not started
-0x17dda0,12,cCounterNode::vf9_17dda0,world,not started
+0x17dda0,12,cCounterNode::vf9_17dda0,world,ported
 0x17ddb0,8,cBxTypeObjNode::Draw,world,not started
 0x17ddb8,8,cBxTypeObjNode::Update,world,not started
 0x17ddc0,20,cBxTypeObjNode::~cBxTypeObjNode,world,not started
@@ -3051,9 +3051,9 @@ address,size,name,system,status
 0x1dec38,180,PS2Render_FlushMeshCache,render,not started
 0x1decf0,360,cPS2GraphicsMan::vf68_1decf0,render,not started
 0x1dee58,36,cPS2GraphicsMan::vf69_1dee58,render,not started
-0x1dee80,672,cPS2GraphicsMan::vf99_1dee80,render,not started
-0x1df120,436,cPS2GraphicsMan::vf101_1df120,render,not started
-0x1df2d8,416,cPS2GraphicsMan::vf100_1df2d8,render,not started
+0x1dee80,672,cPS2GraphicsMan::vf99_1dee80,render,ported
+0x1df120,436,cPS2GraphicsMan::vf101_1df120,render,ported
+0x1df2d8,416,cPS2GraphicsMan::vf100_1df2d8,render,ported
 0x1df478,2480,cPS2GraphicsMan::vf91_1df478,render,checked
 0x1dfe30,344,cPS2GraphicsMan::vf93_1dfe30,render,checked
 0x1dff88,1328,cPS2GraphicsMan::vf94_1dff88,render,checked
@@ -3639,9 +3639,9 @@ address,size,name,system,status
 0x218700,972,Sfx_PlayWipeoutSlide,audio,ported
 0x218b20,72,Sfx_StopWipeoutLoop,audio,ported
 0x218b68,12,Sfx_UnmuteRiderLoops,audio,ported
-0x218b78,676,Sfx_SpinTrickStart,audio,not started
-0x218e20,8,Sfx_OnGrabHeld,audio,not started
-0x218e28,136,Sfx_SpinTrickStop,audio,not started
+0x218b78,676,Sfx_SpinTrickStart,audio,ported
+0x218e20,8,Sfx_OnGrabHeld,audio,ported
+0x218e28,136,Sfx_SpinTrickStop,audio,ported
 0x218eb0,576,Sfx_OnRiderReset,audio,ported
 0x2190f0,200,Sfx_OnTrickBookDone,audio,ported
 0x2191c0,152,Sfx_OnMeterAdd,audio,ported

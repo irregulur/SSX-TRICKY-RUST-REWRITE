@@ -134,6 +134,67 @@ pub fn emit_ring(
     ring[208 + (n_ - 1) as usize] = ring[208];
 }
 
+/// What `Fx_LandingSplash` 0x12ccc8 reads of the rider: +0x2e0 its hit mode, +0x150 velocity, +0x2a0 ground
+/// normal, +0x2d0 ground point, the colour at +0x5ae0's +0x470, and the float at +0x58 of its surface row.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LandingSplashIn {
+    pub mode: u32,
+    pub scale: f32,
+    pub vel: [f32; 4],
+    pub up: [f32; 4],
+    pub ground: [f32; 4],
+    pub colour: [f32; 4],
+}
+
+/// `Fx_LandingSplash` 0x12ccc8(vn, this, rider): a 25-point splash ring when the rider comes down hard on snow
+/// (`-0.28114587 * vn > 154.46002`, clamped to `490.5319`), unless hit mode is 2 or surface word +0x58 < 0.02.
+pub fn landing_splash(s: &mut Splash, vn: f32, rider: &LandingSplashIn, rand_fx: &mut dyn FnMut() -> u32) {
+    if rider.mode == 2 || rider.scale < f32::from_bits(0x3ca3_d70a) {
+        return;
+    }
+    let mut size = vn * f32::from_bits(0xbe8f_f25a);
+    if size <= f32::from_bits(0x431a_75c4) {
+        return;
+    }
+    if f32::from_bits(0x43f5_4415) < size {
+        size = f32::from_bits(0x43f5_4415);
+    }
+    if s.count < 5 {
+        s.count += 1;
+    }
+    s.slot = (s.slot + 4) % 5;
+    let ring = &mut s.rings[s.slot as usize];
+    let flat = sub(rider.vel, scale(rider.up, v4_dot(rider.vel, rider.up)));
+    let c = cross(flat, rider.up);
+    let u1 = {
+        let sq = v4_dot(c, c);
+        let q = if sq == 0.0 { f32::MAX } else { 1.0 / sq.sqrt() };
+        scale(c, q)
+    };
+    let e2 = cross(rider.up, u1);
+    ring[239] = ((size * f32::from_bits(0x3ad5_c358) + f32::from_bits(0x3e4c_cccd)) * f32::from_bits(0x3f7e_b7a0)).to_bits();
+    ring[237] = 0x19;
+    ring[238] = 0;
+    put4(ring, 233, rider.colour);
+    put4(ring, 200, add(rider.ground, scale(rider.up, 3.0)));
+    let flat_len = v4_dot(flat, flat).sqrt();
+    let l = flat_len * f32::from_bits(0x3f33_3333);
+    let spread = if f32::from_bits(0x4450_5555) < l {
+        add(scale(flat, ps2_div(f32::from_bits(0x4450_5555), l)), scale(rider.up, f32::from_bits(0x4269_5555)))
+    } else {
+        add(flat, scale(rider.up, l * f32::from_bits(0x3d8f_5c29)))
+    };
+    put4(ring, 204, spread);
+    let vel_len = v4_dot(rider.vel, rider.vel).sqrt();
+    let mut k_fade = ps2_div(flat_len, vel_len);
+    if k_fade < f32::from_bits(0x3e4c_cccd) {
+        k_fade = f32::from_bits(0x3e4c_cccd);
+    } else if f32::from_bits(0x3f4c_cccd) < k_fade {
+        k_fade = f32::from_bits(0x3f4c_cccd);
+    }
+    emit_ring(ring, rider.up, e2, u1, size, k_fade, rider.scale * f32::from_bits(0x3f4c_cccd), f32::from_bits(0x3ecc_cccd), rand_fx);
+}
+
 /// `Fx_Splash_EmitAtPoint` 0x12c7e0(this, rider, pos, v, n): a ring of splash where the board touches a surface
 /// of normal `n` (up enough: n.z ≥ 0.3), no more often than every 0.3 of gathered distance.
 pub fn emit_at_point(s: &mut Splash, rider: &SplashRider, pos: [f32; 4], v: [f32; 4], n: [f32; 4], rand_fx: &mut dyn FnMut() -> u32) {

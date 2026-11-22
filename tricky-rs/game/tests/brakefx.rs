@@ -211,3 +211,81 @@ fn brake_spray_update_matches_the_original() {
 fn ring_words_are_the_size_the_object_has() {
     assert_eq!(RING_WORDS * 4, 0x3c0);
 }
+
+#[test]
+fn spawn_landing_puffs_matches_the_original() {
+    let Some(mut r) = Runner::from_env() else { return };
+    r.float_rules = Rules::parse("add=n,mul=n,div=n,cvt=n").unwrap();
+    r.allow(0x102f50);
+    r.allow(0x250c10);
+    r.allow(0x12c190);
+    r.allow(0x12ccc8);
+    r.allow(0x12e330);
+    let rand: Rc<RefCell<VecDeque<u32>>> = Rc::new(RefCell::new(VecDeque::new()));
+    let q = rand.clone();
+    r.stub(0x23d4a8, move |c, _| c.set_gpr(2, q.borrow_mut().pop_front().expect("rand") as i32 as i64 as u64));
+    let this = r.mem.alloc(0x1c60);
+    let rider = r.mem.alloc(0x5c00);
+    let light = r.mem.alloc(0x500);
+    let (g0, h0, table) = (r.mem.alloc(0x800), r.mem.alloc(0x40), r.mem.alloc(0x64 * 20));
+    r.mem.write_u32(0x337c58, g0);
+    r.mem.write_u32(g0 + 0x730, h0);
+    r.mem.write_u32(h0 + 0x24, table);
+    r.mem.write_u32(rider + 0x5ae0, light);
+    let mut g = Rng(0x12e0_e800_cafe_0001);
+    let mut b = BrakeFx::default();
+    let (mut hit, mut skip) = (0, 0);
+    for case in 0..8_000 {
+        if case % 4 == 0 {
+            b.pool.count = [0, 1, 15, 29, 30][(g.next() % 5) as usize];
+            b.pool.head = (g.next() % 30) as i32;
+            b.pool.recent = g.small().abs();
+            b.pool.level = [0.0f32, 0.2, 0.8, 1.4, 2.0][(g.next() % 5) as usize];
+            b.splash.count = (g.next() % 6) as i32;
+            b.splash.slot = (g.next() % 5) as i32;
+        }
+        let vn = match g.next() % 5 {
+            0 => -50.0,
+            1 => -600.0,
+            2 => -1500.0,
+            3 => -5000.0,
+            _ => -10000.0,
+        };
+        let surface = g.next() % 20;
+        let sc = [0.0f32, 0.01, 0.02, 0.5, 1.0][(g.next() % 5) as usize];
+        let ri = LandingPuffsIn {
+            mode: [0u32, 1, 2, 3][(g.next() % 4) as usize],
+            scale: sc,
+            pos: g.v(),
+            vel: [g.f() * 100.0, g.f() * 100.0, g.f() * 100.0, 0.0],
+            up: [g.small() * 0.2, g.small() * 0.2, 1.0, 0.0],
+            ground: g.v(),
+            fwd: [1.0, g.small() * 0.2, 0.0, 0.0],
+            side: [g.small() * 0.2, 1.0, 0.0, 0.0],
+            colour: g.col(),
+        };
+        r.mem.write_u32(rider + 0x290, surface);
+        r.mem.write_f32(table + 0x64 * surface + 0x58, sc);
+        r.mem.write_u32(rider + 0x2e0, ri.mode);
+        put(&mut r, rider + 0x140, ri.pos);
+        put(&mut r, rider + 0x150, ri.vel);
+        put(&mut r, rider + 0x2a0, ri.up);
+        put(&mut r, rider + 0x2d0, ri.ground);
+        put(&mut r, rider + 0x320, ri.fwd);
+        put(&mut r, rider + 0x330, ri.side);
+        put(&mut r, light + 0x470, ri.colour);
+        load(&mut r, this, &b);
+        let words: VecDeque<u32> = (0..100).map(|_| g.next() | (g.next() << 16)).collect();
+        *rand.borrow_mut() = words.clone();
+        r.cpu.set_gpr(4, this as u64);
+        r.cpu.set_gpr(5, rider as u64);
+        r.cpu.set_f(12, vn);
+        r.call(0x12e0e8).unwrap();
+        let mut env = Env(words.clone());
+        spawn_landing_puffs(&mut b, vn, &ri, &mut env);
+        assert_eq!(rand.borrow().len(), env.0.len(), "case {case} rand use");
+        if env.0.len() < words.len() { hit += 1; } else { skip += 1; }
+        check(&mut r, this, &b, &format!("landing puffs case {case}"));
+    }
+    assert!(hit > 1000 && skip > 1000, "{hit} {skip}");
+}
