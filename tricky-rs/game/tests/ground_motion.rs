@@ -507,6 +507,9 @@ struct W {
     inst0: Rc<Cell<u32>>,
     /// the rider's knocked objects for the rollers' loop ([`W::put_rollers`], F4b3k1): their nodes and pair entries,
     /// and each node's sphere tree, which `Collide_BoarderSphTree`'s stub answers from
+    /// scratch shape & hit record for `Ragdoll_Contacts` 0x10e190 body translation on the runner's course (F4b3z)
+    rag_shape: u32,
+    rag_out: u32,
     roll_nodes: Vec<(u32, u32)>,
     roll_trees: Rc<RefCell<Vec<(u32, tricky_game::sphtree::SphereTree)>>>,
 }
@@ -940,8 +943,9 @@ fn world() -> Option<W> {
     let in_wall2 = in_wall.clone();
     let (l, h) = (log.clone(), hit.clone());
     let rc = real_cast.clone();
+    let dc_w2 = down_course.clone();
     r.hook(0x257810, move |cpu, mem| {
-        if in_wall(cpu) && rc.get() {
+        if (in_wall(cpu) || dc_w2.get()) && rc.get() {
             return false;
         }
         if in_wall(cpu) {
@@ -1003,8 +1007,10 @@ fn world() -> Option<W> {
     let pool = r.mem.alloc(0x100);
     r.stub(0x23d3b0, move |cpu, _| cpu.set_gpr(2, pool as u64));
     r.stub(0x13b8c0, |_, _| {});
+    let rag_shape = r.mem.alloc(0x400);
+    let rag_out = r.mem.alloc(0x40);
     let roll_nodes = (0..16).map(|_| (r.mem.alloc(0x350), r.mem.alloc(0x10))).collect();
-    Some(W { r, rd, stats, motion, log, hit, wall, meter, handler, pad, seqs, air, landing, down_course, course, real_cast, states_real: false, rc: None, inst0, roll_nodes, roll_trees })
+    Some(W { r, rd, stats, motion, log, hit, wall, meter, handler, pad, seqs, air, landing, down_course, course, real_cast, states_real: false, rc: None, inst0, rag_shape, rag_out, roll_nodes, roll_trees })
 }
 
 impl W {
@@ -3049,14 +3055,19 @@ fn ground_ticks_against_the_running_game() {
                     let ma = (u32_le(a, 0x424), u32_le(b, 0x424));
                     let clip = (u32_le(&w[0].extra[ka].1[me], 8), u32_le(&w[1].extra[ka].1[me], 8));
                     if ma == (5, 5) && clip.0 == clip.1 && clip.0.wrapping_sub(0x2dc) < 2 && air && !missed[me] {
-                        // sliding the whole frame (F4b3w, F4b3p1), then the speed limit (0x1179a4); `Boarder_WallCollide`
-                        // inside the slide translates the collision body (`Boarder_Translate` 0x1267a0) before this
-                        // rider's collisions run
+                        // sliding the whole frame (F4b3w, F4b3p1, F4b3z), then the speed limit (0x1179a4);
+                        // `Boarder_InstanceCollisions` and `Boarder_WallCollide` inside the slide translate the
+                        // collision body (`Boarder_Translate` 0x1267a0) before this rider's collisions run
                         let mut swalls = walls_of(&course, a, &stats[me]);
                         if let Some(wl) = &mut swalls {
                             if pushes && std::env::var("TRICKY_WALLBODY").as_deref() != Ok("off") {
                                 wl.body = f.body[me];
                             }
+                            wl.stat = speed_stat(&stats[me], boost, f.add);
+                        }
+                        if let (Some(wl), Some(base)) = (&mut swalls, roll_base) {
+                            let at = if std::env::var("TRICKY_ROLLERS").as_deref() == Ok("a") { 0 } else { 1 };
+                            wl.rollers = rollers_of(&w[at], me, &wl.course, base);
                         }
                         let (pos, vel) = if k == 0 {
                             slide_ours(start.0, start.1, a, b, swalls.as_mut())
@@ -3144,6 +3155,19 @@ fn ground_ticks_against_the_running_game() {
                         }
                     }
                     if ma == (5, 5) && clip.0.wrapping_sub(0x2dc) >= 2 {
+                        // `WipeoutMotion_Update` 0x10c2f0 off the slide clips runs `Ragdoll_Step` 0x10dca8 ->
+                        // `Ragdoll_Contacts` 0x10e190 (between +up_shift and -up_shift along ground normal), which
+                        // translates `rider+0x470` (`f.body[me]`) out of the course before `Boarder_RiderCollisions`
+                        // runs (F4b3z)
+                        if pushes && std::env::var("TRICKY_TUMBLEBODY").as_deref() != Ok("off") {
+                            if let Some(c) = &course {
+                                if k == 0 {
+                                    tumble_contacts_body(c, &mut f.body[me], vec4(a, 0x2a0), f32_at(b, 0x294));
+                                } else {
+                                    tumble_contacts_body_runner(&mut runners[k - 1].1, c, &mut f.body[me], vec4(a, 0x2a0), f32_at(b, 0x294));
+                                }
+                            }
+                        }
                         if let Some(m) = kt.map(|kt| &w[1].chased[kt].1[me]).filter(|m| m.len() >= 0x100) {
                             riders[me].vel = vec4(m, 0xe0);
                             riders[me].pos = vec4(b, 0x140);
@@ -3687,6 +3711,141 @@ fn speed_limit(vel: V4, limit: f32) -> V4 {
 /// With the course (F4b3p), then the slide's `Boarder_WallCollide` 0x126250 (rider+0x494 the word at 0x31d310, 0xfc3;
 /// mode 5: no impact check), the body the first sample's, the ground the probe's (the second sample's +0x2a0), as
 /// `walls::wall_collide` for ours. `Boarder_InstanceCollisions` 0x125088 before it is still answered nothing.
+/// The body translation `WipeoutMotion_Update` 0x10c2f0 + `Ragdoll_Contacts` 0x10e190 makes on a tumbling rider's
+/// `rider+0x470` collision body (F4b3z): lifts along `normal` by `(ride_height + 10) * 0.5 * max(0, normal.z)`,
+/// casts `cWorldBoarder(body, 0)` with mask `0x273c3` (`0x31d314`) up to twice against the course (projecting the
+/// second normal perpendicular to the first when facing it) and once against static objects (pushing out when
+/// `flags & 0x80`, projected perpendicular to `normal`), then lowers back along `normal`.
+fn tumble_contacts_body(course: &tricky_game::course_ground::CourseGround, body: &mut CollBody, normal: V4, ride_height: f32) {
+    let shift = if normal[2] < 0.0 { 0.0 } else { (ride_height + 10.0) * 0.5 * normal[2] };
+    if 0.0 < shift {
+        body.translate(mul4(normal, shift));
+    }
+    let saved_x24 = body.x24;
+    body.x24 = 0x273c3;
+    let (t, h) = air_wall_cast(course, body);
+    if 0.0 < t {
+        let n = h.normal;
+        body.translate(mul4(n, t));
+        let (t2, h2) = air_wall_cast(course, body);
+        if 0.0 < t2 {
+            let mut n2 = h2.normal;
+            let d = n2[0] * n[0] + n2[1] * n[1] + n2[2] * n[2];
+            if d < 0.0 {
+                let v = sub4(n2, mul4(n, d));
+                let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+                if len > 0.0 {
+                    n2 = [v[0] / len, v[1] / len, v[2] / len, 0.0];
+                }
+            }
+            body.translate(mul4(n2, t2));
+        }
+    }
+    if FLAGGED.load(std::sync::atomic::Ordering::Relaxed) {
+        let mut q = tricky_game::worldboarder::WorldBoarder::new(body, 0);
+        let skip = wall_skip();
+        let (t, h) = course.query_instances(&mut q, false, &|i| skip.contains(&i));
+        if let (true, Some(h)) = (0.0 < t, h) {
+            if let Some(o) = h.object {
+                if course.object_flags(o) & 0x80 != 0 {
+                    let g = normal;
+                    let n4 = h.normal;
+                    let d = n4[0] * g[0] + n4[1] * g[1] + n4[2] * g[2];
+                    let v = sub4(n4, mul4(g, d));
+                    let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+                    if len > 0.0 {
+                        body.translate(mul4([v[0] / len, v[1] / len, v[2] / len, 0.0], t));
+                    }
+                }
+            }
+        }
+    }
+    body.x24 = saved_x24;
+    if 0.0 < shift {
+        body.translate(mul4(normal, -shift));
+    }
+}
+
+/// Same as [`tumble_contacts_body`], casting `cWorldBoarder(body, 0)` on the runner's course (`g.rc`, which uses
+/// PCSX2's toward-zero patch cache under `fadd=g1`) when loaded.
+fn tumble_contacts_body_runner(g: &mut W, course: &tricky_game::course_ground::CourseGround, body: &mut CollBody, normal: V4, ride_height: f32) {
+    if !g.real_cast.get() {
+        tumble_contacts_body(course, body, normal, ride_height);
+        return;
+    }
+    let cast = |g: &mut W, b: &CollBody| -> (f32, V4) {
+        let (m, rd) = (&mut g.r.mem, g.rd);
+        wv(m, rd + 0x480, b.center);
+        m.write_f32(rd + 0x490, b.radius);
+        m.write_u32(rd + 0x494, b.x24 as u32);
+        m.write_u32(rd + 0x498, b.count as u32);
+        for (k, (c, r)) in b.spheres.iter().enumerate() {
+            wv(m, rd + 0x4a0 + 0x20 * k as u32, *c);
+            m.write_f32(rd + 0x4b0 + 0x20 * k as u32, *r);
+        }
+        for o in (0..0x40).step_by(4) {
+            m.write_u32(g.rag_out + o, 0);
+        }
+        g.down_course.set(true);
+        g.r.cpu.set_gpr(4, g.rag_shape as u64);
+        g.r.cpu.set_gpr(5, (rd + 0x470) as u64);
+        g.r.cpu.set_gpr(6, 0);
+        g.r.call(0x257810).unwrap();
+        g.r.cpu.set_gpr(4, runner_course::W as u64);
+        g.r.cpu.set_gpr(5, g.rag_shape as u64);
+        g.r.cpu.set_gpr(6, g.rag_out as u64);
+        g.r.cpu.set_gpr(7, 0);
+        g.r.call(0x25aff8).unwrap();
+        g.down_course.set(false);
+        (g.r.cpu.f(0), rv(&mut g.r.mem, g.rag_out + 0x20))
+    };
+    let shift = if normal[2] < 0.0 { 0.0 } else { (ride_height + 10.0) * 0.5 * normal[2] };
+    if 0.0 < shift {
+        body.translate(mul4(normal, shift));
+    }
+    let saved_x24 = body.x24;
+    body.x24 = 0x273c3;
+    let (t, n) = cast(g, body);
+    if 0.0 < t {
+        body.translate(mul4(n, t));
+        let (t2, mut n2) = cast(g, body);
+        if 0.0 < t2 {
+            let d = n2[0] * n[0] + n2[1] * n[1] + n2[2] * n[2];
+            if d < 0.0 {
+                let v = sub4(n2, mul4(n, d));
+                let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+                if len > 0.0 {
+                    n2 = [v[0] / len, v[1] / len, v[2] / len, 0.0];
+                }
+            }
+            body.translate(mul4(n2, t2));
+        }
+    }
+    if FLAGGED.load(std::sync::atomic::Ordering::Relaxed) {
+        let mut q = tricky_game::worldboarder::WorldBoarder::new(body, 0);
+        let skip = wall_skip();
+        let (t, h) = course.query_instances(&mut q, false, &|i| skip.contains(&i));
+        if let (true, Some(h)) = (0.0 < t, h) {
+            if let Some(o) = h.object {
+                if course.object_flags(o) & 0x80 != 0 {
+                    let g = normal;
+                    let n4 = h.normal;
+                    let d = n4[0] * g[0] + n4[1] * g[1] + n4[2] * g[2];
+                    let v = sub4(n4, mul4(g, d));
+                    let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+                    if len > 0.0 {
+                        body.translate(mul4([v[0] / len, v[1] / len, v[2] / len, 0.0], t));
+                    }
+                }
+            }
+        }
+    }
+    body.x24 = saved_x24;
+    if 0.0 < shift {
+        body.translate(mul4(normal, -shift));
+    }
+}
+
 fn slide_ours(pos: V4, vel: V4, a: &[u8], b: &[u8], walls: Option<&mut Walls>) -> (V4, V4) {
     let (mut pos, mut vel, mut h) = (pos, vel, f32_at(a, 0x1bc));
     let n = vec4(a, 0x2a0);
@@ -3696,7 +3855,21 @@ fn slide_ours(pos: V4, vel: V4, a: &[u8], b: &[u8], walls: Option<&mut Walls>) -
         let mut body = w.body;
         body.x24 = 0xfc3;
         let mut wr = tricky_game::walls::WallRider { pos, vel, ground: vec4(b, 0x2a0), knocks: 0.0, mode: 5, state: u32_le(a, 0x428), up: w.up };
-        let mut env = SlideWalls { course: &w.course, body };
+        let mut env = SlideWalls { course: &w.course, body, stat: w.stat, tree: None };
+        let statics = match std::env::var("TRICKY_INSTANCES").as_deref() {
+            Ok("0") => false,
+            Ok(_) => true,
+            Err(_) => FLAGGED.load(std::sync::atomic::Ordering::Relaxed),
+        };
+        if statics {
+            tricky_game::walls::instance_collisions(&mut wr, &mut env);
+        }
+        if std::env::var("TRICKY_NOROLL").is_err() {
+            for (o, rb) in &mut w.rollers {
+                let b = env.body;
+                tricky_game::roller::rider_kick(rb, *o, &mut wr, 0, &b, &mut env);
+            }
+        }
         tricky_game::walls::wall_collide(&mut wr, &mut env);
         w.body = env.body;
         (pos, vel) = (wr.pos, wr.vel);
@@ -3704,17 +3877,22 @@ fn slide_ours(pos: V4, vel: V4, a: &[u8], b: &[u8], walls: Option<&mut Walls>) -
     (pos, vel)
 }
 
-/// What the slide's `Boarder_WallCollide` 0x126250 calls (mode 5: no turn, no impact check past the knocks).
+/// What the slide's `Boarder_InstanceCollisions` 0x125088 and `Boarder_WallCollide` 0x126250 call (mode 5: no turn,
+/// no impact check past the knocks).
 struct SlideWalls<'a> {
     course: &'a tricky_game::course_ground::CourseGround,
     body: CollBody,
+    stat: f32,
+    tree: Option<(usize, usize)>,
 }
 impl tricky_game::walls::WallEnv for SlideWalls<'_> {
     fn cast_walls(&mut self, r: &tricky_game::walls::WallRider) -> (f32, tricky_game::walls::CastRecord) {
         wall_cast(self.course, &self.body, r.ground)
     }
     fn query_objects(&mut self, _: &tricky_game::walls::WallRider) -> (f32, tricky_game::walls::CastRecord, tricky_game::walls::Touched) {
-        unreachable!("not called by Boarder_WallCollide")
+        let (t, rec, o, tree) = instance_query(self.course, &self.body);
+        self.tree = tree;
+        (t, rec, o)
     }
     fn accumulate_impact(&mut self, _: &mut tricky_game::walls::WallRider, _: V4) {}
     fn translate(&mut self, _: &mut tricky_game::walls::WallRider, by: V4) {
@@ -3734,15 +3912,33 @@ impl tricky_game::walls::WallEnv for SlideWalls<'_> {
         unreachable!("not in mode 5")
     }
     fn speed_stat(&mut self, _: &tricky_game::walls::WallRider) -> f32 {
-        unreachable!("not called by Boarder_WallCollide")
+        self.stat
     }
     fn knock(&mut self, _: &mut tricky_game::walls::WallRider, _: f32) {}
-    fn contact(&mut self, _: u32, _: &mut tricky_game::walls::WallRider, _: &tricky_game::walls::Contact, _: &tricky_game::walls::CastRecord) {}
+    fn contact(&mut self, object: u32, r: &mut tricky_game::walls::WallRider, c: &tricky_game::walls::Contact, rec: &tricky_game::walls::CastRecord) {
+        contact_ours(self.course, object, r.vel, c, rec, self.tree);
+    }
     fn reread(&mut self, o: &tricky_game::walls::Touched) -> tricky_game::walls::Touched {
-        *o
+        let id = o.id as usize;
+        let controller = self.course.knock.lock().unwrap().rollers.iter().any(|x| x.object == o.id).then_some(false);
+        tricky_game::walls::Touched { flags: self.course.object_flags(id), controller, ..*o }
     }
     fn sfx_object(&mut self, _: &tricky_game::walls::WallRider, _: u32) {}
     fn sfx_wall(&mut self, _: &tricky_game::walls::WallRider) {}
+}
+impl tricky_game::roller::RollerEnv for SlideWalls<'_> {
+    fn ray_cast(&mut self, _: &tricky_game::sphtree::WorldSphTree) -> (f32, V4, V4) {
+        unreachable!("not called by a kick")
+    }
+    fn query_instances(&mut self, _: &tricky_game::sphtree::WorldSphTree) -> (f32, V4, V4) {
+        unreachable!("not called by a kick")
+    }
+    fn move_box(&mut self, _: V4, _: V4) {}
+    fn event_script(&self, _: u32, _: u32) -> i32 {
+        -1
+    }
+    fn start_script(&mut self, _: i32, _: u32) {}
+    fn sfx(&mut self, _: u32, _: u32) {}
 }
 
 fn slide_runner(g: &mut W, pos: V4, vel: V4, a: &[u8], b: &[u8], clip: u32, hit: Option<Hit>, walls: Option<&mut Walls>) -> (V4, V4) {

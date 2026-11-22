@@ -2690,3 +2690,50 @@ Checked (`ground_ticks_against_the_running_game`, `TRICKY_FLOAT_RULES="add=n,fad
 | rec14 | Garibaldi | 244 / 248 | 224 / 224 vel, 220 / 224 pos | 17 | `9092, 9095, 9098` remain in `F4b3z` |
 
 Row F4b3p1 done.
+
+## F4b3z: tumbling `Ragdoll_Contacts` body translation and slide `Boarder_InstanceCollisions` (2026-11-21, done)
+
+Proven (`WipeoutMotion_Update` 0x10c2f0, `Ragdoll_Step` 0x10dca8, `Ragdoll_Contacts` 0x10e190,
+`Boarder_InstanceCollisions` 0x125088):
+- **`rec14 9092` and `9095` (rider 1 sliding `0x2dd`, rider 2 tumbling `0x2ea`)**: rider 2 ticks before rider 1
+  (order `[5, 4, 3, 2, 1, 0]`). In `WipeoutMotion_Update` 0x10c2f0's tumble branch, before `Ragdoll_Step` 0x10dca8,
+  the rider's collision body `rider+0x470` (`f.body[me]`) is lifted along `normal` by `(ride_height + 10) * 0.5 *
+  max(0, normal.z)` (`Boarder_Translate` 0x1267a0), pushed out of the course up to twice by `Ragdoll_Contacts`
+  0x10e190 (`cWorldBoarder(body, 0)` with mask `0x273c3` at `0x31d314`) and out of bounceable static objects
+  (`flags & 0x80`, normal projected perpendicular to ground), then lowered back along `-normal`, all before
+  `Boarder_RiderCollisions` 0x123fc8 runs. Because the replay left a tumbling rider's `f.body[me]` at the first
+  sample, rider 2 pushed rider 1 from the wrong place on `9092` (6.75 cm off) and `9095` (6.07 cm off). Running
+  that exact body translation (`tumble_contacts_body` / `tumble_contacts_body_runner`) makes both `9092` and
+  `9095` **0.00000000** (bit-exact under `fadd=g1` on the runner's toward-zero course; 1 ulp on `ours`'s nearest
+  patches, tracked by `F4h5n`).
+- **`rec14 9098` and `rec16 7800`**: proven to be pre-`F4h5d` stale PINE body reads (`DBGT tick 9098`: `stale true
+  true` on both riders 1 and 2, `bc - pos` jumped ~18 cm on tick 9097 before `cPostAI::vf1` re-posed them). All six
+  modern recordings (`rec24`–`rec30`) have **0** stale bodies.
+- **Slide `Boarder_InstanceCollisions` 0x125088**: `WipeoutMotion_Update` 0x10c2f0's slide branch (`clips
+  0x2dc/0x2dd`) runs `Boarder_InstanceCollisions` (static touch objects + `rollers_of` kicks) before
+  `Boarder_WallCollide` with `rider+0x494 = 0xfc3` (`0x31d310`). Wiring `Boarder_InstanceCollisions`, `wl.stat`,
+  and `wl.rollers` into `slide_ours` and `slide_runner` fixes `rec29`'s remaining slide misses (`285/286` →
+  **289/289**).
+
+Changed (`tricky-rs/game/tests/ground_motion.rs`):
+- Added `tumble_contacts_body` (ours) and `tumble_contacts_body_runner` (runner course `0x257810`/`0x25aff8`) for
+  tumbling riders (`ma == (5, 5)` off `0x2dc`/`0x2dd`; `TRICKY_TUMBLEBODY=off` disables for A/B).
+- Wired `Boarder_InstanceCollisions` (static touch objects when `FLAGGED`, plus `roller::rider_kick` on
+  `rollers_of`) and `speed_stat` into `slide_ours` and `slide_runner` before `Boarder_WallCollide`.
+
+Checked (`ground_ticks_against_the_running_game`, `TRICKY_FLOAT_RULES="add=n,fadd=g1"`):
+
+| Recording | Course | Slides `g1` (vel / pos exact) | Bumps equal | Ground ticks `fadd=g1` (`every field`, `pos`, `pushed` right) |
+|---|---|---|---|---|
+| rec14 | Garibaldi | **224 / 224** vel, **222 / 224** pos (`9092`, `9095` exact; only stale `9098` left) | 244 / 248 | `every field` 37,247 → **37,254 (+7)**, `pos` 37,789 → **37,796 (+7)** |
+| rec17 | Elysium | **690 / 690 (100%)** vel & pos | **466 / 466 (100%)** | `every field` 71,306 → **71,309 (+3)**, `pos` 71,684 → **71,687 (+3)** |
+| rec24 | Snowdream | **1,410 / 1,410 (100%)** vel & pos | **1,202 / 1,202 (100%)** *(was 1,202/1,208)* | `every field` 139,454 → **139,511 (+57)**, `pos` 140,223 → **140,280 (+57)**, `pushed` 2,057 → **2,111 (+54)**, `hit too` 839/824 → **864/840** |
+| rec25 | Snowdream | **1,439 / 1,439 (100%)** vel & pos | **1,368 / 1,368 (100%)** *(was 1,368/1,374)* | `every field` 146,264 → **146,324 (+60)**, `pos` 147,041 → **147,101 (+60)**, `pushed` 2,368 → **2,425 (+57)**, `hit too` 972/957 → **999/975** |
+| rec26 | Mesa Blanca | **433 / 433 (100%)** vel & pos | **330 / 330 (100%)** | `every field` 62,701, `pos` 62,829 |
+| rec28 | Mesa Blanca | **290 / 290 (100%)** vel & pos | 610 / 612 | `every field` 74,345, `pos` 74,545 |
+| rec29 | Mesa replay | **289 / 289 (100%)** *(was 285/286)* | **550 / 550 (100%)** | `every field` 68,998, `pos` 69,052, missed `[20,3,5]` → **`[20,2,1]`** |
+| rec30 | Mesa + replay | **424 / 424 (100%)** vel & pos | 764 / 766 | `every field` 100,532 → **100,543 (+11)**, `pos` 100,769 → **100,780 (+11)**, `pushed` 1,447 → **1,458 (+11)** |
+
+- **5,247 / 5,247 (100%)** slide velocities & positions bit-exact across `rec17`, `rec19`, `rec24`, `rec25`,
+  `rec26`, `rec28`, `rec29`, and `rec30`; all 12 false bumps on `rec24`/`rec25` eliminated (`1,202/1,202` and
+  `1,368/1,368`). Row F4b3z done.
