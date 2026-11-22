@@ -173,6 +173,16 @@ impl Grudge {
         crate::aicomp::GrudgeOf { on: self.ai.on, target: self.ai.target, level: self.ai.level, cooled: self.ai.cooled }
     }
 
+    /// The computer rider's record of the player (`rider+0x40 + 0x20 * 0`: `+0x10` attitude, `+0x1c` rivalry).
+    pub fn ai_rec(&self) -> PairBytes {
+        self.ai.recs[PLAYER as usize]
+    }
+
+    /// The player's record of this computer rider (`rider+0x40 + 0x20 * slot`).
+    pub fn player_rec(&self) -> PairBytes {
+        self.player.recs[AI as usize]
+    }
+
     /// Will shove the player when alongside: level 1 or 2. STANDIN: the game decides inside its rival riding
     /// (`AIComputer_RideAtRival` 0x137a18 / `AIComputer_PickTargetRider` 0x1396c8, row G4), not ported yet.
     pub fn shoves(&self) -> bool {

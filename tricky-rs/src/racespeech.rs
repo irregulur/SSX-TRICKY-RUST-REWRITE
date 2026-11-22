@@ -210,7 +210,7 @@ struct Placing<'a, 'b> {
     played: Option<u32>,
     announcer: &'a mut Announcer,
     env: Env<'b>,
-    race: &'a tricky_game::race::Race,
+    riders: &'a [SpeechRider],
 }
 
 impl QueueEnv for Placing<'_, '_> {
@@ -255,11 +255,15 @@ impl PlacingChangeEnv for Placing<'_, '_> {
     fn queue_sounds(&mut self, played: u64, id: u32) {
         self.ring.queue_sounds(0, played as u32, id, 0, &mut self.bank);
     }
-    /// `Speech_OnPlacingChange` 0x2347c8 on the riders (0: none)
+    /// `Speech_OnPlacingChange` 0x2347c8 on the riders. Because `cBoarder::vf8` 0x116ab8 starts every rider's
+    /// place (+0x110) at 0 and `Race_UpdatePlacingsAndRubberBand` 0x115100 only writes `i ∈ 0..n`, `old != i`
+    /// guarantees `next != 0` when `i < old` and `prev != 0` when `i > old`, so `Sfx_OnPlacingChange` 0x219a48
+    /// never hands a null rider here.
     fn speech_placing(&mut self, a: u32, b: u32) {
-        let r = |id: u32| if id == 0 { missing_rider() } else { speech_rider(self.race, id as usize - 1) };
-        let (a, b) = (r(a), r(b));
-        self.announcer.on_placing_change(&mut self.env, &a, &b);
+        let (Some(a), Some(b)) = (rider_index(a).and_then(|k| self.riders.get(k)), rider_index(b).and_then(|k| self.riders.get(k))) else {
+            return;
+        };
+        self.announcer.on_placing_change(&mut self.env, a, b);
     }
 }
 
@@ -287,12 +291,6 @@ impl sndqueue::WipeoutEnv for Wipeout<'_, '_> {
     }
 }
 
-/// A rider passed as 0 (none ahead or behind).
-// STANDIN: the original reads the null rider's words (the kernel's low memory); taken here as not racing
-fn missing_rider() -> SpeechRider {
-    SpeechRider { id: 0, controller: 0, ..Default::default() }
-}
-
 /// The announcer with its cap (+0x6e68: 10, from `cBXAudio::cBXAudio` 0x20db18); the speech level (+0x383c) is the
 /// sound manager's (`ui::AudioLevels`), set each frame.
 fn announcer() -> Announcer {
@@ -317,10 +315,17 @@ fn game_pos(v: Vec3) -> [f32; 3] {
     [v.x * 100.0, -v.z * 100.0, v.y * 100.0]
 }
 
-/// The rider object's id the speech system compares (the listener, the game object's rider words).
-// STANDIN: the race index + 1, for the rider object's address.
+/// Non-zero identity handle for rider `k` (standing for its `cBoarder *` pointer). Proven across `speech.rs`,
+/// `sndqueue.rs` and `speechhost.rs`: the speech/audio layer only compares rider pointers for equality/null
+/// (`== 0`, `Audio_GetListenerRider` 0x20ed20, `cGame+0xa4`/`+0x124` in `Speech_OnPlaceChange` 0x233ba0) or maps
+/// them to `+0x140` for `Audio_FindRiderNear` 0x20f9b0 and `SpeechSys_Trigger` 0x228bd8 — never arithmetic,
+/// ordering, or event words.
 fn rider_id(k: usize) -> u32 {
     k as u32 + 1
+}
+
+fn rider_index(id: u32) -> Option<usize> {
+    id.checked_sub(1).map(|k| k as usize)
 }
 
 impl SpeechEnv for Env<'_> {
@@ -355,7 +360,7 @@ impl SpeechEnv for Env<'_> {
     }
     /// `Audio_FindRiderNear` 0x20f9b0 (`DAT_00343998` 30 m, the rider's position) over the app's one view
     fn find_near(&mut self, rider: u32) -> i32 {
-        let Some(&at) = self.pos.get(rider.wrapping_sub(1) as usize) else { return -1 };
+        let Some(&at) = rider_index(rider).and_then(|k| self.pos.get(k)) else { return -1 };
         let view = self.view;
         sndqueue::find_rider_near(sndqueue::SPEECH_NEAR, &mut || 1, &mut |_| view, at)
     }
@@ -388,12 +393,77 @@ impl SpeechEnv for Env<'_> {
     }
 }
 
-/// What the handlers read of rider `k` (`speech::SpeechRider`): +0x418 the finish time (below 0 still racing: the
-/// handlers' "player" test), +0x41c 1 for a local player, +0x38 the race index.
-// STANDIN: the character's level (+0x464 → +0x74, the line's grade) 0, for the character entry's.
-fn speech_rider(race: &tricky_game::race::Race, k: usize) -> SpeechRider {
-    let finish = race.line_riders.get(k).map_or(-1, |r| r.line.finish);
-    SpeechRider { id: rider_id(k), controller: finish, kind: (k == 0) as i32, index: k as i32, ..Default::default() }
+/// What the handlers read of each rider (`speech::SpeechRider`): +0x418 finish time (< 0 still racing), +0x41c
+/// local player (1), +0x38 race index, +0x460 slot, +0x150 velocity (cm/s), +0x370 heading, +0x50/+0x5c/+0x118/+0x120
+/// rivalry/attitudes (`rivals::Grudge`), and through +0x464: +0x38 character (`gRider_Table` 0x331ea8), +0x64 voice
+/// (`entry[0x34]`, equal to the character index 0..11 for all 12 riders), +0x74 level (`Career_SetupPlayerRider`
+/// 0x16a9d8 → `Career_GetPlayerLevel` 0x164840 for player 0; `Career_SetupAIRider` 0x16ae68 → 0 for AI).
+fn speech_riders(race: &tricky_game::race::Race, player: &crate::rider::Rider, opponents: &[crate::Opponent], career: &ui::CareerRes) -> Vec<SpeechRider> {
+    let char_of = |r: &crate::rider::Rider| tricky_game::rivals::index(r.data.name) as u32;
+    let p_char = char_of(player);
+    let chars: Vec<u32> = std::iter::once(p_char).chain(opponents.iter().map(|o| char_of(&o.rider))).collect();
+    let count = race.line_riders.len().max(chars.len());
+    (0..count)
+        .map(|k| {
+            let rd = if k == 0 { Some(player) } else { opponents.get(k - 1).map(|o| &o.rider) };
+            let character = chars.get(k).copied().unwrap_or(0);
+            let finish = race.line_riders.get(k).map_or(-1, |r| r.line.finish);
+            let mut attitudes = [0i8; 8];
+            let mut counts = [0i32; 8];
+            let mut rival_on = 0;
+            let mut rival = 0;
+            if k == 0 {
+                for (oi, o) in opponents.iter().enumerate().take(7) {
+                    let s = oi + 1;
+                    if let Some(g) = &o.grudge {
+                        let rec = g.player_rec();
+                        attitudes[s] = rec.attitude;
+                        counts[s] = rec.rivalry;
+                    } else {
+                        attitudes[s] = tricky_game::rivals::ATTITUDE[p_char.min(11) as usize][chars[s].min(11) as usize] as i8;
+                    }
+                }
+            } else if let Some(o) = opponents.get(k - 1) {
+                if let Some(g) = &o.grudge {
+                    let of = g.of();
+                    rival_on = of.on;
+                    rival = of.target;
+                    let rec = g.ai_rec();
+                    attitudes[0] = rec.attitude;
+                    counts[0] = rec.rivalry;
+                } else {
+                    attitudes[0] = tricky_game::rivals::ATTITUDE[character.min(11) as usize][p_char.min(11) as usize] as i8;
+                }
+                for (oj, _) in opponents.iter().enumerate().take(7) {
+                    let s = oj + 1;
+                    if s != k {
+                        attitudes[s] = tricky_game::rivals::ATTITUDE[character.min(11) as usize][chars[s].min(11) as usize] as i8;
+                    }
+                }
+            }
+            SpeechRider {
+                id: rider_id(k),
+                controller: finish,
+                kind: (k == 0) as i32,
+                index: k as i32,
+                rival_on,
+                rival,
+                slot: k as i32,
+                attitudes,
+                vel: rd.map_or([0.0; 3], |r| game_pos(r.vel)),
+                heading: rd.map_or(0.0, |r| tricky_game::rider::ground_tick::game_yaw(r.yaw)),
+                counts,
+                character,
+                voice: character as u8,
+                level: if k == 0 { career.player_level(character) } else { 0 },
+                ..Default::default()
+            }
+        })
+        .collect()
+}
+
+fn rider_at(riders: &[SpeechRider], k: usize) -> SpeechRider {
+    riders.get(k).copied().unwrap_or(SpeechRider { id: rider_id(k), controller: -1, kind: (k == 0) as i32, index: k as i32, slot: k as i32, ..Default::default() })
 }
 
 /// A part's samples as a WAV file Bevy plays.
@@ -425,7 +495,8 @@ pub fn race_speech(
     mut rs: ResMut<RaceSpeech>, sounds: Res<crate::sound::Sounds>, game: Res<ui::Game>, mode: Res<Mode>, race: Res<RaceRes>, time: Res<Time>,
     mut audio: ResMut<Assets<AudioSource>>, mut commands: Commands, sfx: Option<Res<crate::boardsound::BoardSounds>>,
     playing: Query<Entity, With<PlacingSound>>, mut rider: ResMut<crate::RiderRes>, mut opponents: ResMut<crate::Opponents>,
-    cam: Query<&GlobalTransform, With<Camera3d>>, music: Res<crate::pathmusic::PathMusic>, (list, level, mut levels): (Res<crate::LevelList>, Res<crate::LevelRes>, ResMut<ui::AudioLevels>),
+    cam: Query<&GlobalTransform, With<Camera3d>>, music: Res<crate::pathmusic::PathMusic>,
+    (list, level, mut levels, career): (Res<crate::LevelList>, Res<crate::LevelRes>, ResMut<ui::AudioLevels>, Res<ui::CareerRes>),
 ) {
     // what the riders asked of the audio object this frame, taken whatever happens (rider `k` of the race: the player, then the others)
     let mut asks = vec![(0, std::mem::take(&mut rider.0.speech))];
@@ -519,6 +590,7 @@ pub fn race_speech(
     let mut stops = Vec::new();
     let vol = if sounds.effects { 1.0 } else { 0.0 };
     let pos = std::iter::once(rider.0.pos).chain(opponents.0.iter().map(|o| o.rider.pos)).map(game_pos).collect();
+    let riders = speech_riders(r, &rider.0, &opponents.0, &career);
     let view = cam.iter().next().map_or([0.0; 3], |t| game_pos(t.translation()));
     let mut env = Env { host: &mut sys.host, mode: r.mode, course: r.course_no, clock: r.line_frame, pos, view };
     for &c in &calls[rs.sent..] {
@@ -526,15 +598,16 @@ pub fn race_speech(
             println!("speech: {c:?}");
         }
         match c {
-            SpeechCall::Checkpoint(k) => rs.announcer.on_checkpoint(&mut env, &speech_rider(r, k)),
+            SpeechCall::Checkpoint(k) => rs.announcer.on_checkpoint(&mut env, &rider_at(&riders, k)),
             SpeechCall::PlaceChange(k, old, new) => {
-                // STANDIN: the game object's two rider words (gApp+0x730: +0xa4, +0x124) none
-                let place = PlaceRace { count: r.line_riders.len() as i32, a4: 0, a124: 0 };
-                rs.announcer.on_place_change(&mut env, &speech_rider(r, k), place, old, new as i64)
+                // `cGame+0xa4` / `+0x124` (`Game_IsLeadOrFocusRider` 0x17f1f0, `Audio_GetListenerRider` 0x20ed20):
+                // players 0 and 1's riders (one local player in the app, 2P is row L1)
+                let place = PlaceRace { count: r.line_riders.len() as i32, a4: rider_id(0), a124: 0 };
+                rs.announcer.on_place_change(&mut env, &rider_at(&riders, k), place, old, new as i64)
             }
-            SpeechCall::LocalLine(k, kind) => rs.announcer.on_local_line(&mut env, &speech_rider(r, k), kind as i64),
-            SpeechCall::LocalLine2(k) => rs.announcer.on_local_line2(&mut env, &speech_rider(r, k)),
-            SpeechCall::ListenerLine(k) => rs.announcer.on_listener_line(&mut env, &speech_rider(r, k)),
+            SpeechCall::LocalLine(k, kind) => rs.announcer.on_local_line(&mut env, &rider_at(&riders, k), kind as i64),
+            SpeechCall::LocalLine2(k) => rs.announcer.on_local_line2(&mut env, &rider_at(&riders, k)),
+            SpeechCall::ListenerLine(k) => rs.announcer.on_listener_line(&mut env, &rider_at(&riders, k)),
             SpeechCall::TimeUp => rs.announcer.on_time_up(&mut env),
             SpeechCall::PlacingChange { rider, next, prev, old, new } => {
                 let id = |k: Option<usize>| k.map_or(0, rider_id);
@@ -545,7 +618,7 @@ pub fn race_speech(
                     played: None,
                     announcer: &mut rs.announcer,
                     env,
-                    race: r,
+                    riders: &riders,
                 };
                 // STANDIN: the race clock, for the audio system's tick (+0x80)
                 sndqueue::on_placing_change(&mut rs.queue, r.line_frame as u32, rider_id(rider), (rider == 0) as u32, id(next), id(prev), old as i64, new as i64, &mut p);
@@ -571,7 +644,7 @@ pub fn race_speech(
     }
     rs.sent = calls.len();
     for (k, list) in asks {
-        let who = speech_rider(r, k);
+        let who = rider_at(&riders, k);
         for a in list {
             if std::env::var("TRICKY_SPEECHLOG").is_ok() {
                 println!("speech: rider {k} {a:?}");
@@ -600,13 +673,13 @@ pub fn race_speech(
                     }
                 }
                 RiderSpeech::Hit { by, which, crash } => {
-                    let other = speech_rider(r, by as usize);
+                    let other = rider_at(&riders, by as usize);
                     tricky_game::speech::voices::rider_hit_line(&mut env, &other, &who, which as i64, crash as i64);
                     if crash {
                         rs.announcer.on_rider_hit(&mut env, &who, &other);
                     }
                 }
-                RiderSpeech::Grudge { at } => rs.announcer.on_grudge(&mut env, &who, &speech_rider(r, at as usize)),
+                RiderSpeech::Grudge { at } => rs.announcer.on_grudge(&mut env, &who, &rider_at(&riders, at as usize)),
                 RiderSpeech::Shoved => rs.announcer.on_rider_collision(&mut env, &who),
                 RiderSpeech::Reset => rs.announcer.on_rider_reset(&mut env, &who),
                 RiderSpeech::AirTime => rs.announcer.on_air_time(&mut env, &who),
@@ -684,6 +757,139 @@ pub fn race_speech(
             if let Some((h, secs)) = st.queued.pop_front() {
                 let e = commands.spawn((AudioPlayer(h), PlaybackSettings { mode: PlaybackMode::Despawn, volume: Volume::Linear(vol), ..default() }, SpeechPlayer)).id();
                 st.playing = Some((e, secs));
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tricky_game::career::CareerFile;
+    use tricky_game::race::{AiDriver, Race};
+    use tricky_game::rider::Rider;
+    use tricky_game::rivals::Grudge;
+    use tricky_game::speech::{character_bit, place_mask, wipeout_grade};
+    use tricky_game::trickdata;
+
+    #[derive(Default)]
+    struct MockEnv {
+        events: Vec<Event>,
+        triggers: Vec<Trigger>,
+        clock: i32,
+        rng: u32,
+    }
+
+    impl SpeechEnv for MockEnv {
+        fn rand_fx(&mut self) -> u32 { self.rng }
+        fn replay_playing(&mut self) -> bool { false }
+        fn listener(&mut self) -> u32 { rider_id(0) }
+        fn mode(&mut self) -> u32 { 4 }
+        fn can_play(&mut self, _: u32) -> bool { true }
+        fn find_near(&mut self, _: u32) -> i32 { 0 }
+        fn relation(&mut self, a: u32, b: u32) -> i32 { tricky_game::rivals::relation(a as usize, b as usize) as i32 }
+        fn line_state(&mut self, _: u32) -> Option<Option<i32>> { None }
+        fn handle_done(&mut self, _: u32) -> bool { true }
+        fn post(&mut self, e: Event) -> u32 { self.events.push(e); 1 }
+        fn trigger(&mut self, t: Trigger) -> Vec<u32> { self.triggers.push(t); Vec::new() }
+        fn course(&mut self) -> u32 { 0 }
+        fn app_mode(&mut self) -> u32 { 0 }
+        fn slot_hold(&mut self, _: u32, _: u32) {}
+        fn race_rider(&mut self, i: u32) -> u32 { rider_id(i as usize) }
+        fn clear_event(&mut self, _: u32) {}
+        fn race_clock(&mut self) -> i32 { self.clock }
+        fn record_after(&mut self, _: usize) -> i32 { -1 }
+    }
+
+    #[test]
+    fn speech_riders_populates_career_level_character_grudge_and_kinematics() {
+        let (mut c, _) = CareerFile::open(None, 0, 1, None);
+        for k in 0..4 { c.clear_player_slot(k); }
+        let mut career = ui::CareerRes(c);
+        // Player 0 on Mac (3); before menu slot assignment, 0 points -> level 9.
+        let mut player = Rider::new(Vec3::ZERO, 0.0);
+        player.data = &trickdata::RIDERS[3]; // Mac
+        player.vel = Vec3::new(0.0, 0.0, -20.0); // Bevy -Z = game +Y (2000 cm/s)
+        // Give Mac 220 medal points (level 1 -> wipeout_grade = 0xc) and assign slot 0.
+        career.ensure_player(3);
+        let rec = career.0.ptr(0x3114);
+        career.0.w32(rec + 4, 220);
+
+        let mut opp_rider = Rider::new(Vec3::ZERO, 0.0);
+        opp_rider.data = &trickdata::RIDERS[4]; // Moby (Mac's foe)
+        opp_rider.vel = Vec3::new(0.0, 0.0, -10.0); // 1000 cm/s along game +Y
+        let mut grudge = Grudge::new(4, 3);
+        grudge.force_level(2);
+        let opp = crate::Opponent {
+            rider: opp_rider,
+            driver: AiDriver::new(0.0, 0.5),
+            character: 4,
+            grudge: Some(grudge),
+            taunt_wait: 1.0,
+            port: Default::default(),
+            draw: Default::default(),
+        };
+
+        let race = Race::new(vec![]);
+        let riders = speech_riders(&race, &player, &[opp], &career);
+        assert_eq!(riders.len(), 2);
+
+        // Player 0: level from Career_GetPlayerLevel (1), character 3 (Mac), voice 3, heading π/2 (+Y).
+        assert_eq!(riders[0].id, rider_id(0));
+        assert_eq!(riders[0].kind, 1);
+        assert_eq!(riders[0].slot, 0);
+        assert_eq!(riders[0].character, 3);
+        assert_eq!(riders[0].voice, 3);
+        assert_eq!(riders[0].level, 1);
+        assert!((riders[0].vel[1] - 2000.0).abs() < 1e-3);
+        assert!((riders[0].heading - std::f32::consts::FRAC_PI_2).abs() < 1e-5);
+
+        // AI rider 1: level always 0 (`Career_SetupAIRider` 0x16ae68), grudge on slot 0.
+        assert_eq!(riders[1].id, rider_id(1));
+        assert_eq!(riders[1].kind, 0);
+        assert_eq!(riders[1].slot, 1);
+        assert_eq!(riders[1].character, 4);
+        assert_eq!(riders[1].voice, 4);
+        assert_eq!(riders[1].level, 0);
+        assert_eq!(riders[1].rival_on, 1);
+        assert_eq!(riders[1].rival, 0);
+        assert_eq!(riders[1].attitudes[0], tricky_game::rivals::ATTITUDE[4][3] as i8);
+
+        // `Speech_OnPlaceChange` 0x233ba0 with cGame+0xa4 = rider_id(0): lead = 1 and wipeout_grade(1) = 0xc.
+        let mut ann = announcer();
+        ann.level = 1.0;
+        let mut env = MockEnv { clock: 1000, ..Default::default() };
+        let place = PlaceRace { count: 2, a4: rider_id(0), a124: 0 };
+        ann.on_place_change(&mut env, &riders[0], place, 1, 0);
+        assert_eq!(env.events, vec![Event::new(0x1002049, &[1, place_mask(1, 0), wipeout_grade(1)])]);
+
+        // `Speech_OnPlacingChange` 0x2347c8: 2000 - 1000 = 1000 cm/s along heading +Y (inside 670.56..1788.16)
+        // triggers a passing line with the real character bits and voice.
+        env.events.clear();
+        env.triggers.clear();
+        env.rng = 1; // pick == 1 -> rider[0] (Mac) speaks over rider[1] (Moby, foe -> 0x3006019)
+        ann.on_placing_change(&mut env, &riders[0], &riders[1]);
+        assert_eq!(env.events, vec![Event::new(0x3006019, &[character_bit(3), character_bit(4)])]);
+        assert_eq!(env.triggers.len(), 1);
+        assert_eq!(env.triggers[0].at, Some(rider_id(0)));
+        assert_eq!(env.triggers[0].voice, 3);
+    }
+
+    #[test]
+    fn placing_change_never_passes_null_rider() {
+        // Verify the invariant from `cBoarder::vf8` 0x116ab8 (+0x110 = 0),
+        // `Race_UpdatePlacingsAndRubberBand` 0x115100, and `Sfx_OnPlacingChange` 0x219a48:
+        // for any n >= 1 and any 0 <= old < n, whenever old != new, the partner passed to
+        // `Speech_OnPlacingChange` is always non-zero.
+        for n in 1usize..=6 {
+            for old in 0..n as i64 {
+                for new in 0..n as i64 {
+                    if old == new { continue; }
+                    let prev = if new > 0 { rider_id((new - 1) as usize) } else { 0 };
+                    let next = if (new as usize) < n - 1 { rider_id((new + 1) as usize) } else { 0 };
+                    let (a, b) = if new < old { (rider_id(0), next) } else { (prev, rider_id(0)) };
+                    assert!(a != 0 && b != 0, "n={n} old={old} new={new} produced null rider");
+                }
             }
         }
     }

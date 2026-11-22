@@ -158,6 +158,17 @@ impl CareerRes {
         let rec = self.0.ptr(0x3114);
         self.0.r32(rec + 4).wrapping_add(self.0.r32(rec + 8))
     }
+    /// `Career_GetPlayerLevel` 0x164840 (+0x464 → +0x74, written by `Career_SetupPlayerRider` 0x16a9d8): player 0's
+    /// level (0..9) from slot 0 when assigned, else from `character`'s record (direct launches skipping menus).
+    pub fn player_level(&self, character: u32) -> i32 {
+        if self.slot_character().is_some() {
+            self.0.player_level(0) as i32
+        } else {
+            let rec = 0x100 + 0x1c4 * character.min(11) as usize;
+            let pts = self.0.r32(rec + 4).wrapping_add(self.0.r32(rec + 8)) as i32;
+            tricky_game::career::level_for_points(pts) as i32
+        }
+    }
     /// The slot's character's four group levels (its record's +0xc..+0xf, as `Career_SetupPlayerRider` reads them)
     pub fn levels(&self) -> Option<[u8; 4]> {
         let rec = self.0.ptr(0x3114);

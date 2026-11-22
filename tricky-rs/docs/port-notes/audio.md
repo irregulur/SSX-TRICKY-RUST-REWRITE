@@ -1572,6 +1572,32 @@ In the app: `ui::AudioLevels` is the sound manager's levels as the constructor l
 `CareerFile::open`; the announcer reads its speech level each frame and has its cap of 10. STANDIN: the volumes are
 kept as given (`SndMgr_SetVolume` not ported) and nothing plays by them yet.
 
+### The announcer's riders (E1b2g7d3b6a)
+
+Proven on `SLUS_203.26`:
+
+- **`cGame+0xa4` / `+0x124` (`PlaceRace`, `Speech_OnPlaceChange` 0x233ba0):** `Game_IsLeadOrFocusRider` 0x17f1f0
+  loops over `*(cGame + 0x298)` local players stepping `0x80` bytes from `cGame + 0xa4`, and `Audio_GetListenerRider`
+  0x20ed20 indexes `*(cGame + 0xa4 + player * 0x80)` directly. Thus `+0xa4` is player 0's `cBoarder*` and `+0x124` is
+  player 1's `cBoarder*` (`0` in 1P). `racespeech.rs` now passes `a4: rider_id(0), a124: 0` so `Speech_OnPlaceChange`
+  posts `lead = 1` for the player instead of `0`.
+- **Character entry fields (`+0x464` → `+0x38` character, `+0x64` voice, `+0x74` level):** `Career_SetupPlayerRider`
+  0x16a9d8 writes `Career_GetPlayerLevel` 0x164840 (`0..9` from race + show-off medal points) to `+0x74`;
+  `Career_SetupAIRider` 0x16ae68 always writes `0` to `+0x74`. Reading `gRider_Table` at `0x331ea8` (12 entries of
+  `0x38` bytes) confirms `+0x34` (copied to `+0x64`, the voice byte) equals the character index `0..11` for all 12
+  characters (`0xc` only when the character cheat sets `+0x80 != 2`). `racespeech.rs` now populates `level` from
+  `CareerRes::player_level` (player) or `0` (AI), plus `slot`, `character`, `voice`, `vel` (`+0x150` in cm/s),
+  `heading` (`+0x370`), and the rivalry/attitude records (`+0x50`, `+0x5c`, `+0x118`, `+0x120`) from `rivals::Grudge`.
+- **Rider ids (`rider_id`):** across `speech.rs`, `sndqueue.rs`, and `speechhost.rs`, a rider's `cBoarder*` is only
+  compared for identity/null (`== 0`, `== listener`, `== a4`, `== a124`), mapped to its position for
+  `Audio_FindRiderNear` 0x20f9b0, or passed to `SpeechSys_Trigger` 0x228bd8 (`at`); it is never ordered, hashed, or
+  written into an event word. Using non-zero `k + 1` is therefore exact for the speech layer.
+- **No null rider in `Speech_OnPlacingChange` 0x2347c8 (`missing_rider` removed):** `cBoarder::vf8` 0x116ab8
+  initializes every rider's place `+0x110` to `0`, and `Race_UpdatePlacingsAndRubberBand` 0x115100 only ever assigns
+  `i ∈ 0..n`. Therefore `0 <= old < n` holds whenever `old != i`: moving up (`i < old`) implies `i < n - 1` so
+  `next != 0`, and moving down (`i > old`) implies `i > 0` so `prev != 0`. `Sfx_OnPlacingChange` 0x219a48 therefore
+  never passes a null rider to `Speech_OnPlacingChange`.
+
 ## The bank manager and its file loader (E1b2g7d5c, `game/src/banksys.rs`; checked: `tests/banksys.rs`)
 
 Proven (38 functions 0x2086d8..0x20a6e0, every one run against the original in `tests/banksys.rs`, 60,000 random

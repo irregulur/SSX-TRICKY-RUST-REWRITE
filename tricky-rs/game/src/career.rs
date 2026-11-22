@@ -805,20 +805,7 @@ impl Career {
     /// `Career_GetPlayerLevel` 0x164840: the level (0..9) from the record's +4 + +8 (points earned)
     pub fn player_level(&self, p: i8) -> u32 {
         let (rec, _) = self.player_rec(p);
-        let v = self.r32(rec + 4).wrapping_add(self.r32(rec + 8)) as i32;
-        match v {
-            v if 0xf0 <= v => 0,
-            v if 200 <= v => 1,
-            v if 0xa0 <= v => 2,
-            v if 0x78 <= v => 3,
-            v if 0x5a <= v => 4,
-            v if 0x3c <= v => 5,
-            v if 0x23 <= v => 6,
-            v if 0x14 <= v => 7,
-            v if 5 <= v => 8,
-            v if 0 <= v => 9,
-            _ => 0,
-        }
+        level_for_points(self.r32(rec + 4).wrapping_add(self.r32(rec + 8)) as i32)
     }
 
     /// `Career_GetPlayerLevelStringId` 0x164730: the level's string (0x17..0x20; 0 below 0)
@@ -1754,5 +1741,22 @@ impl Career {
         let end = name.iter().position(|b| *b == 0).unwrap_or(name.len());
         self.bytes[0x3714..0x3714 + end].copy_from_slice(&name[..end]);
         self.bytes[0x3714 + end] = 0;
+    }
+}
+
+/// `Career_GetPlayerLevel` 0x164840's threshold table: total medal points (`rec+4 + rec+8`) → level 0..9.
+pub fn level_for_points(v: i32) -> u32 {
+    match v {
+        v if 0xf0 <= v => 0,
+        v if 200 <= v => 1,
+        v if 0xa0 <= v => 2,
+        v if 0x78 <= v => 3,
+        v if 0x5a <= v => 4,
+        v if 0x3c <= v => 5,
+        v if 0x23 <= v => 6,
+        v if 0x14 <= v => 7,
+        v if 5 <= v => 8,
+        v if 0 <= v => 9,
+        _ => 0,
     }
 }
