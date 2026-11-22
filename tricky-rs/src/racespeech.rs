@@ -12,10 +12,11 @@ use bevy::audio::{PlaybackMode, Volume};
 use bevy::prelude::*;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
+use tricky_game::crowdhost::{self, CrowdHost};
 use tricky_game::race::SpeechCall;
 use tricky_game::rider::RiderSpeech;
 use tricky_game::speech::{Announcer, Event, PlaceRace, SpeechEnv, SpeechRider, Trigger};
-use tricky_game::sndqueue::{self, PlacingChangeEnv, Queue, QueueEnv, RingEnv, SoundRing};
+use tricky_game::sndqueue::{self, CheerEnv, PlacingChangeEnv, Queue, QueueEnv, RingEnv, SoundRing};
 use tricky_game::speechhost::SpeechHost;
 
 type Files = tricky_data::big::Files;
@@ -35,6 +36,8 @@ struct Loaded {
     banks: Option<Vec<u8>>,
     /// DATA/CONFIG/AUDIO.INF
     audio: Option<Vec<u8>>,
+    /// DATA/CONFIG/CROWD.INF
+    crowd: Option<Vec<u8>>,
 }
 
 /// A stream's parts: the one playing (its sound and seconds left) and those queued behind it.
@@ -61,6 +64,8 @@ pub struct RaceSpeech {
     /// the course's ambient banks (BANKS.INF's `SWAP` list, +0x38e0) and the one in the bank manager's slot 6
     ambient: sndqueue::AmbientBanks,
     slot6: Slot6,
+    /// the audio system's `+0x372c` crowd boxes (`Audio_LoadCrowd` 0x2209c8, `tricky_game::crowdhost`, row E1b2g7d3b7a)
+    crowd: CrowdHost,
     /// the course the banks are for, and its `BANK` (slot 2)
     course: Option<usize>,
     course_bank: Vec<u8>,
@@ -267,11 +272,37 @@ impl PlacingChangeEnv for Placing<'_, '_> {
     }
 }
 
+/// What `Audio_CheerForRider` 0x21e528 (`sndqueue::cheer_for_rider`) asks of the audio system.
+struct Cheer<'a> {
+    crowd: &'a mut CrowdHost,
+    log: bool,
+}
+
+impl CheerEnv for Cheer<'_> {
+    /// `Audio_GetListenerRider` 0x20ed20: player 0's rider (`cGame+0xa4`) in 1P (2P is row L1).
+    fn listener_rider(&mut self, who: u32) -> u32 {
+        if who == 0 || who == u32::MAX { rider_id(0) } else { 0 }
+    }
+    // STANDIN: the app has no replays
+    fn replay_is_playing(&mut self) -> bool {
+        false
+    }
+    /// `Audio_PlayCrowdCheer` 0x221068 → `CrowdBox_PlayCheer` 0x2203a8.
+    fn play_crowd_cheer(&mut self, level: u32, who: u32) {
+        if self.log {
+            println!("crowd: Audio_PlayCrowdCheer(level={level}, box={who})");
+        }
+        self.crowd.play_cheer(level, who);
+    }
+}
+
 /// What `Sfx_OnWipeout` 0x2181e8 reaches: the crowd and the rider's wipe-out line.
 struct Wipeout<'a, 'b> {
     announcer: &'a Announcer,
     env: &'a mut Env<'b>,
     rider: &'a SpeechRider,
+    crowd: &'a mut CrowdHost,
+    log: bool,
 }
 
 impl sndqueue::WipeoutEnv for Wipeout<'_, '_> {
@@ -283,9 +314,20 @@ impl sndqueue::WipeoutEnv for Wipeout<'_, '_> {
     fn listener_rider(&mut self, _: u32) -> i64 {
         rider_id(0) as i64
     }
-    // STANDIN: no crowd boxes in the app yet (row E1b2g7d3b7)
-    fn crowd_off(&mut self, _: u32) {}
-    fn crowd_level(&mut self, _: u32, _: u32) {}
+    /// `Audio_StopCrowdBox` 0x2210c8 → `CrowdBox_Stop` 0x2206e0.
+    fn crowd_off(&mut self, who: u32) {
+        if self.log {
+            println!("crowd: Audio_StopCrowdBox(box={who})");
+        }
+        self.crowd.stop(who);
+    }
+    /// `CrowdSys_StartBoxCheer` 0x221088 → `CrowdBox_StartCheer` 0x220538.
+    fn crowd_level(&mut self, level: u32, who: u32) {
+        if self.log {
+            println!("crowd: CrowdSys_StartBoxCheer(level={level}, box={who})");
+        }
+        self.crowd.start_cheer(level, who);
+    }
     fn wipeout_voice(&mut self) {
         self.announcer.on_wipeout(self.env, self.rider);
     }
@@ -515,7 +557,8 @@ pub fn race_speech(
                     let host = SpeechHost::new(&inf, Box::new(move |p: &str| banks.load(p).ok().flatten()));
                     let banks = files.load("data/config/banks.inf").ok().flatten();
                     let audio = files.load("data/config/audio.inf").ok().flatten();
-                    Some(Loaded { host, files, banks, audio })
+                    let crowd = files.load("data/config/crowd.inf").ok().flatten();
+                    Some(Loaded { host, files, banks, audio, crowd })
                 })();
                 *s2.lock().unwrap() = Some(loaded);
             });
@@ -551,6 +594,10 @@ pub fn race_speech(
         rs.ambient = sndqueue::AmbientBanks { names: banks.swaps.into_iter().take(200).collect(), ..Default::default() };
         rs.course_bank = banks.loads.iter().rfind(|l| l.slot == 2).map(|l| l.path.clone()).unwrap_or_default();
         rs.slot6 = Slot6::default();
+        // `Audio_LoadCrowd` 0x2209c8 from `Audio_LoadInGameConfig` 0x211098: 1 box (Audio_RiderCount in 1P), bank kind 3 (Crowd.bnk)
+        if let Some(c) = sys.crowd.as_deref() {
+            rs.crowd.load_crowd(c, key.as_bytes(), 1, 3);
+        }
         let given = std::path::absolute(&level.0.dir).unwrap_or(level.0.dir.clone());
         rs.world = given.parent().and_then(|p| p.parent()).map(|p| p.join("audio").join("world")).unwrap_or_default();
         if std::env::var("TRICKY_SPEECHLOG").is_ok() {
@@ -575,6 +622,7 @@ pub fn race_speech(
         rs.event = Default::default();
         rs.slot6 = Slot6::default();
         rs.ambient.clear_loaded();
+        rs.crowd.stop_all(0.0);
         if !racing {
             return;
         }
@@ -632,8 +680,11 @@ pub fn race_speech(
                     }
                 }
             }
-            // the crowd's cheer needs the crowd boxes in the app (row E1b2g7d3b7)
-            SpeechCall::Cheer(_) => {}
+            // `Audio_CheerForRider` 0x21e528 → `Audio_PlayCrowdCheer` 0x221068 → `CrowdBox_PlayCheer` 0x2203a8
+            SpeechCall::Cheer(k) => {
+                let mut ch = Cheer { crowd: &mut rs.crowd, log: std::env::var("TRICKY_SPEECHLOG").is_ok() };
+                sndqueue::cheer_for_rider(rider_id(k), k as u32, &mut ch);
+            }
             SpeechCall::EventSound(Some(kind)) => rs.event.queue(kind),
             SpeechCall::EventSound(None) => {
                 let mut e = EventSfx { bank: Bank { bank: &mut rs.bank, alive: &alive, stops: Vec::new() }, handle: &mut rs.handle, ambient: &mut rs.ambient, slot6: &mut rs.slot6 };
@@ -689,11 +740,18 @@ pub fn race_speech(
                         rs.announcer.on_air_enter(&mut env, &r, kind as i64);
                     }
                     tricky_game::speech::voices::on_air_nearby(&mut env, &r, kind as i64);
+                    // `Sfx_OnAirEnter` 0x2174f8: for the listener's rider when predicted air > 2.0 s, `Audio_ArmCrowdBox` 0x2210a8
+                    if k == 0 && 2.0 < air {
+                        if std::env::var("TRICKY_SPEECHLOG").is_ok() {
+                            println!("crowd: Audio_ArmCrowdBox(box=0, air={air:.2})");
+                        }
+                        rs.crowd.arm(0);
+                    }
                 }
                 RiderSpeech::TenSecondsLeft => rs.announcer.on_ten_seconds_left(&mut env, &who),
                 RiderSpeech::Wipeout(level) => {
-                    let air = sndqueue::AirRider { flag_41c: (k == 0) as u32, player: 0, air: 0.0, emitter: 0 };
-                    let mut w = Wipeout { announcer: &rs.announcer, env: &mut env, rider: &who };
+                    let air = sndqueue::AirRider { flag_41c: (k == 0) as u32, player: k as u32, air: 0.0, emitter: 0 };
+                    let mut w = Wipeout { announcer: &rs.announcer, env: &mut env, rider: &who, crowd: &mut rs.crowd, log: std::env::var("TRICKY_SPEECHLOG").is_ok() };
                     sndqueue::on_wipeout(level, rider_id(k) as i64, &air, &mut w);
                 }
             }
@@ -717,6 +775,17 @@ pub fn race_speech(
     }
     for e in bank.stops {
         commands.entity(e).try_despawn();
+    }
+    // `CrowdSys_UpdateBoxes` 0x220968 (from `Audio_UpdateSystems` 0x21eb70, before `SpeechSys_UpdateAll`);
+    // STANDIN: EA MIDI (.eam) playback on Crowd.bnk is row E1b2g7d3b7b, and world crowd emitters (`WorldEmitter_Update`
+    // 0x22bf60 → `SndQueue_StartLastVoice` 0x2212a0) are not wired to `CrowdHost::start_sound` yet (calls logged only).
+    let t_land = if rider.0.grounded { 0.0 } else { (rider.0.land_time - rider.0.air_time).max(0.0) };
+    let mult = tricky_game::score::get_multiplier(rider.0.sc.units);
+    rs.crowd.update(|_| crowdhost::anticipate_level(t_land, mult));
+    for act in rs.crowd.take_actions() {
+        if std::env::var("TRICKY_SPEECHLOG").is_ok() {
+            println!("crowd: {act:?}");
+        }
     }
     // `SpeechSys_UpdateAll` 0x228998, once a frame; its lines decoded and queued on their streams
     let dt = time.delta_secs();
@@ -892,5 +961,30 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn cheer_and_wipeout_adapters_drive_crowd_host() {
+        tricky_game::rand::streams().seed_fx(1);
+        let inf = b"[GLOBAL]\nTRICK3 = \"|data\\audio\\Cheer30.eam\"\nFALL1 = \"|data\\audio\\Ahh10.eam\"\nFALL2 = \"|data\\audio\\Ahh20.eam\"\nFALL3 = \"|data\\audio\\Ahh30.eam\"\n";
+        let mut crowd = CrowdHost::new();
+        crowd.load_crowd(inf, b"GARI", 1, 3);
+        crowd.start_sound(0, [0.0; 3], 100, 0x61);
+        crowd.update(|_| 3);
+        let _ = crowd.take_actions();
+
+        // `SpeechCall::Cheer(0)` -> `sndqueue::cheer_for_rider` -> `Audio_PlayCrowdCheer(2, 0)`
+        let mut ch = Cheer { crowd: &mut crowd, log: false };
+        sndqueue::cheer_for_rider(rider_id(0), 0, &mut ch);
+        let acts = crowd.take_actions();
+        assert!(matches!(
+            acts.as_slice(),
+            [crowdhost::CrowdAction::PlayCheer { bank_kind: 3, file, .. }] if file == "|data\\audio\\Cheer30.eam"
+        ));
+
+        // Non-player cheer does not trigger player 0's crowd box.
+        let mut ch = Cheer { crowd: &mut crowd, log: false };
+        sndqueue::cheer_for_rider(rider_id(1), 1, &mut ch);
+        assert!(crowd.take_actions().is_empty());
     }
 }

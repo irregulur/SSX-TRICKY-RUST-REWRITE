@@ -106,6 +106,7 @@ pub mod chantload;
 pub mod pausedraw;
 pub mod pausemenu;
 pub mod crowdbox;
+pub mod crowdhost;
 pub mod saveexit;
 pub mod speechplay;
 pub mod worldemitter;

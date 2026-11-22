@@ -1598,6 +1598,33 @@ Proven on `SLUS_203.26`:
   `next != 0`, and moving down (`i > old`) implies `i > 0` so `prev != 0`. `Sfx_OnPlacingChange` 0x219a48 therefore
   never passes a null rider to `Speech_OnPlacingChange`.
 
+### The crowd boxes hosted (E1b2g7d3b7a, `game/src/crowdhost.rs`, `src/racespeech.rs`)
+
+Proven on `SLUS_203.26`:
+
+- `Audio_LoadInGameConfig` 0x211098 calls `Audio_LoadCrowd` 0x2209c8 with `DATA/CONFIG/CROWD.INF`, the upper-cased
+  course archive name, `Audio_RiderCount` (1 in 1P), and bank kind `3` (`Crowd.bnk`). `REQ_WORDS` at `0x39fbd8` is
+  `00 00 ff ff f0 13 22 00`.
+- `Audio_PlayCrowdCheer` 0x221068 (`CrowdBox_PlayCheer` 0x2203a8, `TRICK` list), `CrowdSys_StartBoxCheer` 0x221088
+  (`CrowdBox_StartCheer` 0x220538, `FALL` list), `Audio_ArmCrowdBox` 0x2210a8 (`CrowdBox_Arm` 0x2206c8, from
+  `Sfx_OnAirEnter` 0x2174f8 when predicted air > 2.0 s), and `Audio_StopCrowdBox` 0x2210c8 (`CrowdBox_Stop` 0x2206e0,
+  from `Sfx_OnWipeout` 0x2181e8 when `level <= 0.0`) all index `boxes + who * 0x190`.
+- `cBXAudio::vf15` 0x20ea38 (vtable `+0x84`, `this` shift `+0x80` = 0, called by `CrowdBox_Update` 0x21efb0 when
+  `box+0x180 != 0`) reads the listener rider's `rider+0x57b8` (time to land) and `Score_GetMultiplier` 0x155410
+  (`rider+0x5820`), returning `0` (`< 0.25`), `1` (`< 0.5`), or `2` (`>= 0.5`) when `t_land <= 2.0 && mult > 0.0`,
+  else `3` (none), leaving `sp+0x70`/`sp+0x74` at `0x1000`.
+- `MidiSys_PushEvent` 0x222160 increments `audio+0x20` and writes `(bank_kind, file_handle)` at `*(audio+0xa48) + i * 8`;
+  `MidiSys_PlayPending` 0x222358 reads it, plays via `SndMidi_Play` (row E1b2g7d3b7b), registers monitor engine `2`,
+  and decrements `audio+0x20`.
+- `WorldEmitter_IsSpecialKey` 0x22c638 matches keys `0x61..=0x63` (`WorldEmitter_Update` 0x22bf60 →
+  `SndQueue_StartLastVoice` 0x2212a0 → `CrowdBox_StartSound` 0x21fc98). When no crowd emitter is in a box
+  (`box+0xd4 == 0`), `CrowdBox_PlayCheer`, `CrowdBox_StartCheer`, and `CrowdBox_Update` return immediately.
+- In the app: `tricky_game::crowdhost::CrowdHost` hosts `cCrowdSys` and its boxes in `pf::Mem` on `tricky_game::crowdbox`
+  + `tricky_data::audiocfg::crowd_config` + `Rand_Fx`, wired into `src/racespeech.rs` for `SpeechCall::Cheer`,
+  `Wipeout::crowd_off`/`crowd_level`, `AirEnter` arming, and `CrowdSys_UpdateBoxes` before `SpeechSys_UpdateAll`.
+  Calls are logged under `TRICKY_SPEECHLOG`; `.eam` playback is row E1b2g7d3b7b, and world crowd emitters joining
+  `CrowdHost::start_sound` await the ported `WorldEmitter_Update` host.
+
 ## The bank manager and its file loader (E1b2g7d5c, `game/src/banksys.rs`; checked: `tests/banksys.rs`)
 
 Proven (38 functions 0x2086d8..0x20a6e0, every one run against the original in `tests/banksys.rs`, 60,000 random
