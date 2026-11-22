@@ -1737,3 +1737,24 @@ Proven (`SLUS_203.26`):
   `Landing_ChooseState` 0x109308's grab-landing record reset (`crouch = 1, brake = steer = 0`) for `0xc` + `0xe`,
   and transitions `Rider::ctl` into `0xb` or `0xc` (passed to `ground_tick` and updated by `ground_control` until
   returning to `CRUISE 3` or `PREWIND 0xe`).
+
+## Rail and wipe-out / get-up control states wired (row G1i2b; `game/src/boarder.rs`, `game/src/control.rs`, `game/src/rider/control_tick.rs`, `game/src/rider.rs`, `game/src/rider/wipeout.rs`)
+
+Proven (`SLUS_203.26`, runner-checked in `tests/boarder.rs` and `tests/control_misc.rs`):
+- **`Boarder_SetSteerTargetUnscaled` 0x126ac8** (`boarder::set_steer_target_unscaled`, 10,000 cases bit-for-bit):
+  unscaled steer target for rail balancing (`|target - steer| * 7.0173593` (`0x40e08e35`), clamped to `[0.1, 8.018349]`
+  (`0x3dcccccd`, `0x41004b28`)).
+- **`RailSlideControl_Enter` 0x106dc8 / `RailSlideControl_Update` 0x1073e0 / `RailSlideControl_Exit` 0x1075f0**
+  (`Rider::rail_control`, state `0xf`): wired into `rail_step_grid` and `rail_step`. On entry resets `rail_ctl`,
+  calls `Score_UpdateSpin(0)`, sets brake target `0`, and swaps `rail_kind` `1 <-> 2` for alpine goofy riders. Each
+  tick updates boost (`Boarder_UpdateBoost(held, 0)`), balance steer (`Boarder_SetSteerTargetUnscaled`), crouch
+  (`Boarder_SetCrouchTarget`), quarter turns (`RailSlideControl_CommitQuarterTurn` 0x107730 / `PlayQueuedClip`
+  0x107628), reset (`Boarder_RequestReset`, no `+0x304` store), and prewind/jump rail hops (`0xf -> 0xe -> 10 -> 0x10`
+  with `Prewind.kind = rail_kind`). On exit clears boost and flushes any queued quarter-turn clip. Removes the legacy
+  rail record-shaping block and rail reset stand-in from `Rider::step_tick`.
+- **`WipeOutControl_Enter` 0x108110 / `WipeOutControl` (`0x13`) / `GetUpState_Update` 0x108198 (`0x14`)**
+  (`control::get_up_state`, 5,000 cases bit-for-bit; `Rider::wipeout_control`): `wipe_step` syncs `Rider::ctl` from
+  `Wipe::s.state` (`0x13` / `0x14`) and `step_tick` runs `wipeout_control` after motion, handling reset button
+  (`+0x304 = 0`), out-of-bounds (`surface == 0`, `+0x304 = 1`), and get-up clip completion (`0x1ff`/`0x221` -> state
+  `3` motion `2`, `0x202` -> state `5` motion `2`). Removes the wipe-out reset stand-in from `Rider::step_tick` and
+  the ad-hoc `surface == 0` check from `wipe_step`.

@@ -1,14 +1,16 @@
-//! The ground, landing and air control states as the game runs them (board rows G1i1, G1i2a):
+//! The ground, landing, air, rail and wipe-out control states as the game runs them (board rows G1i1, G1i2a, G1i2b):
 //! - Ground & landing (`rider+0x428`): cruise 3 (`CruiseControl_Update` 0x102fc8), prewind 0xe (`PrewindState_Update`
 //!   0x1050e8), jump 10 (`JumpControl_Update` 0x1046b0), normal landing 0xc (`LandNormalControl_Update` 0x104e68) and
 //!   hard landing 0xb (`LandHardControl_Update` 0x104800).
 //! - Air: natural air 0xd (`NaturalAirControl_Update` 0x1000e0) and spin 0x10 (`SpinState_Update` 0x100908 +
 //!   `SpinState_UpdateTrickClips` 0x1272e8).
+//! - Rail: rail slide 0xf (`RailSlideControl_Enter` 0x106dc8 / `RailSlideControl_Update` 0x1073e0 /
+//!   `RailSlideControl_Exit` 0x1075f0), handing off to prewind 0xe and jump 10 for rail hops.
+//! - Wipe-out & get-up: 0x13 (`WipeOutControl`, inline reset check in `Boarder_UpdateControl` 0x11c9a0) and 0x14
+//!   (`GetUpState_Update` 0x108198).
 //! Each runs on the pad word `cPlayer::GetControls` 0x151250 packs for it, after the tick's motion (`cBoarder::vf7`
 //! 0x117198's order). They set targets; the now/rate/target records (brake +0x1fc, crouch +0x208, steer +0x214, the
 //! wind-ups +0x220 and +0x22c) move toward them before the next tick's motion, by their rate × 1/60.
-//!
-//! STANDIN (row G1i2b): the rail (0xf) and wipe-out / get-up (0x13 / 0x14) ticks still shape the port's own values.
 
 use super::{grab_markers, ground_tick, uber_grab, Input, Rider, RiderSpeech, RIDERS};
 use crate::boarder::{self, Fields, Prewind, PrewindCall, SteerState};
@@ -16,6 +18,7 @@ use crate::control::{self, ControlEnv};
 use crate::controls::{get_controls, ControlsIn, Mapper};
 use crate::finish;
 use crate::ps2f::F;
+use crate::rail_control::{self, RailCall, RailControl, RailRider};
 
 /// The game's 1/60 s (0x3c888889): what the records move by their rate each tick (`cBoarder::vf7`)
 const DT: f32 = f32::from_bits(0x3c88_8889);
@@ -43,6 +46,8 @@ pub const NATURAL_AIR: u32 = 0xd;
 pub const PREWIND: u32 = 0xe;
 pub const RAIL: u32 = 0xf;
 pub const SPIN: u32 = 0x10;
+pub const WIPEOUT: u32 = 0x13;
+pub const GET_UP: u32 = 0x14;
 
 /// Hosted trick-clip controller for `SpinState_UpdateTrickClips` 0x1272e8 and `AnimClip_Advance` 0x15a030 marker
 /// flags (`+0x74` past, `+0x75` crossed this tick) on `TRICK_SLOTS[ch][board]` (0x333098).
@@ -349,14 +354,31 @@ impl Rider {
         self.port_from_records();
     }
 
-    /// `Boarder_SetState` 0x11f608 for the ground, landing and air states, with their enters:
+    /// `Boarder_SetState` 0x11f608 for the ground, landing, air, rail and wipe-out states, with their enters/exits:
+    /// - `RailSlideControl_Exit` 0x1075f0 (when leaving 0xf): clears boost (`Boarder_UpdateBoost(0, 0)`) and finishes
+    ///   any queued quarter-turn clip (`RailSlideControl_PlayQueuedClip` 0x107628).
     /// - `CruiseControl_Enter` 0x102fb0: clears cruise state and `rider+0x1dc`.
     /// - `PrewindControl_Enter` 0x105070: steer & brake target 0 at 6.6666665/s, `prewind_started = 0`.
     /// - `NaturalAirControl_Enter` 0x1000b8: brake target 0 at 4.0/s, `natural_air_ctl.steer = steer`.
+    /// - `RailSlideControl_Enter` 0x106dc8: clears rail control state, zeroes rail spin (`Score_UpdateSpin(0)`), sets
+    ///   brake target 0, and swaps `rail_kind` `1 <-> 2` for alpine goofy riders.
     /// - `SpinControl_Enter` 0x100598: enters `spin_enter_game` if no spin state is active yet.
+    /// - `WipeOutControl_Enter` 0x108110: no record mutation.
     pub fn set_control(&mut self, s: u32) {
         if s == self.ctl {
             return;
+        }
+        if self.ctl == RAIL {
+            // `RailSlideControl_Exit` 0x1075f0
+            self.boost_lvl = 0.0;
+            self.boosting = false;
+            if self.rail_ctl.queued != 0 {
+                let mut rr = self.rail_rider();
+                let mut calls = Vec::new();
+                rail_control::play_queued_clip(&mut self.rail_ctl, &mut rr, &mut calls);
+                self.from_rail_rider(&rr);
+            }
+            self.rail_turn_t = 0.0;
         }
         self.ctl = s;
         match s {
@@ -376,6 +398,23 @@ impl Rider {
                 self.natural_air_ctl.steer = self.rec.steer[0];
                 self.spin_st = None;
             }
+            RAIL => {
+                self.records_from_port();
+                self.rail_ctl = RailControl::default();
+                self.rail_turn_t = 0.0;
+                self.sc.update_spin(0);
+                let mut f = fin(&self.control_rider(), self.boost_lvl);
+                finish::set_brake_target(0.0, &mut f);
+                self.rec.brake = [f.brake, f.brake_rate, f.brake_target];
+                self.brake_v = f.brake;
+                if self.stats.kind == 2 && self.data.goofy {
+                    if self.rail_kind == 1 {
+                        self.rail_kind = 2;
+                    } else if self.rail_kind == 2 {
+                        self.rail_kind = 1;
+                    }
+                }
+            }
             SPIN => {
                 if self.spin_st.is_none() {
                     self.spin_enter_game();
@@ -383,6 +422,26 @@ impl Rider {
             }
             _ => {}
         }
+    }
+
+    fn rail_rider(&self) -> RailRider {
+        let alp = self.stats.kind == 2 && self.data.goofy;
+        let stance = if alp { (!self.switch) as u32 } else { self.switch as u32 };
+        RailRider {
+            kind: self.rail_kind,
+            stance,
+            x46d4: stance,
+            x46e0: 0.0,
+            crouch: self.rec.crouch[0],
+            class: self.stats.kind as u32,
+            stats40: self.data.goofy as u32,
+        }
+    }
+
+    fn from_rail_rider(&mut self, rr: &RailRider) {
+        self.rail_kind = rr.kind;
+        let alp = self.stats.kind == 2 && self.data.goofy;
+        self.set_switch(if alp { rr.stance == 0 } else { rr.stance != 0 });
     }
 
     /// The state's rider: the records, the velocity and the board's forward in the game's cm and axes
@@ -410,7 +469,11 @@ impl Rider {
             lean_rate: self.lean[1],
             lean_target: self.lean[2],
             air: self.air_time,
-            surface: self.surface as u32,
+            surface: if self.rail.is_some() {
+                if self.rail_word != 0 { self.rail_word } else { self.surface.max(1) as u32 }
+            } else {
+                self.surface as u32
+            },
             // STANDIN (row G1i2): the finish (+0x418) as not yet crossed; the app's own finish takes the rider over
             finish: -1,
             class: self.stats.kind as u32,
@@ -730,7 +793,7 @@ impl Rider {
             let mut p = Prewind {
                 f: Fields { meter, boost_level: level, x1fc: cr.brake, crouch: cr.crouch, crouch_rate: cr.crouch_rate, crouch_target: cr.crouch_target, ..Default::default() },
                 started: self.prewind_started,
-                kind: 0,
+                kind: if self.rail.is_some() { self.rail_kind } else { 0 },
                 x418: -1,
                 spin: self.rec.spin,
                 flip: self.rec.flip,
@@ -780,6 +843,122 @@ impl Rider {
             self.rec.flip = [0.0; 3];
         }
         jumped
+    }
+
+    /// After the rail's motion (`RailSlideMotion_Update` 0x10b0d0), `cBoarder::vf7`'s control part on a rail:
+    /// `RailSlideControl_Update` 0x1073e0 (state `0xf`), handing off to `PrewindState_Update` 0x1050e8 (`0xe`) and
+    /// `JumpControl_Update` 0x1046b0 (`10`) once the jump button is pressed. Returns true when `JumpControl_Update`
+    /// fires the rail hop (`Jump_ApplyImpulse`, motion 1, `Takeoff_SetSpinRates`).
+    pub(super) fn rail_control(&mut self, input: &Input, dt: f32) -> bool {
+        if matches!(self.ctl, PREWIND | JUMP) {
+            return self.ground_control(input);
+        }
+        if self.ctl != RAIL {
+            self.set_control(RAIL);
+        }
+        self.read_pad(input);
+        let map = self.button_map();
+        let mut trick = 0x1a;
+        let mut slope = false;
+        let mut pad = get_controls(
+            ControlsIn { state: RAIL, paused: false },
+            &mut Mapper { map: &map, pad: &self.pad_dev },
+            &mut trick,
+            &mut || 0,
+            &mut slope,
+        );
+        // STANDIN: keyboard/gamepad input into state 0xf's six-bit sticks (`axis(4)` steer at bit 5, `axis(7)`
+        // quarter-turn at bit 17 when boost + steer is held past 0.5, matching `BTNMAP0.DAT`'s d-pad `RailSpin`).
+        let six = |a: f32| ((a.clamp(-1.0, 1.0) * 31.0) as i32 as u32) & 0x3f;
+        let put = |w: &mut u32, shift: u32, v: u32| *w = *w & !(0x3f << shift) | v << shift;
+        put(&mut pad, 5, six(-input.steer));
+        put(&mut pad, 17, if input.boost && input.steer.abs() > 0.5 { six(-input.steer) } else { 0 });
+
+        if self.rail_ctl.queued != 0 {
+            self.rail_turn_t = (self.rail_turn_t - dt).max(0.0);
+        }
+        let mut rc = self.rail_ctl;
+        let mut rr = self.rail_rider();
+        let turn_done = self.rail_turn_t <= 0.0;
+        let calls = rail_control::update(&mut rc, &mut rr, pad, &mut || turn_done);
+        self.rail_ctl = rc;
+        self.from_rail_rider(&rr);
+        let mut next_state = None;
+        for c in calls {
+            match c {
+                RailCall::Boost(b) => {
+                    let mut f = Fields { meter: self.boost, boost_level: self.boost_lvl, ..Default::default() };
+                    // `RailSlideControl_Update` 0x1073e0 calls `Boarder_UpdateBoost(rider, (pad >> 4) & 1, 0)`
+                    let _ = boarder::update_boost(b != 0, false, true, self.tricky(), &mut f);
+                    (self.boost, self.boost_lvl) = (f.meter, f.boost_level);
+                }
+                RailCall::SteerTarget(bits) => {
+                    let (t, rate) = boarder::set_steer_target_unscaled(f32::from_bits(bits), self.rec.steer[0]);
+                    self.rec.steer[1] = rate;
+                    self.rec.steer[2] = t;
+                }
+                RailCall::CrouchTarget(bits) => {
+                    let mut f = Fields { x1fc: self.rec.brake[0], crouch: self.rec.crouch[0], crouch_rate: self.rec.crouch[1], crouch_target: self.rec.crouch[2], ..Default::default() };
+                    boarder::set_crouch_target(f32::from_bits(bits), &mut f);
+                    (self.rec.crouch[1], self.rec.crouch[2]) = (f.crouch_rate, f.crouch_target);
+                }
+                RailCall::Prewind => next_state = Some(PREWIND),
+                RailCall::TurnLayers(bits) => {
+                    self.rail_goal += f32::from_bits(bits);
+                    // STANDIN (row G5d): 15-frame quarter-turn clip duration (28 game ticks)
+                    self.rail_turn_t = 28.0 / 60.0;
+                }
+                RailCall::ScoreSpin(deg) => self.sc.update_spin(deg),
+                // `RailSlideControl_Update` does not write +0x304 before `Boarder_RequestReset`
+                RailCall::Reset => self.reset_req = Some(None),
+                RailCall::ClipAtEnd | RailCall::OnClipQueued | RailCall::Anim15ef48 | RailCall::PlayClip(_) => {}
+            }
+        }
+        self.port_from_records();
+        self.charge = 0.0;
+        if let Some(s) = next_state {
+            self.set_control(s);
+        }
+        false
+    }
+
+    /// After the wipe-out or get-up motion (`WipeoutMotion_Update` 0x10c2f0 / `GetUpMotion_Update` 0x1102c8),
+    /// `cBoarder::vf7`'s control part: state `0x13` (`WipeOutControl`, inline reset check in `Boarder_UpdateControl`
+    /// 0x11c9a0) or `0x14` (`GetUpState_Update` 0x108198).
+    pub(super) fn wipeout_control(&mut self, input: &Input) {
+        if !matches!(self.ctl, WIPEOUT | GET_UP) {
+            self.set_control(WIPEOUT);
+        }
+        self.read_pad(input);
+        let map = self.button_map();
+        let mut trick = 0x1a;
+        let mut slope = false;
+        let pad = get_controls(
+            ControlsIn { state: self.ctl, paused: false },
+            &mut Mapper { map: &map, pad: &self.pad_dev },
+            &mut trick,
+            &mut || 0,
+            &mut slope,
+        );
+        let tricky = self.tricky();
+        let (mut meter, mut level) = (self.boost, self.boost_lvl);
+        let mut speech = std::mem::take(&mut self.speech);
+        let clip_id = self.wipe.as_ref().map_or(0x1ff, |w| w.clip as i32);
+        let mut env = Env { meter: &mut meter, boost_level: &mut level, tricky, speech: &mut speech, clip_id, state: None, jumped: false, reset: None };
+        let mut cr = self.control_rider();
+        if self.ctl == GET_UP {
+            control::get_up_state(&mut env, pad, &mut cr);
+        } else {
+            control::update_control(&mut env, pad, &mut cr);
+        }
+        let state = env.state;
+        if let Some(f) = env.reset {
+            self.reset_req = Some(Some(f));
+        }
+        self.speech = speech;
+        if let Some(s) = state {
+            self.set_control(s);
+        }
     }
 }
 
@@ -899,5 +1078,89 @@ mod tests {
         r.hard_land = 0.0;
         r.ground_control(&Input { jump: true, ..Default::default() });
         assert_eq!(r.ctl, PREWIND, "LandHard should transition to PREWIND when jump is held at clip end");
+    }
+
+    #[test]
+    fn rail_control_boosts_quarter_turns_prewinds_hops_and_resets() {
+        let mut r = Rider::new(Vec3::ZERO, 0.0);
+        r.rail = Some((0, 0.0, 10.0));
+        r.rail_kind = 1;
+        r.vel = Vec3::new(0.0, 0.0, -10.0);
+        r.boost = 0.8;
+        r.set_control(RAIL);
+        assert_eq!(r.ctl, RAIL);
+
+        // Boosting on a rail sets boost_lvl > 0 and drains meter (`Boarder_UpdateBoost(1, 0)`).
+        let b0 = r.boost;
+        assert!(!r.rail_control(&Input { boost: true, ..Default::default() }, 1.0 / 60.0));
+        assert!(r.boost_lvl > 0.0 && r.boost < b0, "rail boost should set boost_lvl and drain meter");
+
+        // Boost + right steer triggers a quarter turn (`RailSlideControl_CommitQuarterTurn`): queues clip, rotates
+        // rail_goal by +pi/2, and scores +90 deg; after 28 ticks `play_queued_clip` updates rail_kind 1 -> 4.
+        let g0 = r.rail_goal;
+        r.rail_control(&Input { boost: true, steer: 1.0, ..Default::default() }, 1.0 / 60.0);
+        assert_eq!(r.rail_ctl.queued, 1);
+        assert_eq!(r.rail_ctl.spin, 90);
+        assert!((r.rail_goal - (g0 + std::f32::consts::FRAC_PI_2)).abs() < 1e-4);
+        for _ in 0..30 {
+            r.rail_control(&Input::default(), 1.0 / 60.0);
+        }
+        assert_eq!(r.rail_ctl.queued, 0);
+        assert_eq!(r.rail_kind, 4, "quarter turn right from kind 1 should settle into kind 4");
+
+        // Pressing jump enters PREWIND (0xe), holding winds up, releasing enters JUMP (10) and hops into SPIN (0x10).
+        r.rail_control(&Input { jump: true, ..Default::default() }, 1.0 / 60.0);
+        assert_eq!(r.ctl, PREWIND, "jump press on rail should enter PREWIND");
+        for _ in 0..20 {
+            r.ease_records();
+            assert!(!r.rail_control(&Input { jump: true, steer: 1.0, ..Default::default() }, 1.0 / 60.0));
+        }
+        assert!(r.crouch_v > 0.5 && r.wind > 0.3);
+        let mut hopped = false;
+        for _ in 0..20 {
+            r.ease_records();
+            if r.rail_control(&Input::default(), 1.0 / 60.0) {
+                hopped = true;
+                break;
+            }
+        }
+        assert!(hopped, "releasing jump on rail should hop via Prewind -> Jump");
+        assert_eq!(r.ctl, SPIN);
+
+        // Reset button on a rail sets reset_req = Some(None) (no +0x304 store).
+        r.set_control(RAIL);
+        r.reset_req = None;
+        r.rail_control(&Input { reset: true, ..Default::default() }, 1.0 / 60.0);
+        assert_eq!(r.reset_req, Some(None));
+    }
+
+    #[test]
+    fn wipeout_and_getup_control_handle_reset_button_and_out_of_bounds() {
+        let mut r = Rider::new(Vec3::ZERO, 0.0);
+        r.surface = 1;
+        r.set_control(WIPEOUT);
+        r.reset_req = None;
+
+        // No reset when on-course and reset button not pressed.
+        r.wipeout_control(&Input::default());
+        assert_eq!(r.reset_req, None);
+
+        // Reset button in WIPEOUT (0x13) sets reset_req = Some(Some(0)) (+0x304 = 0, charges meter).
+        r.wipeout_control(&Input { reset: true, ..Default::default() });
+        assert_eq!(r.reset_req, Some(Some(0)));
+
+        // Out-of-bounds (surface 0) in WIPEOUT sets reset_req = Some(Some(1)) (+0x304 = 1, free reset).
+        r.reset_req = None;
+        r.surface = 0;
+        r.wipeout_control(&Input::default());
+        assert_eq!(r.reset_req, Some(Some(1)));
+
+        // GET_UP (0x14): reset button sets Some(Some(0)); settled clip (0x1ff when wipe is None) transitions to CRUISE.
+        r.set_control(GET_UP);
+        r.surface = 1;
+        r.reset_req = None;
+        r.wipeout_control(&Input { reset: true, ..Default::default() });
+        assert_eq!(r.reset_req, Some(Some(0)));
+        assert_eq!(r.ctl, CRUISE, "GetUpState_Update with clip 0x1ff should transition to CRUISE");
     }
 }

@@ -195,6 +195,14 @@ pub fn set_steer_target(target: f32, s: &SteerState) -> (f32, f32) {
     (t, rate)
 }
 
+/// `Boarder_SetSteerTargetUnscaled` 0x126ac8: the rail's unscaled steer target (to rider+0x21c) and rate (to
+/// rider+0x218): no speed or boost scaling and no powder factor, just `|target - steer| × 7.0173593` clamped to
+/// `0.1..8.018349`.
+pub fn set_steer_target_unscaled(target: f32, steer: f32) -> (f32, f32) {
+    let rate = ((target - steer).abs() * f32::from_bits(0x40e0_8e35)).clamp(f32::from_bits(0x3dcc_cccd), f32::from_bits(0x4100_4b28));
+    (target, rate)
+}
+
 /// `Boarder_DrainMeter` 0x11b1f8, once a tick: the uber timer runs down by a tick (to 0; in the air, rider+0x424
 /// = 1, it stops at one tick instead of running out); in TRICKY (`tricky`) the timer and the meter are held at 1;
 /// otherwise the meter of a rider still racing (rider+0x418 < 0: not over the line, `player`) drains by the drain stat (stats+0x1b): 15.48 − 15.21 ×

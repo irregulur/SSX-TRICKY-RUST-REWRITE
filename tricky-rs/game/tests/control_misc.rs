@@ -40,6 +40,7 @@ enum Ev {
     Clip,
     Play(i32),
     State(u32),
+    Motion(u32),
     Rotate(u32),
     Reset(u32),
     Run(u32),
@@ -71,8 +72,8 @@ impl ControlEnv for World {
     fn set_state(&mut self, _r: &mut Rider, s: u32) {
         self.log.push(Ev::State(s));
     }
-    fn set_motion(&mut self, _: &mut Rider, _: u32) {
-        unreachable!()
+    fn set_motion(&mut self, _: &mut Rider, m: u32) {
+        self.log.push(Ev::Motion(m));
     }
     fn set_steer_target(&mut self, _: &mut Rider, _: f32) {
         unreachable!()
@@ -236,6 +237,48 @@ fn dispatch_and_fakie_cruise_are_the_original() {
     eprintln!("{seen:?}");
     for k in ["Play(513)", "Play(515)", "Play(516)", "State(3)", "Run(16)", "Run(22)"] {
         assert!(seen.contains_key(k), "never: {k}");
+    }
+}
+
+#[test]
+fn get_up_state_is_the_original() {
+    let Some(mut r) = runner() else { return };
+    let w = Rc::new(RefCell::new(World::default()));
+    let x = w.clone();
+    r.stub(0x15fdd0, move |c, _| {
+        x.borrow_mut().log.push(Ev::Clip);
+        let v = x.borrow().clip;
+        c.set_gpr(2, v as i64 as u64)
+    });
+    let x = w.clone();
+    r.stub(0x11f608, move |c, _| x.borrow_mut().log.push(Ev::State(c.gpr(5) as u32)));
+    let x = w.clone();
+    r.stub(0x11f610, move |c, _| x.borrow_mut().log.push(Ev::Motion(c.gpr(5) as u32)));
+    let x = w.clone();
+    r.stub(0x118f10, move |c, _| x.borrow_mut().log.push(Ev::Reset(c.f(12).to_bits())));
+    let state = r.mem.alloc(0x20);
+    let rider = r.mem.alloc(0x4800);
+    r.mem.write_u32(state, rider);
+    let pad_at = r.mem.alloc(16);
+    let mut g = Rng(0x6e70_0000_0010_8198);
+    for case in 0..5_000 {
+        let mut rd = Rider {
+            surface: g.below(3),
+            reset_flag: g.below(2),
+            ..Default::default()
+        };
+        r.mem.write_u32(rider + 0x290, rd.surface);
+        r.mem.write_u32(rider + 0x304, rd.reset_flag);
+        let mut ours = World { clip: [0x1ff, 0x202, 0x221, 0x24b, 0x252, 0][g.below(6) as usize], log: vec![] };
+        *w.borrow_mut() = ours.clone();
+        let pad = g.next();
+        r.mem.write_u32(pad_at, pad);
+        r.cpu.set_gpr(4, state as u64);
+        r.cpu.set_gpr(5, pad_at as u64);
+        r.call(0x108198).unwrap();
+        control::get_up_state(&mut ours, pad, &mut rd);
+        assert_eq!(w.borrow().log, ours.log, "case {case} clip {:#x} pad {pad:#x} surf {}", ours.clip, rd.surface);
+        assert_eq!(r.mem.read_u32(rider + 0x304), rd.reset_flag, "case {case} reset_flag");
     }
 }
 

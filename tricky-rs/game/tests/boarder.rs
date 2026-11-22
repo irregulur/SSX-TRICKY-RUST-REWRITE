@@ -308,3 +308,22 @@ fn wind_clip_is_the_originals() {
         assert_eq!(*clip.borrow(), Some(boarder::wind_clip(spin, flip, switch, kind)), "case {case}: spin {spin} flip {flip} switch {switch} kind {kind}");
     }
 }
+
+#[test]
+fn set_steer_target_unscaled_is_the_originals() {
+    let Some(mut w) = world() else { return };
+    let mut g = Rng(0x57ee_0000_0001_26ac);
+    for case in 0..10_000 {
+        let target = g.f(-2.0, 2.0);
+        let steer = g.f(-2.0, 2.0);
+        w.r.mem.write_f32(w.rd + 0x214, steer);
+        w.r.mem.write_f32(w.rd + 0x218, -99.0);
+        w.r.mem.write_f32(w.rd + 0x21c, -99.0);
+        w.r.cpu.set_f(12, target);
+        w.r.cpu.set_gpr(4, w.rd as u64);
+        w.r.call(0x126ac8).unwrap_or_else(|e| panic!("case {case}: {e}"));
+        let (t, rate) = boarder::set_steer_target_unscaled(target, steer);
+        assert_eq!(w.r.mem.read_u32(w.rd + 0x21c), t.to_bits(), "case {case} target");
+        assert_eq!(w.r.mem.read_u32(w.rd + 0x218), rate.to_bits(), "case {case} rate");
+    }
+}

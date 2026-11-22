@@ -490,6 +490,20 @@ pub fn getup_from_sit(env: &mut dyn ControlEnv, r: &mut Rider) {
     r.brake_rate = 0.0;
 }
 
+/// `GetUpState_Update` 0x108198 (control state 0x14): once the get-up clip settles to 0x1ff or 0x221, returns to
+/// cruise (state 3, motion 2); on 0x202 enters fakie cruise (state 5, motion 2); then the reset check.
+pub fn get_up_state(env: &mut dyn ControlEnv, pad: u32, r: &mut Rider) {
+    let clip = env.clip(0);
+    if clip == 0x1ff || clip == 0x221 {
+        env.set_state(r, 3);
+        env.set_motion(r, 2);
+    } else if clip == 0x202 {
+        env.set_state(r, 5);
+        env.set_motion(r, 2);
+    }
+    reset_check(env, pad, r);
+}
+
 /// `Boarder_UpdateControl` 0x11c9a0: the control state's update by +0x428 (each its own state object in the boarder
 /// handler: [`ControlEnv::run_control`]); 5 (the fakie cruise) and 0x13 (only the reset check) run here
 pub fn update_control(env: &mut dyn ControlEnv, pad: u32, r: &mut Rider) {

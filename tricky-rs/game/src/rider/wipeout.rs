@@ -669,12 +669,6 @@ impl Rider {
                 _ => {}
             }
         }
-        // states 0x13 / 0x14 (`GetUpState_Update` 0x108198): out of bounds (surface 0) is a reset at once, +0x304 =
-        // (pad ^ 1) & 1 (1: no button)
-        if self.surface == 0 {
-            self.request_reset(Some(1));
-            return;
-        }
         if let Some((near, ahead)) = self.course_pts {
             (w.rag.course, w.wr.course8) = (to_game(near, 100.0, 1.0), to_game(ahead, 100.0, 1.0));
         }
@@ -699,6 +693,7 @@ impl Rider {
         self.vel = to_port(w.rag.vel, 0.01);
         self.normal = to_port(w.rag.ground, 1.0);
         self.set_motion(w.s.motion);
+        self.set_control(w.s.state);
         self.surface = w.rag.surface.min(19) as u8;
         self.grounded = w.rag.ground_kind != 3;
         let f = to_port(w.wr.fwd, 1.0);
