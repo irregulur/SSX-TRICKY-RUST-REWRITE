@@ -13,6 +13,7 @@ use crate::orient::{self, Orient};
 pub mod wipeout;
 pub mod ground_tick;
 pub mod control_tick;
+mod vf7;
 pub use wipeout::{Wipe, course_points};
 
 // The numbers below are the original game's (SLUS_203.26), converted from its cm and 60 Hz ticks to metres and
@@ -539,6 +540,12 @@ pub struct Rider {
     pub fade: (f32, f32),
     /// what `Boarder_RequestReset` 0x118f10 reads of the race, kept by the host
     pub reset_ctx: ResetCtx,
+    /// `cBoarder::vf7` 0x117198's boarder fields not kept elsewhere on `Rider` (row G1i2c: weather +0x18, distance
+    /// +0x164, pitch +0x168, remaining ease records, quadrant blend +0x274..+0x280, +0x30c, events +0x384/+0x388)
+    pub vf7: crate::boarder_tick::TickRider,
+    /// `Boarder_AddSpeedSample` 0x155dc8 (`score+0xdc` sum, `score+0xe0` count)
+    pub speed_sum: f32,
+    pub speed_samples: f32,
 }
 
 /// The race as `Boarder_RequestReset` 0x118f10 reads it for a rider: `AIP_CanResetAt` 0x196858 on its path at its
@@ -571,7 +578,8 @@ impl Rider {
                last_trick: String::new(), trick_timer: 0.0, crashed: 0.0, hard_land: 0.0, crouch_v: 0.0, brake_v: 0.0, jump_c: 0.0, jump_delay: 0.0, height: 0.0,
                course_dir: None, course_pts: None, wipe: None, crash_at: None, gm: None, crash_spray: None, land_puffs_vn: None, lean: [0.0; 3], up: [0.0, 0.0, 1.0, 0.0], recover: None, ai: false, down_t: 0.0, getup: -1.0, stumble: 0.0, wall_hit: None, speed_timer: 0.0, spin_timer: 0.0, spin_used: false, tube_class: u8::MAX, gate_p: 0.0, gate_hi: 0.0, gate_lo: 0.0, gate_still: 0.0, gate_target: 0.0, gate_speed: 0.0, gate_state: 8, gate_rock_dir: 0, band: (0.005, 0.0250417), spin_base: 0.0, flip_base: 0.0, late: false, cause: "", spin_ax: Axis::default(), flip_ax: Axis::default(), air_mode2: false, rail_off: 0.0, rail_time: 0.0, rail_halves: 0, boost_was: false, chain: 0,
                ubers: Vec::new(), uber: 0.0, uber_id: 0, uber_done: false, letters: 0, multiplier: 1,
-               sc: new_score(), tick_acc: 0.0, full_count: 0, rail_kind: 0, rail_lean: 0.0, rail_goal0: 0.0, rail_committed: 0.0, show_parts: Vec::new(), speech: Vec::new(), hit_by: u32::MAX, grab_scored: false, grab_tw: false, hit_wait: 0, att: None, last_hit: Default::default(), impact: 0.0, impact_n: [0.0; 4], knocks: 0.0, slot: 0, place_ray: None, hit_kind: 0, land_time: 0.0, takeoffs: 0, rail_blend: 0.0, rail_word: 0, rail_grid: false, rail_hit: [0.0; 4], spin_st: None, pad_dev: Default::default(), land_word: u32::MAX, land_normal: [0.0, 0.0, 1.0, 0.0], takeoff_wind: (0.0, 0.0), ctl: control_tick::CRUISE, cruise: Default::default(), land_normal_ctl: Default::default(), natural_air_ctl: Default::default(), rail_ctl: Default::default(), rail_turn_t: 0.0, prewind_started: 0, trick_ctl: Default::default(), rec: Default::default(), boost_lvl: 0.0, reset_flag: 0, reset_req: None, reset: None, reset_acc: 0.0, fade: (1.0, 0.0), reset_ctx: ResetCtx::default() };
+               sc: new_score(), tick_acc: 0.0, full_count: 0, rail_kind: 0, rail_lean: 0.0, rail_goal0: 0.0, rail_committed: 0.0, show_parts: Vec::new(), speech: Vec::new(), hit_by: u32::MAX, grab_scored: false, grab_tw: false, hit_wait: 0, att: None, last_hit: Default::default(), impact: 0.0, impact_n: [0.0; 4], knocks: 0.0, slot: 0, place_ray: None, hit_kind: 0, land_time: 0.0, takeoffs: 0, rail_blend: 0.0, rail_word: 0, rail_grid: false, rail_hit: [0.0; 4], spin_st: None, pad_dev: Default::default(), land_word: u32::MAX, land_normal: [0.0, 0.0, 1.0, 0.0], takeoff_wind: (0.0, 0.0), ctl: control_tick::CRUISE, cruise: Default::default(), land_normal_ctl: Default::default(), natural_air_ctl: Default::default(), rail_ctl: Default::default(), rail_turn_t: 0.0, prewind_started: 0, trick_ctl: Default::default(), rec: Default::default(), boost_lvl: 0.0, reset_flag: 0, reset_req: None, reset: None, reset_acc: 0.0, fade: (1.0, 0.0), reset_ctx: ResetCtx::default(),
+               vf7: crate::boarder_tick::TickRider { active: 1, time_scale: 1.0, speed_limit: SPEED_CAP * 100.0, ..Default::default() }, speed_sum: 0.0, speed_samples: 0.0 };
         // the start line's `Boarder_PlaceAt` 0x11cae8 (`cBoarder::vf8` 0x116ab8: heading from the path's direction)
         r.att = Some((orient::placed_attitude(placed_heading(yaw), None), yaw));
         r
@@ -615,6 +623,7 @@ impl Rider {
         self.reset = Some(started.state);
         self.reset_acc = 0.0;
         self.set_motion(4);
+        self.set_control(control_tick::RESET);
     }
 
     /// `Boarder_SetMotion` 0x11f610 -> `Boarder_ExitMotionState` 0x11c6b0 / `Boarder_EnterMotionState` 0x11c710:
@@ -750,9 +759,9 @@ impl Rider {
         self.uber_timer = f.uber_timer;
         self.full_count = f.full_count;
     }
-    /// The game's per-tick score step and meter drain (`Score_Tick` 0x156e80, `Boarder_DrainMeter` 0x11b1f8), at
-    /// 60 Hz whatever the physics step.
-    fn score_ticks(&mut self, dt: f32) {
+    /// The game's per-tick score step (`Score_Tick` 0x156e80, called from `cBoarder::vf7` 0x117198) and meter drain
+    /// (`Boarder_DrainMeter` 0x11b1f8, called per rider in the race tick 0x113870), at 60 Hz whatever the physics step.
+    fn score_ticks(&mut self, dt: f32, drain: bool) {
         // rider+0x418: −1 until the line, then the finish time (`Boarder_Finish` 0x11da40: race time × 100);
         // only its sign is read here (STANDIN: the time itself is not kept)
         self.sc.rider_418 = if self.fin.is_some() { 0 } else { -1 };
@@ -762,12 +771,12 @@ impl Rider {
             self.hit_wait = self.hit_wait.saturating_sub(1);
             let speed = match self.rail { Some((_, _, s)) => s.abs(), None => self.vel.length() } * 100.0;
             self.sc.tick(speed);
-            let mut f = crate::boarder::Fields { meter: self.boost, uber_timer: self.uber_timer, full_count: self.full_count, ..Default::default() };
-            // STANDIN: rider+0x424 = 1 taken as "in the air"; the drain stat (stats+0x1b) is our meter_leak
-            let air = !self.grounded && self.rail.is_none();
-            crate::boarder::drain_meter(air, self.fin.is_none(), self.stats.bytes[crate::stats::LEAK], self.tricky(), &mut f);
-            self.boost = f.meter;
-            self.uber_timer = f.uber_timer;
+            if drain {
+                let mut f = crate::boarder::Fields { meter: self.boost, uber_timer: self.uber_timer, full_count: self.full_count, ..Default::default() };
+                crate::boarder::drain_meter(self.motion == 1, self.fin.is_none(), self.stats.bytes[crate::stats::LEAK], self.tricky(), &mut f);
+                self.boost = f.meter;
+                self.uber_timer = f.uber_timer;
+            }
         }
         self.sync_score();
     }
@@ -1309,16 +1318,37 @@ impl Rider {
     /// Boost thrust level from the meter (1, 0.6, 0.25) when boosting, else 0.
     pub fn boost_level(&self) -> f32 { if self.boost > 0.666 || self.tricky() { 1.0 } else if self.boost > 0.3336 { 0.6013 } else { 0.25 } }
 
-    /// One tick: on the snow `GroundMotion_Update` 0x10a0d8 with its forces (`Boarder_GroundSpringForce` 0x109878,
-    /// `Boarder_GroundThrust` 0x109950, `Boarder_ForwardDrag` 0x109cb8, `Boarder_SideFriction` 0x109ef8), in the
-    /// air `Air_IntegrateRK4` 0x12b340, on a rail `RailSlideMotion_Update` 0x10b0d0.
+    /// `AirMotion_Enter` 0x108310: predicts the flight (`AirPredict_AtTakeoff` 0x123b10, its rays `cWorldLine`(0, …,
+    /// 0)) before `Sfx_OnAirEnter` 0x2174f8 reads it. `kind`: whether the control state +0x428 was already 0xd
+    /// (`NATURAL_AIR`) as the motion was entered.
+    fn air_enter(&mut self, world: &CollisionWorld, kind: u32) {
+        // (STANDIN without the course's collision, a levels folder: the drawn mesh's ground, as the wipe-out's)
+        let mut ray = |a: [f32; 4], b: [f32; 4]| match &world.course {
+            Some(course) => {
+                let mut q = crate::worldline::WorldLine::new(0.0, a, b, 0);
+                let (t, h) = course.ray_cast(&mut q, world.showoff, None, &|i| world.course_skips(i));
+                let h = h.filter(|_| t >= 0.0);
+                (t, crate::air::RayHit { point: h.as_ref().map_or([0.0; 4], |h| h.pos), normal: h.as_ref().map_or([0.0; 4], |h| h.normal), word: h.as_ref().map_or(0, |h| h.surface as u32) })
+            }
+            None => {
+                let (t, o) = wipeout::mesh_line(world, a, b);
+                (t, crate::air::RayHit { point: o.pos, normal: o.normal, word: o.x30[1] })
+            }
+        };
+        let p = crate::air::predict_at_takeoff(ground_tick::to_game(self.pos, 100.0, 1.0), ground_tick::to_game(self.vel, 100.0, 0.0), ground_tick::game_dir(self.normal), &mut ray);
+        self.land_time = p.t_land;
+        (self.land_word, self.land_normal) = (p.word, p.normal);
+        self.takeoffs = self.takeoffs.wrapping_add(1);
+        self.speech.push(RiderSpeech::AirEnter { kind, air: self.land_time, up: self.vel.y * 100.0 });
+    }
+
+    /// One tick, unified under `cBoarder::vf7` 0x117198 (`boarder_tick::boarder_tick`, row G1i2c): eases the records,
+    /// height, pitch, surface band and boost timers before `Boarder_UpdateMotion` 0x11c770 (`AirMotion_Update`
+    /// 0x108378, `GroundMotion_Update` 0x10a0d8, `RailSlideMotion_Update` 0x10b0d0, stationary 0x10afe0,
+    /// `WipeoutMotion_Update` 0x10c2f0, `GetUpMotion_Update` 0x1102c8), applies the speed cap and speed sample, runs
+    /// `Boarder_UpdateControl` 0x11c9a0, decays impacts/knocks and checks the world floor reset, runs `Score_Tick`
+    /// 0x156e80, and aims the lean targets (`Boarder_UpdateLeanTargets` 0x129500).
     pub fn step(&mut self, world: &CollisionWorld, rails: &Rails, input: Input, dt: f32) {
-        // the reset state: its motion (4) does nothing. (`cBoarder::vf7` 0x117198's own work each tick, the eases and
-        // decays, is not run meanwhile, row E1b2g7d3b4h2)
-        if self.reset.is_some() {
-            self.reset_tick(dt);
-            return;
-        }
         // `Boarder_PlaceAt`'s ray under the last placement: on a hit the rider stands at the hit point, and the board
         // and its normal (+0x2a0, +0x2c0) are tipped to the hit's normal (else the port's drop from 1 m, flat)
         if let Some((at, heading)) = self.place_ray.take() {
@@ -1329,214 +1359,128 @@ impl Rider {
                 self.att = Some((orient::placed_attitude(heading, Some(n)), self.yaw));
             }
         }
-        // `cBoarder::vf7` 0x117198, before the tick's motion: the body's height eases toward the surface's (row G16)
-        self.body_height = crate::pose::ease_body_height(self.body_height, self.motion, crate::surface::SURFACE_TABLE[(self.surface as usize).min(19)][10]);
-        // the lean record moves toward the target the last tick left (`cBoarder::vf7` 0x117198, before the motion),
-        // and is aimed again from this tick's steer and speed at its end (`Boarder_UpdateLeanTargets` 0x129500)
-        self.lean_ease(dt);
-        let on_snow = (self.grounded || self.rail.is_some()) && self.crashed <= 0.0;
-        self.step_tick(world, rails, input, dt);
-        // a take-off from the snow: the air motion's enter (0x108310) predicts the flight on the course
-        // (`AirPredict_AtTakeoff` 0x123b10, its rays `cWorldLine`(0, …, 0)) before `Sfx_OnAirEnter` reads it
-        if on_snow && !self.grounded && self.rail.is_none() && self.crashed <= 0.0 {
-            // (STANDIN without the course's collision, a levels folder: the drawn mesh's ground, as the wipe-out's)
-            {
-                let mut ray = |a: [f32; 4], b: [f32; 4]| match &world.course {
-                    Some(course) => {
-                        let mut q = crate::worldline::WorldLine::new(0.0, a, b, 0);
-                        let (t, h) = course.ray_cast(&mut q, world.showoff, None, &|i| world.course_skips(i));
-                        let h = h.filter(|_| t >= 0.0);
-                        (t, crate::air::RayHit { point: h.as_ref().map_or([0.0; 4], |h| h.pos), normal: h.as_ref().map_or([0.0; 4], |h| h.normal), word: h.as_ref().map_or(0, |h| h.surface as u32) })
-                    }
-                    None => {
-                        let (t, o) = wipeout::mesh_line(world, a, b);
-                        (t, crate::air::RayHit { point: o.pos, normal: o.normal, word: o.x30[1] })
-                    }
-                };
-                let p = crate::air::predict_at_takeoff(ground_tick::to_game(self.pos, 100.0, 1.0), ground_tick::to_game(self.vel, 100.0, 0.0), ground_tick::game_dir(self.normal), &mut ray);
-                self.land_time = p.t_land;
-                (self.land_word, self.land_normal) = (p.word, p.normal);
-                self.takeoffs = self.takeoffs.wrapping_add(1);
-                // `AirMotion_Enter` 0x108310 → `Sfx_OnAirEnter` 0x2174f8, kind: the control state +0x428 is 0xd (natural
-                // air) as the motion is entered. `Boarder_SetMotion` 0x11f610 enters it at once, so a take-off
-                // (`Boarder_TakeOff` 0x128470, `JumpControl_Update`) has not yet set its 0xd: kind 1 only when the state
-                // still was 0xd, a rider back on the snow whose control had not yet left the air's
-                let kind = (self.ctl == control_tick::NATURAL_AIR) as u32;
-                self.speech.push(RiderSpeech::AirEnter { kind, air: self.land_time, up: self.vel.y * 100.0 });
-                if self.ctl == control_tick::SPIN {
-                    self.spin_enter_game();
-                }
-            }
-        }
-        // the wipe-out runs these a game tick at a time itself
-        if self.crashed <= 0.0 && impact_tick(&mut self.impact, &mut self.impact_n, &mut self.knocks, dt * 60.0) {
-            self.request_reset(Some(1));
-        }
-        self.lean_aim();
-    }
-    fn step_tick(&mut self, world: &CollisionWorld, rails: &Rails, input: Input, dt: f32) {
-        let mut input = input;
-        self.score_ticks(dt);
-        self.trick_timer = (self.trick_timer - dt).max(0.0);
-        self.hard_land = (self.hard_land - dt).max(0.0);
-        self.stumble = (self.stumble - dt).max(0.0);
-        self.speed_timer = (self.speed_timer - dt).max(0.0);
-        self.spin_timer = (self.spin_timer - dt).max(0.0);
-        if let Some((c, t)) = self.recover { self.recover = if t + dt < wipeout::clip_frames(c, self.stats.kind) / 30.0 { Some((c, t + dt)) } else { None }; }
-        if self.crashed > 0.0 {
-            self.wipe_step(world, dt);
-            if self.crashed > 0.0 && self.reset.is_none() {
-                self.wipeout_control(&input);
-                if let Some(flag) = self.reset_req.take() {
-                    self.request_reset(flag);
-                    return;
-                }
-            }
-            self.input = Input::default();
-            return;
-        }
-        if self.stumble > 0.0 { input.jump = false; input.tuck = false; input.boost = false; }
-        self.shove = (self.shove - dt).max(0.0);
-        if self.taunt >= 0.0 { self.taunt += dt; if self.taunt > 2.0 || self.crashed > 0.0 || !self.grounded { self.taunt = -1.0; } }
-        if self.hard_land > 0.0 { input.jump = false; input.tuck = false; }
-        self.input = input;
-        self.boosting = false;
-        self.rail_cooldown = (self.rail_cooldown - dt).max(0.0);
-
-        // ---- the records (`cBoarder::vf7` 0x117198): eased toward what the control state set last tick (rows G1i1,
-        // G1i2a, G1i2b: `control_tick`)
-        let sped = self.speed_timer > 0.0;
-        self.ease_records();
-        if self.rail.is_none() && !self.grounded {
-            self.boost_lvl = 0.0;
-            if matches!(
-                self.ctl,
-                control_tick::CRUISE | control_tick::PREWIND | control_tick::JUMP | control_tick::LAND_NORMAL | control_tick::LAND_HARD | control_tick::RAIL
-            ) {
-                self.set_control(control_tick::NATURAL_AIR);
-            }
-        }
-
-        // ---- grinding a rail
-        if self.rail.is_some() {
-            match &world.course {
-                Some(course) if self.rail_grid => self.rail_step_grid(course, input, dt),
-                _ => self.rail_step(rails, input, dt),
-            }
-            return;
-        }
-
-        let mut jumped = false;
-        // the snow under the rider was handled by the ground tick (walls and probe included)
-        let mut handled = false;
-        let mut p = self.pos;
-        if self.grounded {
-            // ---- riding: the game's own ground tick, `GroundMotion_Update` 0x10a0d8 with its forces
-            // (`Boarder_GroundSpringForce` 0x109878, `Boarder_GroundThrust` 0x109950, `Boarder_ForwardDrag` 0x109cb8,
-            // `Boarder_SideFriction` 0x109ef8), the board's yaw, the walls and the ground probe: cm, z up, in
-            // `ground_tick.rs` (row E8k)
-            // the spring band follows the surface (SurfaceTable rows [7] [8]), easing at 1 m/s
-            let band = SURF_BAND[(self.surface as usize).min(19)];
-            self.band.0 += (band.0 - self.band.0).clamp(-dt, dt);
-            self.band.1 += (band.1 - self.band.1).clamp(-dt, dt);
-            // the boost level the control state left (`Boarder_UpdateBoost`, which also drains the meter), or a
-            // speed-boost pickup's
-            let lvl = if sped { 1.0 } else { self.boost_lvl };
-            self.boosting = 0.0 < lvl;
-            let left = self.ground_tick(world, dt, lvl);
-            handled = true;
-            p = self.pos;
-            if left {
-                // off the snow (`Boarder_TakeOff` ran inside the tick): natural air (0xd) settles before spin (0x10)
-                let c = self.charge;
-                self.take_off();
-                self.set_control(control_tick::NATURAL_AIR);
-                self.charge = c;
-            } else {
-                let n = self.normal;
-                let f = self.forward();
-                // the control state's update after the motion (row G1i1): the jump when the crouch has unwound
-                let jump = self.ground_control(&input);
-                // the control's `Boarder_RequestReset` (the reset button, or off the course: surface 0)
-                if let Some(flag) = self.reset_req.take() {
-                    self.request_reset(flag);
-                    return;
-                }
-                if jump {
-                    let c = self.jump_c;
-                    let steep = self.apply_jump(c, n, f, self.board_up(), false);
-                    self.jump_c = 0.0;
-                    self.take_off();
-                    self.begin_chain(0, steep);
-                    jumped = true;
-                }
-                // the speed limit (vf7): up at once with a boost, back down slowly afterwards
-                // the boosting cap goes by the meter left (vf7), the speed-boost pickup by its own timer
-                let m = self.boost;
-                let target = if sped || (self.boosting && (m > 0.66599226 || self.tricky())) { BOOST_CAPS[2] } else if self.boosting && m > 0.33362994 { BOOST_CAPS[1] } else if self.boosting && m > 0.0 { BOOST_CAPS[0] } else { SPEED_CAP };
-                self.cap = target.max(self.cap - CAP_DECAY * dt);
-                let s = self.vel.length();
-                if s > self.cap { self.vel *= self.cap / s; }
-            }
+        // Reconcile `motion` (+0x424) with any direct host/test mutation of `reset`, `crashed`, `rail`, `grounded`
+        let resetting = self.reset.is_some();
+        let expected_motion = if resetting {
+            4
+        } else if self.crashed > 0.0 {
+            if self.motion == 6 { 6 } else { 5 }
+        } else if self.rail.is_some() {
+            3
+        } else if self.grounded {
+            2
         } else {
-            // ---- in the air (Air_IntegrateRK4 ballistics, SpinState_Update rotation)
-            // the game's own step (checked bit for bit), in its cm and z up
-            let (mut gp, mut gv) = ([p.x * 100.0, p.z * 100.0, p.y * 100.0, 1.0], [self.vel.x * 100.0, self.vel.z * 100.0, self.vel.y * 100.0, 0.0]);
-            crate::air::integrate_rk4(dt, &mut gp, &mut gv, false);
-            p = Vec3::new(gp[0], gp[2], gp[1]) / 100.0;
-            self.vel = Vec3::new(gv[0], gv[2], gv[1]) / 100.0;
-            self.air_time += dt;
-            if !input.jump && self.air_time < 0.15 && (self.charge > 0.0 || self.jump_c > 0.0) {
-                let c = if self.jump_c > 0.0 { self.jump_c } else { self.charge };
-                if self.jump_c <= 0.0 { self.release_windup(); }
-                let n = self.normal;
-                let f = self.forward();
-                let steep = self.apply_jump(c, n, f, self.board_up(), false);
-                self.jump_c = 0.0;
-                self.jump_delay = 0.0;
-                self.take_off();
-                self.set_control(control_tick::SPIN);
-                self.begin_chain(0, steep);
-                jumped = true;
-            }
-            if self.ctl == control_tick::NATURAL_AIR {
-                self.natural_air_control(&input);
-                if let Some(flag) = self.reset_req.take() {
-                    self.request_reset(flag);
-                    return;
-                }
-            } else if self.spin_st.is_some() {
-                self.spin_tick(&input, dt);
-                if let Some(flag) = self.reset_req.take() {
-                    self.request_reset(flag);
-                    return;
-                }
-            } else {
-                self.air_rotation(&input, dt);
-                self.air_grabs(&input, dt);
-            }
-            // the landing alignment of a spin or flip is `SpinState_Update`'s (G20c3c2, G1a5b3b): until then only a jump
-            // or a drop without either keeps the game's attitude (G20c3c, G20c3b)
-            if self.spin_st.is_none() {
-                if self.spin != 0.0 || self.flip != 0.0 { self.att = None; }
-                // `SpinState_Update` 0x100908: the spin (rider+0x1d0, mirrored for stats+0x40) and flip in degrees
-                let m = if self.data.goofy { -1.0 } else { 1.0 };
-                self.sc.update_spin((-(self.spin - self.spin_base) * m * 57.295776) as i32);
-                self.sc.update_flip(((self.flip - self.flip_base) * 57.295776) as i32);
-            }
-            if input.jump { self.charge = self.crouch_v; }
+            1
+        };
+        if self.motion != expected_motion {
+            self.motion = expected_motion;
         }
+        let mut ctl_input = input;
+        if !resetting {
+            self.trick_timer = (self.trick_timer - dt).max(0.0);
+            self.hard_land = (self.hard_land - dt).max(0.0);
+            self.stumble = (self.stumble - dt).max(0.0);
+            if let Some((c, t)) = self.recover {
+                self.recover = if t + dt < wipeout::clip_frames(c, self.stats.kind) / 30.0 { Some((c, t + dt)) } else { None };
+            }
+            if self.crashed <= 0.0 {
+                if self.stumble > 0.0 { ctl_input.jump = false; ctl_input.tuck = false; ctl_input.boost = false; }
+                self.shove = (self.shove - dt).max(0.0);
+                if self.taunt >= 0.0 { self.taunt += dt; if self.taunt > 2.0 || !self.grounded { self.taunt = -1.0; } }
+                if self.hard_land > 0.0 { ctl_input.jump = false; ctl_input.tuck = false; }
+                self.input = ctl_input;
+                self.boosting = false;
+                self.rail_cooldown = (self.rail_cooldown - dt).max(0.0);
+            }
+        }
+        vf7::tick(self, world, rails, input, ctl_input, dt, resetting);
+        if !resetting && self.reset.is_none() {
+            self.boost_was = input.boost;
+            if self.grounded && self.crashed <= 0.0 && self.vel.length() > 3.0 {
+                self.safe_timer += dt;
+                if self.safe_timer > 1.5 && !self.safe_external && self.surface != 0 {
+                    self.safe = (self.pos, self.yaw);
+                    self.safe_heading = None;
+                    self.safe_timer = 0.0;
+                }
+            }
+            // STANDIN: nine seconds in the air on a levels folder, or (row E9b2) into one of the out-of-bounds boxes
+            // for the trigger scripts' op 13 (`TriggerScript_ExecOp` 0x13bfd0 at 0x13c3b4: +0x304 = 1,
+            // `Boarder_RequestReset`). The world-floor reset itself runs inside `boarder_tick::boarder_tick`.
+            if (world.course.is_none() && !self.grounded && self.crashed <= 0.0 && self.rail.is_none() && self.air_time > 9.0)
+                || (self.rail.is_none() && world.in_reset(self.pos + Vec3::Y * 0.8, BODY_RADIUS))
+            {
+                self.request_reset(Some(1));
+            }
+        }
+    }
 
-        // The air tick's order is `AirMotion_Update`'s 0x108378 (row E8o, proven): the integration, then the down ray
-        // (0x108554) that decides the landing, and only a rider not put down by it goes on to `Rail_TryCapture`
-        // (0x1089f0), `Boarder_InstanceCollisions` (0x1089f8) and the wall ray (0x108a2c); a landed tick has no capture
-        // and no air wall. So here: landing, then the rail, then the walls (below). The speed is the one going in.
+    /// `Boarder_UpdateMotion` 0x11c770: dispatches on `rider+0x424` (`self.motion`):
+    /// 1 `AirMotion_Update` 0x108378, 2 `GroundMotion_Update` 0x10a0d8, 3 `RailSlideMotion_Update` 0x10b0d0,
+    /// 4 stationary/reset (0x10afe0), 5 `WipeoutMotion_Update` 0x10c2f0, 6 `GetUpMotion_Update` 0x1102c8.
+    pub(super) fn motion_update(&mut self, world: &CollisionWorld, rails: &Rails, input: Input, dt: f32) {
+        match self.motion {
+            1 => self.air_motion_update(world, rails, input, dt),
+            2 => {
+                let lvl = if self.speed_timer > 0.0 { 1.0 } else { self.boost_lvl };
+                self.boosting = 0.0 < lvl;
+                let left = self.ground_tick(world, dt, lvl);
+                if left {
+                    // off the snow (`Boarder_TakeOff` ran inside the tick): `AirMotion_Enter` then `NATURAL_AIR` (0xd)
+                    let c = self.charge;
+                    let kind = (self.ctl == control_tick::NATURAL_AIR) as u32;
+                    self.take_off();
+                    self.air_enter(world, kind);
+                    self.set_control(control_tick::NATURAL_AIR);
+                    self.charge = c;
+                } else if self.grounded && self.crashed <= 0.0 && self.rail.is_none() {
+                    // surface 6 (bounce / unskiable) and 10 (wall) put the rider down
+                    match self.surface {
+                        6 | 10 if self.tube_class == u8::MAX => { self.cause = "surface"; self.crash_kind = 0; self.wipe_out(); }
+                        _ => {}
+                    }
+                }
+            }
+            3 => match &world.course {
+                Some(course) if self.rail_grid => self.rail_motion_grid(world, course, dt),
+                _ => self.rail_motion_poly(world, rails, dt),
+            },
+            4 => {}
+            5 | 6 => self.wipe_step(world, dt),
+            _ => {}
+        }
+    }
+
+    /// `AirMotion_Update` 0x108378: RK4 integration, down ray & landing, `Rail_TryCapture` (0x1089f0), and air walls
+    /// (`Boarder_InstanceCollisions` 0x1089f8 + wall ray 0x108a2c).
+    fn air_motion_update(&mut self, world: &CollisionWorld, rails: &Rails, input: Input, dt: f32) {
+        self.boost_lvl = 0.0;
+        self.boosting = false;
+        let mut p = self.pos;
+        let (mut gp, mut gv) = ([p.x * 100.0, p.z * 100.0, p.y * 100.0, 1.0], [self.vel.x * 100.0, self.vel.z * 100.0, self.vel.y * 100.0, 0.0]);
+        crate::air::integrate_rk4(dt, &mut gp, &mut gv, false);
+        p = Vec3::new(gp[0], gp[2], gp[1]) / 100.0;
+        self.vel = Vec3::new(gv[0], gv[2], gv[1]) / 100.0;
+        self.air_time += dt;
+        let mut jumped = false;
+        if !input.jump && self.air_time < 0.15 && (self.charge > 0.0 || self.jump_c > 0.0) {
+            let c = if self.jump_c > 0.0 { self.jump_c } else { self.charge };
+            if self.jump_c <= 0.0 { self.release_windup(); }
+            let n = self.normal;
+            let f = self.forward();
+            let steep = self.apply_jump(c, n, f, self.board_up(), false);
+            self.jump_c = 0.0;
+            self.jump_delay = 0.0;
+            self.take_off();
+            self.begin_chain(0, steep);
+            self.air_enter(world, 0);
+            self.set_control(control_tick::SPIN);
+            self.spin_enter_game();
+            jumped = true;
+        }
+        // `AirMotion_Update` 0x108378 order (row E8o): integration -> down ray (landing) -> rail capture -> air walls
         let s = self.vel.length();
-        if handled {
-            // the ground tick did the probe (and the walls)
-        } else if !jumped {
-            // landing: the game's down ray and probe on the course's collision (`Rider::course_landing`); without it
-            // (a folder level) STANDIN: snow at or above our feet, and moving into it
+        if !jumped {
             let found = if world.course.is_some() {
                 self.course_landing(world, &mut p)
             } else {
@@ -1545,68 +1489,65 @@ impl Rider {
             if let Some(hit) = found {
                 let vn = self.vel.dot(hit.normal);
                 let v_in = self.vel;
-                {
-                    p.y = hit.y;
-                    let impact = vn;
-                    self.vel -= hit.normal * vn.min(0.0);
-                    // the fall becomes speed along the slope
-                    let after = self.vel.length();
-                    if after > 0.5 { self.vel *= s.min(self.cap.max(SPEED_CAP)) / after; }
-                    self.normal = hit.normal;
-                    self.surface = hit.surface;
-                    self.height = 0.0;
-                    self.grounded = true;
-                    let mut down = false;
-                    if self.air_time > 0.15 {
-                        // on the course with the attitude kept through the air: the game's own landing (row G20c3)
-                        match self.att.filter(|_| world.course.is_some()) {
-                            Some((o, _)) => down = !self.land_as_game(o, v_in, hit.normal, hit.surface, impact),
-                            None => {
-                                self.touch_down();
-                                // a hard landing: too nose-down or too fast into the snow
-                                let tau = std::f32::consts::TAU;
-                                let r = self.flip - tau * (self.flip / tau).round();
-                                if r < -std::f32::consts::FRAC_PI_4 || impact < -27.77 { self.hard_land = 0.5; }
-                            }
+                p.y = hit.y;
+                let impact = vn;
+                self.vel -= hit.normal * vn.min(0.0);
+                // the fall becomes speed along the slope
+                let after = self.vel.length();
+                if after > 0.5 { self.vel *= s.min(self.cap.max(SPEED_CAP)) / after; }
+                self.normal = hit.normal;
+                self.surface = hit.surface;
+                self.height = 0.0;
+                self.grounded = true;
+                let mut down = false;
+                let mut chose_state = false;
+                if self.air_time > 0.15 {
+                    match self.att.filter(|_| world.course.is_some()) {
+                        Some((o, _)) => {
+                            down = !self.land_as_game(o, v_in, hit.normal, hit.surface, impact);
+                            chose_state = true;
+                        }
+                        None => {
+                            self.touch_down();
+                            self.land_normal_ctl.crouch = (impact * 100.0 * -0.000_450_000_02).clamp(0.25, 1.0);
+                            let tau = std::f32::consts::TAU;
+                            let r = self.flip - tau * (self.flip / tau).round();
+                            if r < -std::f32::consts::FRAC_PI_4 || impact < -27.77 { self.hard_land = 0.5; }
                         }
                     }
-                    if !down {
-                        self.land_puffs_vn = Some(impact * 100.0);
-                        self.land(None);
-                        if self.crashed <= 0.0 {
-                            self.set_motion(2);
+                }
+                if !down {
+                    self.land_puffs_vn = Some(impact * 100.0);
+                    self.land(None);
+                    if self.crashed <= 0.0 {
+                        self.set_motion(2);
+                        if !chose_state {
+                            let st = if self.hard_land > 0.0 {
+                                control_tick::LAND_HARD
+                            } else if self.air_time > 0.15 {
+                                control_tick::LAND_NORMAL
+                            } else {
+                                control_tick::CRUISE
+                            };
+                            self.set_control(st);
                         }
-                        self.steer = 0.0;
                     }
+                    self.steer = 0.0;
                 }
             }
         }
         self.pos = p;
-        // the surface underneath: 6 (bounce / unskiable) and 10 (wall) put the rider down (BoarderState3_Ride_Input,
-        // ground motion). (0, out of bounds, is the control state's reset above: `CruiseControl_Update` 0x103050 and
-        // the others ask for one off the course, +0x304 = 1: no charge)
         if self.grounded && self.crashed <= 0.0 && self.rail.is_none() {
             match self.surface {
                 6 | 10 if self.tube_class == u8::MAX => { self.cause = "surface"; self.crash_kind = 0; self.wipe_out(); }
                 _ => {}
             }
         }
-
-        // dropping onto a rail from the air locks the board onto it. Not a rider that was put down (`Rail_TryCapture`
-        // 0x125cb8 is called by `AirMotion_Update` 0x1089f0 and `GroundMotion_Update` 0x10ae78 only, and
-        // `Boarder_Wipeout` 0x11d830 has switched the motion to 5, `Boarder_SetMotion` 0x11f610 being immediate, whose
-        // `WipeoutMotion_Update` 0x10c2f0 never captures, row E8m) and not one the landing probe put down: those never
-        // get here. The air wall comes AFTER the capture (row E8o): a rider over a rail that hits a wall on the same
-        // tick is captured (`Score_LandTrick` for the rail, `rail_kind` set) and then put down by the wall
-        // On the course (row G20c2c1b1) the capture is the game's: `Rail_TryCapture` 0x125cb8 on its rail grid from the
-        // board's frame, every air tick; it decides whether, the rail kind and the velocity. The slide then runs on the
-        // port's polyline of that rail (STANDIN, row G20c2c3).
+        // `Rail_TryCapture` 0x125cb8 (call at 0x1089f0) before air walls (row E8o)
         let game_capture = match &world.course {
             Some(course) if !self.grounded && self.crashed <= 0.0 && !jumped => {
                 let f = self.board_bone_frame();
                 let ci = ground_tick::CaptureIn { vel: ground_tick::to_game(self.vel, 100.0, 0.0), board_pos: f[3], frame: [f[0], f[1], f[2]], blend: self.rail_blend };
-                // (the clip gate as the port keeps it: a grab short of its safe marker or an uber is a clip of type
-                // 0xe without flag 4, row E8n)
                 let gated = self.capture_gated();
                 let rw = course.rails.lock().unwrap_or_else(|e| e.into_inner());
                 Some(ground_tick::rail_try_capture(&rw, &ci, &mut || if gated { 0xe } else { 0 }, &mut || false))
@@ -1653,21 +1594,17 @@ impl Rider {
                 let along = self.vel.dot(tan);
                 if along.abs() > 3.0 && along.abs() > 0.45 * s {
                     self.pos = rp;
-                    // the board keeps the angle it came in at
                     let travel = tan * along.signum();
                     let mut tw = f32::atan2(-travel.x, -travel.z) - self.facing();
                     while tw > std::f32::consts::PI { tw -= std::f32::consts::TAU; }
                     while tw < -std::f32::consts::PI { tw += std::f32::consts::TAU; }
-                    // the original keeps your speed along the rail, and at least 20 km/h of it
                     let along = along.signum() * s.min(along.abs().max(5.56));
                     self.rail = Some((ri, d, along));
                     self.set_motion(3);
                     self.rail_grid = false;
                     self.charge = 0.0;
-                    // `Rail_TryCapture`: how the board sits on the rail (STANDIN: the angle's sign as ours)
                     let deg30 = 0.5235988;
                     self.rail_kind = if tw.abs() > 2.6179938 { 2 } else if tw < -deg30 { 4 } else if tw > deg30 { 3 } else { 1 };
-                    // `RailSlideMotion_Enter` 0x10b068: the lean angle starts at zero
                     self.rail_lean = 0.0;
                     self.land(Some(self.rail_kind));
                     self.set_control(control_tick::RAIL);
@@ -1687,13 +1624,8 @@ impl Rider {
                 }
             }
         }
-
-        // the air's walls, last (`Boarder_InstanceCollisions` 0x1089f8, then the wall ray 0x108a2c with its glance or
-        // `Boarder_Wipeout`): a sphere around the body, from where the capture left it. `AirMotion_Update` never calls
-        // `Boarder_WallCollide` 0x126250 (its callers are the ground, rail, get-up and wipe-out motions): the bounce
-        // branch of `walls` has no original in the air (row E8o, new gap). Not after a landing (grounded: the next tick's
-        // ground tick has the walls) and not for a rider already down.
-        if !handled && !self.grounded && self.crashed <= 0.0 {
+        // `Boarder_InstanceCollisions` 0x1089f8 + wall ray 0x108a2c (after rail capture, skipped when landed/crashed)
+        if !self.grounded && self.crashed <= 0.0 {
             match &world.course {
                 Some(course) => self.air_wall(world, course),
                 None => {
@@ -1703,18 +1635,88 @@ impl Rider {
                 }
             }
         }
+    }
 
-        self.boost_was = input.boost;
-        // remember somewhere sane to come back to, and come back if we fall out of the world
-        if self.grounded && s > 3.0 {
-            self.safe_timer += dt;
-            if self.safe_timer > 1.5 && !self.safe_external && self.surface != 0 { self.safe = (self.pos, self.yaw); self.safe_heading = None; self.safe_timer = 0.0; }
+    /// `Boarder_UpdateControl` 0x11c9a0: dispatches on `rider+0x428` (`self.ctl`):
+    /// `3` cruise, `10` jump, `0xb` hard land, `0xc` normal land, `0xd` natural air, `0xe` prewind, `0xf` rail,
+    /// `0x10` spin, `0x13` wipe-out, `0x14` get-up, `0x16` reset.
+    pub(super) fn control_update(&mut self, world: &CollisionWorld, rails: &Rails, raw_input: Input, ctl_input: Input, dt: f32) {
+        // Reconcile `ctl` (+0x428) if a test/host mutated `reset`/`crashed`/`rail`/`grounded` directly
+        if self.reset.is_some() {
+            if self.ctl != control_tick::RESET {
+                self.set_control(control_tick::RESET);
+            }
+        } else if self.crashed > 0.0 {
+            if !matches!(self.ctl, control_tick::WIPEOUT | control_tick::GET_UP) {
+                self.set_control(control_tick::WIPEOUT);
+            }
+        } else if self.rail.is_some() {
+            if !matches!(self.ctl, control_tick::RAIL | control_tick::PREWIND | control_tick::JUMP) {
+                self.set_control(control_tick::RAIL);
+            }
+        } else if self.grounded {
+            if !matches!(self.ctl, control_tick::CRUISE | control_tick::PREWIND | control_tick::JUMP | control_tick::LAND_NORMAL | control_tick::LAND_HARD) {
+                self.set_control(if ctl_input.jump { control_tick::PREWIND } else { control_tick::CRUISE });
+            }
+        } else if !matches!(self.ctl, control_tick::NATURAL_AIR | control_tick::SPIN) {
+            self.set_control(control_tick::NATURAL_AIR);
         }
-        // out of the world (`cBoarder::vf7`'s floor), or (STANDIN) the port's own nine seconds in the air on a levels
-        // folder, or (STANDIN, row E9b2) into one of the out-of-bounds boxes for the trigger scripts' op 13
-        // (`TriggerScript_ExecOp` 0x13bfd0 at 0x13c3b4: +0x304 = 1, `Boarder_RequestReset`)
-        if self.below_world(world) || (world.course.is_none() && !self.grounded && self.air_time > 9.0) || (self.rail.is_none() && world.in_reset(self.pos + Vec3::Y * 0.8, BODY_RADIUS)) {
-            self.request_reset(Some(1));
+
+        match self.ctl {
+            control_tick::RESET => self.reset_tick(dt),
+            control_tick::WIPEOUT | control_tick::GET_UP => {
+                self.wipeout_control(&raw_input);
+                if let Some(flag) = self.reset_req.take() {
+                    self.request_reset(flag);
+                }
+                self.input = Input::default();
+            }
+            control_tick::RAIL => self.rail_control_step(world, rails, &ctl_input, dt),
+            control_tick::PREWIND | control_tick::JUMP if self.rail.is_some() => self.rail_control_step(world, rails, &ctl_input, dt),
+            control_tick::CRUISE | control_tick::PREWIND | control_tick::JUMP | control_tick::LAND_NORMAL | control_tick::LAND_HARD => {
+                let n = self.normal;
+                let f = self.forward();
+                let jump = self.ground_control(&ctl_input);
+                if let Some(flag) = self.reset_req.take() {
+                    self.request_reset(flag);
+                    return;
+                }
+                if jump {
+                    let c = self.jump_c;
+                    let steep = self.apply_jump(c, n, f, self.board_up(), false);
+                    self.jump_c = 0.0;
+                    self.take_off();
+                    self.begin_chain(0, steep);
+                    self.air_enter(world, 0);
+                    self.spin_enter_game();
+                }
+            }
+            control_tick::NATURAL_AIR => {
+                self.natural_air_control(&ctl_input);
+                if let Some(flag) = self.reset_req.take() {
+                    self.request_reset(flag);
+                    return;
+                }
+                if ctl_input.jump { self.charge = self.crouch_v; }
+            }
+            control_tick::SPIN => {
+                if self.spin_st.is_some() {
+                    self.spin_tick(&ctl_input, dt);
+                    if let Some(flag) = self.reset_req.take() {
+                        self.request_reset(flag);
+                        return;
+                    }
+                } else {
+                    self.air_rotation(&ctl_input, dt);
+                    self.air_grabs(&ctl_input, dt);
+                    if self.spin != 0.0 || self.flip != 0.0 { self.att = None; }
+                    let m = if self.data.goofy { -1.0 } else { 1.0 };
+                    self.sc.update_spin((-(self.spin - self.spin_base) * m * 57.295776) as i32);
+                    self.sc.update_flip(((self.flip - self.flip_base) * 57.295776) as i32);
+                }
+                if ctl_input.jump { self.charge = self.crouch_v; }
+            }
+            _ => {}
         }
     }
 
@@ -2046,14 +2048,18 @@ impl Rider {
                 _ => {}
             }
         }
-        let mut o2 = o;
-        o2.q = r.quat;
-        orient::update_orientation(&mut o2);
         self.spin = r.spin;
         self.flip = r.flip;
         self.yaw -= self.spin - before;
         self.flip_dir = if st.w_flip.abs() > 0.05 { st.w_flip.signum() } else { 0.0 };
-        self.att = Some((o2, self.yaw));
+        if r.quat != o.q || self.spin != before {
+            let mut o2 = o;
+            o2.q = r.quat;
+            if r.quat != o.q {
+                orient::update_orientation(&mut o2);
+            }
+            self.att = Some((o2, self.yaw));
+        }
         self.spin_st = Some(st);
         // (the AI driver plans with the port's axes: theirs mirror the spin object's rates and bands)
         (self.spin_ax.w, self.spin_ax.hi, self.spin_ax.lo, self.spin_ax.floor) = (st.w_spin, st.spin_hi, st.spin_lo, st.spin_floor);
@@ -2174,11 +2180,9 @@ impl Rider {
     /// off one side unless you lean against it, and too far off you fall off (not a crash). Boost
     /// held with left / right turns the board a quarter turn (regular, sideways, fakie). There is
     /// no friction and no speed limit: a slow rider on an uphill rail rolls back.
-    /// A rail tick on the course's grid (rows G20c2c3, G1i2b): `RailSlideMotion_Update` 0x10b0d0 itself
-    /// ([`ground_tick::rail_slide_motion`]) followed by `RailSlideControl_Update` 0x1073e0 / `PrewindState_Update`
-    /// 0x1050e8 / `JumpControl_Update` 0x1046b0 ([`Rider::rail_control`]).
-    pub fn rail_step_grid(&mut self, course: &crate::course_ground::CourseGround, input: Input, dt: f32) {
-        use std::f32::consts::FRAC_PI_2 as Q;
+    /// `RailSlideMotion_Update` 0x10b0d0 on the course's rail grid (rows G20c2c3, G1i2c): motion half only; control
+    /// runs after `speed_limit` in [`Rider::rail_control_step`].
+    fn rail_motion_grid(&mut self, world: &CollisionWorld, course: &crate::course_ground::CourseGround, dt: f32) {
         let Some((ri, d, _)) = self.rail else { return };
         let o = match &self.att {
             Some((o, _)) => *o,
@@ -2186,7 +2190,6 @@ impl Rider {
         };
         let push = if self.speed_timer > 0.0 { 1.0 } else { self.boost_lvl };
         self.boosting = 0.0 < push;
-        self.boost_was = input.boost;
         let f = self.board_bone_frame();
         let mut m = ground_tick::RailMotion {
             pos: ground_tick::to_game(self.pos, 100.0, 1.0),
@@ -2219,43 +2222,15 @@ impl Rider {
         self.grounded = false;
         self.air_time = 0.0;
         self.grind_time += dt;
-        let hop = if end == ground_tick::RailEnd::OnRail {
-            let h = self.rail_control(&input, dt);
-            if let Some(flag) = self.reset_req.take() {
-                self.request_reset(flag);
-                return;
-            }
-            h
-        } else {
-            false
-        };
-        let turn = (self.rail_goal - self.rail_twist).clamp(-RAIL_TWIST * dt, RAIL_TWIST * dt);
-        self.rail_twist += turn;
-        self.rail_spun += turn.abs();
-        self.rail_side_signed += self.rail_twist.sin() * dt;
-        if self.rail_twist.sin().abs() > 0.7 { self.rail_side += dt; }
-        // the board's heading (+0x1b0) as the port's yaw, the quarter turn on top for the drawn body
-        self.yaw = wrap(m.orient.yaw - Q - self.rail_twist);
-        if let Some(a) = &mut self.att { a.1 = self.yaw; }
-        if hop || end == ground_tick::RailEnd::TakeOff {
-            if hop {
-                // `Jump_ApplyImpulse` on a rail along the board's up as the motion left it
-                let c = self.jump_c;
-                let up = ground_tick::port_dir(m.orient.up);
-                self.apply_jump(c, self.normal, self.forward(), up, true);
-                self.jump_c = 0.0;
-            } else {
-                self.rec.steer = [m.steer, m.x218, m.x21c];
-                self.steer = -m.steer;
-            }
+        if end == ground_tick::RailEnd::TakeOff {
+            self.rec.steer = [m.steer, m.x218, m.x21c];
+            self.steer = -m.steer;
             let fakie = self.rail_twist.cos() < -0.5;
+            let kind = (self.ctl == control_tick::NATURAL_AIR) as u32;
             self.take_off();
             if fakie { self.switch_takeoff = true; self.set_switch(true); }
-            if hop {
-                self.spin_enter_game();
-            } else {
-                self.set_control(control_tick::NATURAL_AIR);
-            }
+            self.air_enter(world, kind);
+            self.set_control(control_tick::NATURAL_AIR);
             self.rail = None;
             self.rail_grid = false;
             self.rail_cooldown = 0.45;
@@ -2266,12 +2241,13 @@ impl Rider {
         }
     }
 
-    pub fn rail_step(&mut self, rails: &Rails, input: Input, dt: f32) {
+    /// Polyline fallback for `RailSlideMotion_Update` 0x10b0d0 (motion half only; control runs in
+    /// [`Rider::rail_control_step`]).
+    fn rail_motion_poly(&mut self, world: &CollisionWorld, rails: &Rails, dt: f32) {
         let Some((ri, mut d, mut s)) = self.rail else { return };
         self.rail_time += dt;
         let rail = &rails.0[ri];
         let (_, tan) = rail.at(d);
-        // `RailSlideMotion_Update` 0x10b0d0 reads the tangent where the board is now, and the balance offset before it moves
         let travel0 = tan * if s >= 0.0 { 1.0 } else { -1.0 };
         let board_up = ground_tick::game_dir(self.normal); // STANDIN for the board's up (+0x1a0) and, with `rail_lateral`, the closest point and the board's right (+0x190): rows G20c2c1, G20c2c3
         let lateral = ground_tick::rail_lateral(travel0, board_up, self.rail_off);
@@ -2281,13 +2257,11 @@ impl Rider {
         if push > 0.0 {
             s += s.signum() * 24.508232 * push * dt;
         }
-        self.boost_was = input.boost;
         d += s * dt;
         let (p, tan) = rail.at(d);
         let travel = tan * if s >= 0.0 { 1.0 } else { -1.0 };
         let left = Vec3::Y.cross(travel).normalize_or(Vec3::X);
 
-        // balance: off > 0 is to the left of the rail; steering right pushes back to the left... of centre
         let v = s.abs();
         let g = if v < 5.5556 { 0.5 } else { 0.09 * v };
         let gc = g.clamp(0.5, 2.0);
@@ -2299,60 +2273,85 @@ impl Rider {
 
         self.pos = p + left * self.rail_off;
         self.vel = tan * s;
-        // the normal and its lean angle as `RailSlideMotion_Update` 0x10b0d0 writes them (+0x2a0, object +8)
         self.rail_lean = ground_tick::rail_lean_angle(self.rail_lean, lateral, self.rail_kind, board_up[2]);
         self.normal = ground_tick::port_dir(ground_tick::rail_normal(ground_tick::game_dir(travel0), board_up, self.rail_lean));
         self.grounded = false;
         self.air_time = 0.0;
         self.grind_time += dt;
 
-        // falling off: the allowed offset narrows after the first 0.6 s, wider for slides
         let w = if self.rail_time < 0.6 { 1.0 } else { (1.0 - (self.rail_time - 0.6) * 1.6667).max(0.0) };
         let slide = self.rail_twist.sin().abs() > 0.7;
         let limit = if slide { 1.5 * w + 0.8 * (1.0 - w) } else { 0.5 * w + 0.3 * (1.0 - w) };
         let fell = self.rail_off.abs() > limit;
-        let hop = if !fell && d > 0.0 && d < rail.len() {
-            let h = self.rail_control(&input, dt);
-            if let Some(flag) = self.reset_req.take() {
-                self.request_reset(flag);
-                return;
-            }
-            h
-        } else {
-            false
-        };
-        let turn = (self.rail_goal - self.rail_twist).clamp(-RAIL_TWIST * dt, RAIL_TWIST * dt);
-        self.rail_twist += turn;
-        self.rail_spun += turn.abs();
-        self.rail_side_signed += self.rail_twist.sin() * dt;
-        if self.rail_twist.sin().abs() > 0.7 { self.rail_side += dt; }
-        self.yaw = f32::atan2(-travel.x, -travel.z) - self.rail_twist;
-
-        if hop || fell || d <= 0.0 || d >= rail.len() {
-            if hop {
-                // Jump_ApplyImpulse on a rail: straight along the board's up, which the balance
-                // offset tips about the rail (50-50: 0.01162 rad per cm, slides: 0.008725 rad per cm)
-                let c = self.jump_c;
-                let phi = (self.rail_off * 100.0 * if slide { 0.698 * 0.0125 } else { 0.349 * 0.0333 }).clamp(-0.8, 0.8);
-                let up = Vec3::Y * phi.cos() + left * self.rail_off.signum() * phi.abs().sin();
-                self.apply_jump(c, self.normal, self.forward(), up, true);
-                self.jump_c = 0.0;
-            }
+        if fell || d <= 0.0 || d >= rail.len() {
             if fell { self.vel += left * self.rail_off.signum() * 2.778; }
-            // leaving fakie (or switch) gives the next air trick the switch bonus
             let fakie = self.rail_twist.cos() < -0.5;
+            let kind = (self.ctl == control_tick::NATURAL_AIR) as u32;
             self.take_off();
             if fakie { self.switch_takeoff = true; self.set_switch(true); }
-            if hop {
-                self.spin_enter_game();
-            } else {
-                self.set_control(control_tick::NATURAL_AIR);
-            }
+            self.air_enter(world, kind);
+            self.set_control(control_tick::NATURAL_AIR);
             self.rail = None;
             self.rail_cooldown = 0.45;
             self.end_grind();
         } else {
             self.rail = Some((ri, d, s));
+        }
+    }
+
+    /// `Boarder_UpdateControl` 0x11c9a0 on a rail (`RailSlideControl_Update` 0x1073e0, `PrewindState_Update` 0x1050e8,
+    /// `JumpControl_Update` 0x1046b0), after `cBoarder::vf7`'s speed limit.
+    fn rail_control_step(&mut self, world: &CollisionWorld, rails: &Rails, input: &Input, dt: f32) {
+        use std::f32::consts::FRAC_PI_2 as Q;
+        let Some((ri, d, s)) = self.rail else { return };
+        let hop = self.rail_control(input, dt);
+        if let Some(flag) = self.reset_req.take() {
+            self.request_reset(flag);
+            return;
+        }
+        if self.rail_time > 0.0 {
+            let turn = (self.rail_goal - self.rail_twist).clamp(-RAIL_TWIST * dt, RAIL_TWIST * dt);
+            self.rail_twist += turn;
+            self.rail_spun += turn.abs();
+            self.rail_side_signed += self.rail_twist.sin() * dt;
+            if self.rail_twist.sin().abs() > 0.7 { self.rail_side += dt; }
+            if self.rail_grid {
+                if let Some((o, _)) = self.att {
+                    self.yaw = wrap(o.yaw - Q - self.rail_twist);
+                    if let Some(a) = &mut self.att { a.1 = self.yaw; }
+                }
+            } else if let Some(rail) = rails.0.get(ri) {
+                let (_, tan) = rail.at(d);
+                let travel = tan * if s >= 0.0 { 1.0 } else { -1.0 };
+                self.yaw = f32::atan2(-travel.x, -travel.z) - self.rail_twist;
+            }
+        }
+        if hop {
+            let c = self.jump_c;
+            let up = if self.rail_grid {
+                match self.att {
+                    Some((o, _)) => ground_tick::port_dir(o.up),
+                    None => self.board_up(),
+                }
+            } else {
+                let (_, tan) = rails.0[ri].at(d);
+                let travel = tan * if s >= 0.0 { 1.0 } else { -1.0 };
+                let left = Vec3::Y.cross(travel).normalize_or(Vec3::X);
+                let slide = self.rail_twist.sin().abs() > 0.7;
+                let phi = (self.rail_off * 100.0 * if slide { 0.698 * 0.0125 } else { 0.349 * 0.0333 }).clamp(-0.8, 0.8);
+                Vec3::Y * phi.cos() + left * self.rail_off.signum() * phi.abs().sin()
+            };
+            self.apply_jump(c, self.normal, self.forward(), up, true);
+            self.jump_c = 0.0;
+            let fakie = self.rail_twist.cos() < -0.5;
+            self.take_off();
+            if fakie { self.switch_takeoff = true; self.set_switch(true); }
+            self.air_enter(world, 0);
+            self.spin_enter_game();
+            self.rail = None;
+            self.rail_grid = false;
+            self.rail_cooldown = 0.45;
+            self.end_grind();
         }
     }
 

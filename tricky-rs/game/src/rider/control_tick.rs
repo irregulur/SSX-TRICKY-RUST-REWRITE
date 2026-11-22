@@ -21,6 +21,7 @@ use crate::ps2f::F;
 use crate::rail_control::{self, RailCall, RailControl, RailRider};
 
 /// The game's 1/60 s (0x3c888889): what the records move by their rate each tick (`cBoarder::vf7`)
+#[cfg(test)]
 const DT: f32 = f32::from_bits(0x3c88_8889);
 
 /// A now / rate / target record
@@ -48,6 +49,7 @@ pub const RAIL: u32 = 0xf;
 pub const SPIN: u32 = 0x10;
 pub const WIPEOUT: u32 = 0x13;
 pub const GET_UP: u32 = 0x14;
+pub const RESET: u32 = 0x16;
 
 /// Hosted trick-clip controller for `SpinState_UpdateTrickClips` 0x1272e8 and `AnimClip_Advance` 0x15a030 marker
 /// flags (`+0x74` past, `+0x75` crossed this tick) on `TRICK_SLOTS[ch][board]` (0x333098).
@@ -327,7 +329,7 @@ impl ControlEnv for Env<'_> {
 
 impl Rider {
     /// The records' "now" from the port's values (a tick of the port's own code may have changed them)
-    fn records_from_port(&mut self) {
+    pub(super) fn records_from_port(&mut self) {
         self.rec.brake[0] = self.brake_v;
         self.rec.crouch[0] = self.crouch_v;
         self.rec.steer[0] = -self.steer;
@@ -336,7 +338,7 @@ impl Rider {
     }
 
     /// The port's values from the records
-    fn port_from_records(&mut self) {
+    pub(super) fn port_from_records(&mut self) {
         self.brake_v = self.rec.brake[0];
         self.crouch_v = self.rec.crouch[0];
         self.steer = -self.rec.steer[0];
@@ -345,7 +347,8 @@ impl Rider {
     }
 
     /// `cBoarder::vf7` 0x117198 before the motion, on the snow: each record moves its rate × 1/60 toward its target
-    /// (`boarder_tick::ease`)
+    /// (`boarder_tick::ease`). Runtime ticks run this inside `boarder_tick::boarder_tick` (`rider/vf7.rs`).
+    #[cfg(test)]
     pub(super) fn ease_records(&mut self) {
         self.records_from_port();
         for r in [&mut self.rec.brake, &mut self.rec.crouch, &mut self.rec.steer, &mut self.rec.spin, &mut self.rec.flip] {
@@ -539,6 +542,7 @@ impl Rider {
         let ch = RIDERS.iter().position(|r| r.name == self.data.name).unwrap_or(0);
         let board = (self.stats.kind as usize).min(2);
         let rows = &tricky_data::trick_slots::TRICK_SLOTS[ch][board];
+        let was_active = self.trick_ctl.clip_type != 8;
         let mut tc = self.trick_ctl;
 
         if tc.stage == 3 {
@@ -688,7 +692,9 @@ impl Rider {
         };
 
         self.trick_ctl = tc;
-        self.sync_trick_port();
+        if was_active || tc.clip_type != 8 {
+            self.sync_trick_port();
+        }
         ret
     }
 

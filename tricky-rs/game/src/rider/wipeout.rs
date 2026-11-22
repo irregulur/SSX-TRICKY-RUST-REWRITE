@@ -516,11 +516,13 @@ enum Out {
     /// end), with the clip that brings the body back to its base pose (0 for none)
     Air(u16),
     Ride(u16),
-    /// the time-out's reset request (+0x2e4 = 1e6)
-    Reset,
 }
 
 impl Wipe {
+    /// Sync velocity capped by `cBoarder::vf7` 0x117198 back into the ragdoll body.
+    pub(super) fn set_vel(&mut self, vel: V4) {
+        self.rag.vel = vel;
+    }
     /// One game tick of motion 5 or 6.
     fn tick(&mut self, world: &CollisionWorld, last: &mut LastHit, k: f32, lean: f32, kind: u8, who: Who) -> Out {
         let was = self.s.motion;
@@ -566,10 +568,6 @@ impl Wipe {
         // `CollBody_UpdateFromBones` 0x2361b0 on the animated skeleton (row G5)
         self.rag.body = bind_body_at(self.rag.pos, self.wr.fwd, self.rag.up, k);
         self.s.clip_t += TICK;
-        // cBoarder's update (vf7 0x117198) after the motion (the motion's time-out sets +0x2e4 to 1e6)
-        if super::impact_tick(&mut self.wr.stuck, &mut self.s.impact_n, &mut self.s.knocks, 1.0) {
-            return Out::Reset;
-        }
         match now {
             1 => Out::Air(self.s.clip),
             2 => Out::Ride(self.s.clip),
@@ -672,6 +670,7 @@ impl Rider {
         if let Some((near, ahead)) = self.course_pts {
             (w.rag.course, w.wr.course8) = (to_game(near, 100.0, 1.0), to_game(ahead, 100.0, 1.0));
         }
+        (w.wr.stuck, w.s.impact_n, w.s.knocks) = (self.impact, self.impact_n, self.knocks);
         let dbg = std::env::var("TRICKY_WIPEDBG").is_ok();
         w.acc += dt;
         let mut out = Out::Down;
@@ -706,18 +705,8 @@ impl Rider {
             Out::Down => {}
             Out::Air(clip) => return self.end_wipe(clip, false),
             Out::Ride(clip) => return self.end_wipe(clip, true),
-            // `cBoarder::vf7` 0x117198's decays: +0x304 = 1
-            Out::Reset => {
-                self.request_reset(Some(1));
-                return;
-            }
         }
         self.wipe = Some(w);
-        // out of the world (`cBoarder::vf7`'s floor), or (STANDIN, row E9b2) into one of the out-of-bounds boxes for
-        // the trigger scripts' op 13; both +0x304 = 1
-        if self.below_world(world) || world.in_reset(self.pos + Vec3::Y * 0.8, BODY_RADIUS) {
-            self.request_reset(Some(1));
-        }
     }
 
     fn who(&self) -> Who {

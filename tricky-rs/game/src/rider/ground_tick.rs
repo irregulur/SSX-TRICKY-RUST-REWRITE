@@ -807,10 +807,6 @@ impl Rider {
     }
 
     /// The lean value one tick on (`cBoarder::vf7` 0x117198), before the tick's motion.
-    pub(super) fn lean_ease(&mut self, dt: f32) {
-        self.lean[0] = lean_ease(self.lean, dt);
-    }
-
     /// The lean record aimed for the next tick and the rider's up moved toward the normal (`Boarder_UpdateLeanTargets`
     /// 0x129500), after the tick's motion: from the steer as it is now (the game's sign: the port's is the other way),
     /// the velocity in cm/s and the normal the tick ended with.

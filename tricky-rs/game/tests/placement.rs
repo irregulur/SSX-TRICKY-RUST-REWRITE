@@ -383,16 +383,14 @@ fn the_drop_keeps_the_placed_attitude_to_the_landing() {
         r.step(&world, &rails, Input::default(), 1.0 / 60.0);
         assert!(r.att.is_none(), "case {k}");
     }
-    // a spin in the air: not kept
+    // a spin in the air runs `SpinState_Update` 0x100908 (rows G1i2a/G1i2c), which keeps the board's attitude
     let mut r = Rider::new(Vec3::new(0.0, 0.0, -1.0), 0.0);
     r.respawn((Vec3::new(0.0, -0.2, -5.0), 0.3));
-    // a take-off's spin rate (`Takeoff_SetSpinRates` gives it in the game; here the port's axis, started by hand)
-    r.spin_ax = Axis::start(6.0);
     let spin = Input { steer: 1.0, ..Input::default() };
     for _ in 0..10 {
         r.step(&world, &rails, spin, 1.0 / 60.0);
     }
-    assert!(r.spin != 0.0 && r.att.is_none(), "spin {} att {:?}", r.spin, r.att.is_some());
+    assert!(r.spin != 0.0 && r.spin_st.is_some() && r.att.is_some(), "spin {} spin_st {} att {}", r.spin, r.spin_st.is_some(), r.att.is_some());
 }
 
 /// The heading the callers pass is the inline atan2 of the path's direction in the game's space (x, y flat); the port's

@@ -3,7 +3,7 @@
 use glam::Vec3;
 use tricky_game::collide::CollisionWorld;
 use tricky_game::rails::Rails;
-use tricky_game::rider::control_tick::{CRUISE, JUMP, PREWIND, SPIN};
+use tricky_game::rider::control_tick::{CRUISE, JUMP, PREWIND, RESET, SPIN};
 use tricky_game::rider::{Input, Rider};
 
 /// A long slope falling along −z, 20 m wide
@@ -182,4 +182,70 @@ fn off_the_course_the_control_resets_free() {
     assert_eq!(r.respawns, n + 1);
     // (the ticks before it drain a little; the button's charge would be 0.12 scaled by the meter stat)
     assert!(0.49 < r.boost, "{}", r.boost);
+}
+
+/// Row G1i2c: `Rider::step` runs `cBoarder::vf7` 0x117198 (`boarder_tick::boarder_tick`) in the game's exact order:
+/// eases/timers/height/band before motion, `Boarder_UpdateMotion`, speed limit + `Boarder_AddSpeedSample` between
+/// motion and control, `Boarder_UpdateControl`, impact/knocks decays & world-floor reset, `Score_Tick`, and
+/// `Boarder_UpdateLeanTargets` last; reset state (motion 4, state 0x16) runs inside `vf7` too.
+#[test]
+fn rider_step_runs_vf7_order_speed_cap_decays_and_reset_eases() {
+    let world = slope(300.0, 40.0);
+    let rails = Rails::default();
+    let mut r = rider();
+    // settle onto the slope first so the ground motion stays on the snow (motion 2)
+    for _ in 0..30 {
+        r.step(&world, &rails, Input::default(), 1.0 / 60.0);
+    }
+    assert!(r.grounded && r.motion == 2);
+    let samples0 = r.speed_samples;
+    let sum0 = r.speed_sum;
+    r.vel = r.vel.normalize() * 35.0;
+    r.speed_timer = 1.0;
+    r.spin_timer = 2.0;
+    r.body_height = 0.0;
+    let t0 = r.vf7.travelled;
+
+    // 1. Ground tick: `before_motion` decrements timers & eases height/band; `after_motion` caps speed & samples it;
+    //    `Boarder_UpdateLeanTargets` aims lean for the next tick.
+    r.step(&world, &rails, Input { steer: 1.0, ..Input::default() }, 1.0 / 60.0);
+    assert_eq!(r.speed_samples, samples0 + 1.0, "Boarder_AddSpeedSample should record each tick");
+    assert!(r.speed_sum > sum0);
+    assert!(r.vf7.travelled > t0, "vf7 distance along forward should advance");
+    assert!((r.speed_timer - (1.0 - f32::from_bits(0x3c88_8889))).abs() < 1e-6);
+    assert!((r.spin_timer - (2.0 - f32::from_bits(0x3c88_8889))).abs() < 1e-6);
+    // Boost timer > 0 raises speed limit to 3347.2222 cm/s (33.472222 m/s), capping 35 m/s down to it.
+    assert!(r.vel.length() <= 33.48, "vf7 should cap ground speed: {}", r.vel.length());
+
+    // 2. Impact threshold reset (> 4.492007 after * 0.95603746 decay) triggers free reset (+0x304 = 1, motion 4, state 0x16)
+    //    and zeroes `impact`.
+    r.impact = 10.0;
+    r.body_height = 5.0;
+    r.step(&world, &rails, Input::default(), 1.0 / 60.0);
+    assert!(r.reset.is_some(), "impact overflow should trigger vf7 reset");
+    assert_eq!((r.motion, r.ctl, r.reset_flag), (4, RESET, 1));
+    assert_eq!(r.impact, 0.0, "vf7 zeroes impact after requesting reset");
+
+    // 3. During reset (motion 4, state 0x16), vf7 still runs its eases (body_height eases toward 0, timers count down).
+    let h_before = r.body_height;
+    let st_before = r.speed_timer;
+    r.step(&world, &rails, Input::default(), 1.0 / 60.0);
+    assert!(r.body_height < h_before, "body_height should ease toward 0 during reset: {} -> {}", h_before, r.body_height);
+    assert!(r.speed_timer < st_before, "boost timer should count down during reset");
+    assert_eq!(r.motion, 4);
+    assert_eq!(r.ctl, RESET);
+
+    // 4. Air motion (motion 1) is NOT capped to vf7's 2788.84 cm/s ground speed limit.
+    let mut air = Rider::new(Vec3::new(0.0, 200.0, 0.0), 0.0);
+    air.grounded = false;
+    air.vel = Vec3::new(0.0, 0.0, -31.0);
+    air.step(&world, &rails, Input::default(), 1.0 / 60.0);
+    assert!(air.vel.length() > 30.0, "air motion must not be speed-capped to SPEED_CAP by vf7: {}", air.vel.length());
+
+    // 5. World-floor reset runs inside vf7::after_motion (free reset, +0x304 = 1).
+    let mut fell = Rider::new(Vec3::new(0.0, world.min_y - 40.0, 0.0), 0.0);
+    fell.grounded = false;
+    fell.step(&world, &rails, Input::default(), 1.0 / 60.0);
+    assert!(fell.reset.is_some(), "below world floor should trigger vf7 reset");
+    assert_eq!((fell.motion, fell.ctl, fell.reset_flag), (4, RESET, 1));
 }

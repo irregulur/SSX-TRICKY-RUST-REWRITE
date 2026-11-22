@@ -408,13 +408,12 @@ fn the_rebuild_was_not_the_originals_and_a_spin_is_not_kept() {
         if seed_words(&rebuilt.seed_ground()) != game {
             differ += 1;
         }
-        // a spin in the air: not kept
+        // a spin in the air now runs `SpinState_Update` 0x100908 (rows G1i2a/G1i2c), keeping the board's attitude
         let mut spun = r.clone();
-        spun.spin_ax = tricky_game::rider::Axis::start(6.0);
         for _ in 0..10 {
             spun.step(&world, &rails, Input { steer: 1.0, ..Input::default() }, DT);
         }
-        assert!(spun.spin != 0.0 && spun.att.is_none(), "case {cases}: a spin drops the kept attitude");
+        assert!(spun.spin != 0.0 && spun.spin_st.is_some() && spun.att.is_some(), "case {cases}: SpinState_Update spins and keeps the attitude");
         cases += 1;
     }
     assert!(differ > 150, "the rebuilt attitude is not the original's ({differ} of {cases})");

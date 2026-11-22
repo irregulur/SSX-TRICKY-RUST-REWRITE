@@ -1758,3 +1758,37 @@ Proven (`SLUS_203.26`, runner-checked in `tests/boarder.rs` and `tests/control_m
   (`+0x304 = 0`), out-of-bounds (`surface == 0`, `+0x304 = 1`), and get-up clip completion (`0x1ff`/`0x221` -> state
   `3` motion `2`, `0x202` -> state `5` motion `2`). Removes the wipe-out reset stand-in from `Rider::step_tick` and
   the ad-hoc `surface == 0` check from `wipe_step`.
+
+## Unified per-tick dispatch under `cBoarder::vf7` (row G1i2c; `game/src/rider/vf7.rs`, `game/src/rider.rs`, `game/src/rider/control_tick.rs`, `game/src/rider/wipeout.rs`, `game/src/rider/ground_tick.rs`)
+
+Proven (`SLUS_203.26`):
+- **`cBoarder::vf7` 0x117198 (`rider/vf7.rs`, calling runner-checked `boarder_tick::boarder_tick`)**: `Rider::step`
+  now drives every tick (including reset state `0x16` / motion `4`) through `boarder_tick::boarder_tick`, replacing
+  its ad-hoc ordering and duplicate ease / speed-cap / decay / floor-reset blocks:
+  - `before_motion`: advances distance along forward (`+0x164`), eases all 11 ease records (brake `+0x1fc`, crouch
+    `+0x208`, steer `+0x214`, spin/flip wind-ups `+0x220`/`+0x22c`, lean `+0x244`, rail blend `+0x284`), eases body
+    height (`+0x308`), pitch (`+0x168`), surface spring band (`+0x294`/`+0x298`), `+0x30c`, and counts down boost
+    timers (`+0x134`/`+0x138`) at fixed 1/60 s (`0x3c888889`).
+  - `Boarder_UpdateMotion` 0x11c770 (`Rider::motion_update`): dispatches strictly on `rider+0x424` (`self.motion`):
+    1 `AirMotion_Update` 0x108378 (`integrate_rk4` -> landing probe -> `Rail_TryCapture` -> air walls), 2
+    `GroundMotion_Update` 0x10a0d8 (`ground_tick`, calling `AirMotion_Enter` 0x108310 before `NATURAL_AIR` on lip
+    take-off), 3 `RailSlideMotion_Update` 0x10b0d0 (`rail_motion_grid` / `rail_motion_poly`, motion half only), 4
+    stationary/reset (`0x10afe0`, no-op), 5/6 `WipeoutMotion_Update` 0x10c2f0 / `GetUpMotion_Update` 0x1102c8
+    (`wipe_step`, with duplicate `impact_tick` and `below_world` removed).
+  - `after_motion`: applies `speed_limit` (`+0x1c4`) whenever `motion != 1` (syncing capped velocity into `Rider::vel`,
+    rail speed, and wipe-out ragdoll velocity), records `Boarder_AddSpeedSample` 0x155dc8 (`Rider::speed_sum`,
+    `speed_samples`), runs `Boarder_UpdateControl` 0x11c9a0 (`Rider::control_update`, including `RESET 0x16` ->
+    `ResetState_Update` 0x106a90, with `Boarder_RequestReset` 0x118f10 setting `motion = 4` and `ctl = 0x16`), decays
+    `crash_normal`/`impact`/`knocks` and checks thresholds + world floor (`gWorld+0xc - 10000.0`) with `+0x304 = 1`,
+    runs `Score_Tick` 0x156e80 (keeping `Boarder_DrainMeter` 0x11b1f8, whose sole caller in `SLUS_203.26` is the race
+    tick at `0x113870`, outside reset ticks), and finishes with `Boarder_UpdateLeanTargets` 0x129500 (`lean_aim`).
+- **Real-disc fixes found during `TRICKY_DISC` + `TRICKY_ELF` verification**:
+  - `Rider::trick_clips_step` only mirrors into legacy `grab`/`uber` fields when `trick_ctl` was or became active
+    (`clip_type != 8`), avoiding clobbering external `uber` state in `tests/landing_game.rs`.
+  - `Rider::spin_tick` skips `orient::update_orientation` when `SpinState_Update` leaves `quat` unchanged, keeping
+    the take-off attitude bit-exact in `tests/takeoff_attitude.rs`.
+  - Updated `tests/placement.rs` and `tests/takeoff_attitude.rs` spin checks to expect `SpinState_Update` 0x100908
+    (`spin_st.is_some()`, kept attitude `att.is_some()`) now that `NaturalAir -> Spin` runs in `Rider::step`.
+- Verified: 49 lib tests + 40 integration tests (`control_tick`, `physics`, `spin_air`, `rail_capture`, `landing_game`,
+  `air_wall`, `placement`, `takeoff_attitude`, `rider_score`, `aiglue`, `boarder_tick`) pass against `TRICKY_DISC` +
+  `TRICKY_ELF`, `cargo check` across `tricky-rs` has 0 errors / 0 warnings. **Needs a play test.**
