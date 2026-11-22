@@ -25,6 +25,7 @@ use crate::sndmidi::{
 use crate::sndqueue;
 use crate::speechlib::Mem as LibMem;
 use crate::speechload::LoadEnv;
+use crate::worldemitter;
 use std::collections::{HashMap, HashSet};
 
 const AUDIO_GLOBAL: u32 = 0x0034_3120;
@@ -849,6 +850,195 @@ impl CrowdHost {
     }
 }
 
+// ---- World crowd emitters (`WorldEmitter_GatherForListener` 0x22b370 / `WorldEmitter_Update` 0x22bf60 keys 0x61..=0x63, row E1b2g7d3b7c) ----
+
+/// `SoundId_ToBankProgram` 0x22d8a8 / `WorldEmitter_IsSpecialKey` 0x22c638:
+/// crowd keys `0x61..=0x63` map to bank kind 3 (`Crowd.bnk`) programs `0..=2`.
+pub fn crowd_key_to_program(key: u32) -> Option<u32> {
+    match key {
+        0x61 => Some(0),
+        0x62 => Some(1),
+        0x63 => Some(2),
+        _ => None,
+    }
+}
+
+/// One bound `.adl` crowd emitter shape (`key` in `0x61..=0x63`) attached to a `.pbd` instance.
+#[derive(Clone, Debug)]
+pub struct CrowdEmitter {
+    pub inst: u32,
+    pub shape_idx: u32,
+    pub key: u32,
+    pub kind: u32,
+    pub words: Vec<u32>,
+    /// Instance world position (`inst+0x30`, cm, game Z-up axes).
+    pub inst_pos: [f32; 3],
+}
+
+/// `AudioTGroups_Bind` 0x22a5f0 + `Course_FindInstanceByHash` 0x2550c8 + `WorldEmitter_IsSpecialKey` 0x22c638:
+/// bind `.adl` entries to `.pbd` instances (`pbd.hash.lists[1]`) and keep all crowd emitters (`0x61..=0x63`).
+pub fn extract_crowd_emitters(pbd: &tricky_data::pbd::Pbd, adl: &tricky_data::adl::Adl) -> Vec<CrowdEmitter> {
+    let Some(ht) = &pbd.hash else { return Vec::new() };
+    let by_hash: HashMap<u32, u32> = ht.lists[1].iter().copied().collect();
+    let mut out = Vec::new();
+    for &(hash, zone_off) in &adl.entries {
+        let Some(&inst_idx) = by_hash.get(&hash) else { continue };
+        let Some(inst) = pbd.instances.get(inst_idx as usize) else { continue };
+        let Some(zone) = adl.zone(zone_off) else { continue };
+        let inst_pos = [
+            f32::from_bits(inst[12]),
+            f32::from_bits(inst[13]),
+            f32::from_bits(inst[14]),
+        ];
+        for (shape_idx, s) in zone.shapes.iter().enumerate() {
+            let Some(&key) = s.words.get(1) else { continue };
+            if crowd_key_to_program(key).is_some() {
+                out.push(CrowdEmitter {
+                    inst: inst_idx,
+                    shape_idx: shape_idx as u32,
+                    key,
+                    kind: s.kind,
+                    words: s.words.clone(),
+                    inst_pos,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// `WorldEmitter_GatherForListener` 0x22b370 + `WorldEmitter_Falloff` 0x22bc40:
+/// test `listener_cm` against `e`'s shape (`0` sphere, `1` box, `2` cone, `3` radius) and return
+/// `Some((falloff_0_to_1, center_cm))` when inside.
+pub fn eval_crowd_emitter(e: &CrowdEmitter, listener_cm: [f32; 3]) -> Option<(f32, [f32; 3])> {
+    let f = |k: usize| e.words.get(k).copied().map(f32::from_bits);
+    let c = [e.inst_pos[0] + f(2)?, e.inst_pos[1] + f(3)?, e.inst_pos[2] + f(4)?];
+    let d = [listener_cm[0] - c[0], listener_cm[1] - c[1], listener_cm[2] - c[2]];
+    let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    match e.kind {
+        0 => {
+            let dist = dot(d, d).sqrt().abs();
+            let rad = f(5)?;
+            (dist < rad).then(|| (worldemitter::falloff(f(6).unwrap_or(2.0), dist / rad, 0.0), c))
+        }
+        1 => {
+            let a = [f(8)?, f(9)?, f(10)?];
+            let (r0, r1, r2) = (-a[1], a[0], 0.0f32);
+            let q = (r0 * r0 + r1 * r1 + r2 * r2).sqrt();
+            if q == 0.0 {
+                return None;
+            }
+            let inv = 1.0 / q;
+            let n = [r0 * inv, r1 * inv, r2 * inv];
+            let s = [a[1] * n[2] - a[2] * n[1], a[2] * n[0] - a[0] * n[2], a[0] * n[1] - a[1] * n[0]];
+            let (e5, e6, e7) = (f(5)?, f(6)?, f(7)?);
+            let ta = if e5 == 0.0 { 0.0 } else { let v = dot(a, d); (v * v) / (e5 * e5) };
+            let tn = if e6 == 0.0 { 0.0 } else { let v = dot(n, d); (v * v) / (e6 * e6) };
+            let ts = if e7 == 0.0 { 0.0 } else { let v = dot(s, d); (v * v) / (e7 * e7) };
+            let total = ta + tn + ts;
+            (total < 1.0).then(|| (worldemitter::falloff(f(11).unwrap_or(2.0), total, 0.0), c))
+        }
+        2 => {
+            let dist = dot(d, d).sqrt().abs();
+            let rad = f(5)?;
+            if dist >= rad || dist == 0.0 {
+                return None;
+            }
+            let inv = 1.0 / dist;
+            let dn = [d[0] * inv, d[1] * inv, d[2] * inv];
+            let dir = [f(6)?, f(7)?, f(8)?];
+            let cosine = dot(dn, dir);
+            let cone = f(10)?;
+            if cone >= cosine {
+                return None;
+            }
+            let half_pi = f32::from_bits(0x3fc9_0fdb);
+            let f1 = worldemitter::falloff(f(9).unwrap_or(2.0), dist / rad, 0.0);
+            let wide = half_pi - crate::math::asin(cone);
+            let ang = half_pi - crate::math::asin(cosine);
+            let f2 = worldemitter::falloff(f(11).unwrap_or(2.0), ang / wide, 0.0);
+            Some((f1 * f2, c))
+        }
+        3 => {
+            let dist = dot(d, d).sqrt().abs();
+            let rad = f(5)?;
+            (dist < rad).then_some((1.0, c))
+        }
+        _ => None,
+    }
+}
+
+/// Active world crowd emitter tracker (`WorldEmitter_UpdateAll` 0x22d370 / `WorldEmitter_Update` 0x22bf60 /
+/// `WorldEmitter_Stop` 0x22c5a0 for keys `0x61..=0x63`) wired into [`CrowdHost`].
+#[derive(Default)]
+pub struct WorldCrowdTrack {
+    emitters: Vec<CrowdEmitter>,
+    /// Active `(inst, shape_idx)` -> `CrowdBox` slot index (`0..15`).
+    active: HashMap<(u32, u32), i32>,
+}
+
+impl WorldCrowdTrack {
+    pub fn load(&mut self, emitters: Vec<CrowdEmitter>) {
+        self.emitters = emitters;
+        self.active.clear();
+    }
+
+    pub fn emitters(&self) -> &[CrowdEmitter] {
+        &self.emitters
+    }
+
+    pub fn active_count(&self) -> usize {
+        self.active.len()
+    }
+
+    /// Clear active emitter slots (e.g. when `CrowdHost::stop_all` resets all boxes).
+    pub fn reset(&mut self) {
+        self.active.clear();
+    }
+
+    /// `Boarder_GatherWorldEmitters` 0x1166f0 -> `WorldEmitter_UpdateAll` 0x22d370 -> `WorldEmitter_Update` 0x22bf60
+    /// for keys `0x61..=0x63`: joins in-range crowd emitters to `crowd` box `who` (`CrowdBox_StartSound` 0x21fc98),
+    /// updates volumes (`Audio_SetVoiceVolume` 0x221000), and stops out-of-range emitters (`WorldEmitter_StopById`
+    /// 0x220f98 with fade `0.25` s -> `CrowdBox_StopSlot` 0x2201f8).
+    pub fn tick(&mut self, crowd: &mut CrowdHost, listener_cm: [f32; 3], who: u32) {
+        if !crowd.is_loaded() {
+            return;
+        }
+        let mut seen: HashMap<(u32, u32), (f32, [f32; 3], u32)> = HashMap::new();
+        for e in &self.emitters {
+            if let Some((vol_f, center)) = eval_crowd_emitter(e, listener_cm) {
+                let id = (e.inst, e.shape_idx);
+                seen.entry(id)
+                    .and_modify(|prev| {
+                        if vol_f > prev.0 {
+                            *prev = (vol_f, center, e.key);
+                        }
+                    })
+                    .or_insert((vol_f, center, e.key));
+            }
+        }
+        // Stop emitters no longer wanted (`WorldEmitter_Stop` 0x22c5a0 -> `WorldEmitter_StopById` 0x220f98, fade 0.25).
+        let gone: Vec<(u32, u32)> = self.active.keys().filter(|k| !seen.contains_key(k)).copied().collect();
+        for k in gone {
+            if let Some(slot) = self.active.remove(&k) {
+                crowd.stop_slot(who, slot, 0.25);
+            }
+        }
+        // Start new or update active emitters (`SndQueue_StartLastVoice` 0x2212a0 / `Audio_SetVoiceVolume` 0x221000).
+        for (id, (vol_f, center, key)) in seen {
+            let vol = (vol_f * 127.0).clamp(0.0, 127.0) as u32;
+            if let Some(&slot) = self.active.get(&id) {
+                crowd.set_slot_value(who, slot, vol);
+            } else if let Some(prog) = crowd_key_to_program(key) {
+                let slot = crowd.start_sound(who, center, vol, prog);
+                if slot >= 0 {
+                    self.active.insert(id, slot);
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1012,5 +1202,60 @@ MAXBEND1 = 1.0\n";
         for (prog, _note) in starts {
             assert!(bank.programs.contains_key(&prog), "Crowd.bnk missing program {prog}");
         }
+    }
+
+    #[test]
+    fn world_crowd_emitters_from_disc_drive_crowd_box_and_cheers() {
+        let Ok(disc_path) = std::env::var("TRICKY_DISC") else { return };
+        let disc = tricky_data::disc::Disc::open(&disc_path).expect("open disc");
+        let mut files = tricky_data::big::Files::new(disc);
+        files.mount_game_archives().expect("mount");
+        files.mount("data/models/gari.big").expect("mount gari.big");
+        let pbd_bytes = files.load("|data/models/gari.pbd").expect("load").expect("gari.pbd");
+        let adl_bytes = files.load("|data/models/gari.adl").expect("load").expect("gari.adl");
+        let pbd = tricky_data::pbd::Pbd::parse(&pbd_bytes).expect("parse gari.pbd");
+        let adl = tricky_data::adl::Adl::parse(&adl_bytes).expect("parse gari.adl");
+        let emitters = extract_crowd_emitters(&pbd, &adl);
+        assert!(!emitters.is_empty(), "expected Garibaldi .adl to contain 0x61..=0x63 crowd emitters");
+
+        let inf = files.load("data/config/crowd.inf").expect("load").expect("crowd.inf");
+        crate::rand::streams().seed_fx(1);
+        let mut crowd = CrowdHost::new();
+        crowd.load_crowd_with(&inf, b"GARI", 1, 3, |p| files.load(p).ok().flatten());
+        let mut track = WorldCrowdTrack::default();
+        track.load(emitters.clone());
+
+        // Far away: box+0xd4 == 0, cheers do not play.
+        track.tick(&mut crowd, [1e7, 1e7, 1e7], 0);
+        assert_eq!(crowd.box_state(0).map(|s| s.0), Some(0));
+        crowd.play_cheer(2, 0);
+        assert!(crowd.take_actions().is_empty());
+
+        // Move listener to the center of the first real crowd emitter on Garibaldi!
+        let e0 = &emitters[0];
+        let center = [
+            e0.inst_pos[0] + f32::from_bits(e0.words[2]),
+            e0.inst_pos[1] + f32::from_bits(e0.words[3]),
+            e0.inst_pos[2] + f32::from_bits(e0.words[4]),
+        ];
+        track.tick(&mut crowd, center, 0);
+        assert!(track.active_count() > 0);
+        assert!(crowd.box_state(0).map(|s| s.0).unwrap_or(0) > 0, "expected box+0xd4 > 0 near spectator area");
+        crowd.update(|_| 3);
+        let _ = crowd.take_actions();
+        let _ = crowd.take_voice_actions();
+
+        // Now a trick cheer fires real `.eam` notes on Crowd.bnk!
+        crowd.play_cheer(2, 0);
+        crowd.tick_midi(10);
+        assert!(
+            crowd.take_voice_actions().iter().any(|a| matches!(a, MidiVoiceAction::Start { bank: 3, .. })),
+            "expected cheer to trigger SndMidi voice near Garibaldi crowd emitter"
+        );
+
+        // Move listener away again: `CrowdBox_StopSlot` drops `box+0xd4` back to 0.
+        track.tick(&mut crowd, [1e7, 1e7, 1e7], 0);
+        assert_eq!(track.active_count(), 0);
+        assert_eq!(crowd.box_state(0).map(|s| s.0), Some(0));
     }
 }

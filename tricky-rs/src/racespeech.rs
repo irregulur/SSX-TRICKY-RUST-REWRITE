@@ -86,6 +86,8 @@ pub struct RaceSpeech {
     crowd_voices: HashMap<i32, CrowdVoice>,
     /// 100 Hz tick accumulator for `SndMidi_Tick` 0x2d4108 (`SND_RunTicks` 0x2d05a0)
     crowd_midi_acc: f32,
+    /// course `.adl`/`.pbd` world crowd emitters (`WorldEmitter_Update` 0x22bf60 keys `0x61..=0x63`, row E1b2g7d3b7c)
+    crowd_emitters: crowdhost::WorldCrowdTrack,
     /// the course the banks are for, and its `BANK` (slot 2)
     course: Option<usize>,
     course_bank: Vec<u8>,
@@ -627,6 +629,21 @@ pub fn race_speech(
         if let Some(c) = sys.crowd.as_deref() {
             rs.crowd.load_crowd_with(c, key.as_bytes(), 1, 3, |p| sys.files.load(p).ok().flatten());
         }
+        // World crowd emitters (`AudioTGroups_Bind` 0x22a5f0, keys `0x61..=0x63`, row E1b2g7d3b7c) from the course's `.pbd`/`.adl`
+        let crowd_ems = tricky_data::aip::big_name(&track)
+            .and_then(|big| {
+                let _ = sys.files.mount(&format!("data/models/{big}.big"));
+                let pbd_b = sys.files.load(&format!("|data/models/{big}.pbd")).ok().flatten()?;
+                let adl_b = sys.files.load(&format!("|data/models/{big}.adl")).ok().flatten()?;
+                let pbd = tricky_data::pbd::Pbd::parse(&pbd_b)?;
+                let adl = tricky_data::adl::Adl::parse(&adl_b)?;
+                Some(crowdhost::extract_crowd_emitters(&pbd, &adl))
+            })
+            .unwrap_or_default();
+        if std::env::var("TRICKY_SPEECHLOG").is_ok() {
+            println!("crowd: course {key}: {} world crowd emitters (0x61..=0x63)", crowd_ems.len());
+        }
+        rs.crowd_emitters.load(crowd_ems);
         if rs.crowd_progs.is_empty() {
             if let Some(bank) = &sys.crowd_bank {
                 for (&prog_id, prog) in &bank.programs {
@@ -670,6 +687,7 @@ pub fn race_speech(
             commands.entity(v.entity).try_despawn();
         }
         rs.crowd_midi_acc = 0.0;
+        rs.crowd_emitters.reset();
         rs.crowd.stop_all(0.0);
         let _ = rs.crowd.take_voice_actions();
         if !racing {
@@ -825,9 +843,12 @@ pub fn race_speech(
     for e in bank.stops {
         commands.entity(e).try_despawn();
     }
-    // `CrowdSys_UpdateBoxes` 0x220968 (from `Audio_UpdateSystems` 0x21eb70, before `SpeechSys_UpdateAll`) and
+    // `Boarder_GatherWorldEmitters` 0x1166f0 -> `WorldEmitter_UpdateAll` 0x22d370 -> `WorldEmitter_Update` 0x22bf60
+    // (keys `0x61..=0x63` -> `CrowdBox_StartSound` / `Audio_SetVoiceVolume` / `CrowdBox_StopSlot`, row E1b2g7d3b7c),
+    // then `CrowdSys_UpdateBoxes` 0x220968 (from `Audio_UpdateSystems` 0x21eb70, before `SpeechSys_UpdateAll`) and
     // `SndMidi_Tick` 0x2d4108 at 100 Hz (`SND_RunTicks` 0x2d05a0) driving `Crowd.bnk` voices (row E1b2g7d3b7b2).
-    // World crowd emitters (`WorldEmitter_Update` 0x22bf60 -> `CrowdHost::start_sound`) are row E1b2g7d3b7c.
+    let crowd_view = cam.single().map(|c| game_pos(c.translation())).unwrap_or_else(|_| game_pos(rider.0.pos));
+    rs.crowd_emitters.tick(&mut rs.crowd, crowd_view, 0);
     let t_land = if rider.0.grounded { 0.0 } else { (rider.0.land_time - rider.0.air_time).max(0.0) };
     let mult = tricky_game::score::get_multiplier(rider.0.sc.units);
     rs.crowd.update(|_| crowdhost::anticipate_level(t_land, mult));

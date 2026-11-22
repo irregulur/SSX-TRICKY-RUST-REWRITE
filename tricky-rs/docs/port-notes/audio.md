@@ -1880,5 +1880,20 @@ all 9 crowd `.eam` files from `DATA/AUDIO/AUDIO.BIG` replayed start-to-EOT bit-f
 - **`src/racespeech.rs`**: loads `Crowd.bnk` off-thread alongside `CROWD.INF`, decodes its 6 programs into Bevy
   `AudioSource`s, steps `CrowdHost::tick_midi` at 100 Hz, and drives `CrowdPlayer` `AudioSink`s (volume scaled by
   `ui::AudioLevels::slot(4)`, speed from `pitch_speed`, reaping finished one-shots via `mark_voice_done` so
-  `SndMidi_VoicesDone` finishes at EOT). World crowd emitters (`0x61..=0x63` -> `CrowdHost::start_sound`) are row
-  E1b2g7d3b7c.
+  `SndMidi_VoicesDone` finishes at EOT).
+
+## World crowd emitters wired to `CrowdHost` (E1b2g7d3b7c, `game/src/crowdhost.rs`, `src/racespeech.rs`)
+
+Proven (`SLUS_203.26`):
+- `Boarder_GatherWorldEmitters` 0x1166f0 passes the view position (`race+0xb0 + 0x80*i`) and view index `i` (0 in 1P)
+  to `WorldEmitter_GatherForListener` 0x22b370.
+- `WorldEmitter_IsSpecialKey` 0x22c638 matches `key - 0x61 < 3` (`0x61..=0x63`); `SoundId_ToBankProgram` 0x22d8a8 maps
+  `0x61 -> (bank 3, prog 0)`, `0x62 -> (bank 3, prog 1)`, `0x63 -> (bank 3, prog 2)`.
+- `WorldEmitter_Update` 0x22bf60 starts new crowd emitters via `SndQueue_StartLastVoice` 0x2212a0 ->
+  `CrowdBox_StartSound` 0x21fc98 (setting `box+0xd4 > 0`), updates active emitters via `Audio_SetVoiceVolume` 0x221000
+  (`(int)(falloff * 127.0)`), and `WorldEmitter_Stop` 0x22c5a0 stops out-of-range emitters via `WorldEmitter_StopById`
+  0x220f98 with fade `0.25` s (`CrowdBox_StopSlot` 0x2201f8).
+- `crowdhost::extract_crowd_emitters` binds each course's `|data/models/<course>.adl` against `.pbd` instances
+  (`pbd.hash.lists[1]`, `AudioTGroups_Bind` 0x22a5f0); `WorldCrowdTrack::tick` runs in `src/racespeech.rs` every frame
+  before `CrowdSys_UpdateBoxes` 0x220968. Verified on Garibaldi (`gari.pbd` + `gari.adl`) in
+  `crowdhost::tests::world_crowd_emitters_from_disc_drive_crowd_box_and_cheers`.
