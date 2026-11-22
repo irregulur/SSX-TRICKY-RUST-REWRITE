@@ -1864,5 +1864,21 @@ all 9 crowd `.eam` files from `DATA/AUDIO/AUDIO.BIG` replayed start-to-EOT bit-f
   `MIDIBANKS` queue at `+0xa48` and `gMidiSys` `0x343124`; `MidiSys_PushEvent` 0x222160 queues `(bank_kind, file_data)`;
   `MidiSys_PlayPending` 0x222358 scales volume, starts `SndMidi_Play` when cull == 0.0 and bank state == 1, registers
   with `BankMonitor_AddInstance` (engine 2) + `BankInstance_SetHandleCopy1`, and schedules delay echoes via
-  `MidiSys_PlayEventCallback` 0x222798 (`0x39fd80`). Hosting `SndMidi` + `Crowd.bnk` audio playback in the app is row
-  E1b2g7d3b7b2.
+  `MidiSys_PlayEventCallback` 0x222798 (`0x39fd80`).
+
+## Hosting `SndMidi` and `Crowd.bnk` in the app (E1b2g7d3b7b2, `data/src/bnk.rs`, `game/src/crowdhost.rs`, `src/racespeech.rs`)
+
+- **`tricky_data::bnk`**: parses EA `BNKl` sound banks (`SND_ParsePTLayer` 0x2d5410) directly from the disc and decodes
+  PS2 SPU2 VAG ADPCM (`0x5`), signed 8-bit PCM (`0x9`), and EA-XA (`0x0a`). Verified on `|data\audio\Crowd.bnk` from
+  `DATA/AUDIO/AUDIO.BIG`: 6 mono VAG programs — beds `0..=2` (looping) and one-shots `16` (`Ahh`), `17`
+  (`Anticipation`), `18` (`Cheer`).
+- **`CrowdHost` (`game/src/crowdhost.rs`)**: `load_crowd_with` loads each `CROWD.INF` `.eam` file into `EAM_ARENA` in
+  `pf::Mem`, `ENTRY_PLAY` calls `SndMidi_Play` 0x2d4440, `VOICE_STOP` calls `SndMidi_Stop` 0x2d4368 (fade 0) or
+  `SndMidi_Fade` 0x2d4978 (`(fade * 100.0) as i32`, target `-1`, per `BankInstance_Stop` 0x20ba00), `MONITOR_SET`
+  calls `SndMidi_SetPitch` 0x2d45a8, and `tick_midi` steps `SndMidi_Tick` 0x2d4108 at 100 Hz, emitting
+  `MidiVoiceAction`s. Pitch uses `sndlib::pitch_ratio` 0x2d51f8 (`pitch_speed`).
+- **`src/racespeech.rs`**: loads `Crowd.bnk` off-thread alongside `CROWD.INF`, decodes its 6 programs into Bevy
+  `AudioSource`s, steps `CrowdHost::tick_midi` at 100 Hz, and drives `CrowdPlayer` `AudioSink`s (volume scaled by
+  `ui::AudioLevels::slot(4)`, speed from `pitch_speed`, reaping finished one-shots via `mark_voice_done` so
+  `SndMidi_VoicesDone` finishes at EOT). World crowd emitters (`0x61..=0x63` -> `CrowdHost::start_sound`) are row
+  E1b2g7d3b7c.

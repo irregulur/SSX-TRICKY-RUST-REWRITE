@@ -9,6 +9,7 @@ pub mod anim;
 pub mod audiocfg;
 pub mod anim_names;
 pub mod big;
+pub mod bnk;
 pub mod character;
 pub mod compress;
 pub mod huffenc;

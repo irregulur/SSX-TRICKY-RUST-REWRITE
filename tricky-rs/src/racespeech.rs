@@ -12,7 +12,7 @@ use bevy::audio::{PlaybackMode, Volume};
 use bevy::prelude::*;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
-use tricky_game::crowdhost::{self, CrowdHost};
+use tricky_game::crowdhost::{self, CrowdHost, MidiVoiceAction};
 use tricky_game::race::SpeechCall;
 use tricky_game::rider::RiderSpeech;
 use tricky_game::speech::{Announcer, Event, PlaceRace, SpeechEnv, SpeechRider, Trigger};
@@ -38,6 +38,20 @@ struct Loaded {
     audio: Option<Vec<u8>>,
     /// DATA/CONFIG/CROWD.INF
     crowd: Option<Vec<u8>>,
+    /// DATA/AUDIO/AUDIO.BIG -> `|data\audio\Crowd.bnk` (decoded via `tricky_data::bnk`)
+    crowd_bank: Option<tricky_data::bnk::Bank>,
+}
+
+/// One live Bevy voice driven by `CrowdHost`'s `SndMidi` sequencer on `Crowd.bnk`.
+struct CrowdVoice {
+    entity: Entity,
+    program: usize,
+    note: u8,
+    vel: u8,
+    vol: u8,
+    pitch: u16,
+    bend: u8,
+    remaining: f32,
 }
 
 /// A stream's parts: the one playing (its sound and seconds left) and those queued behind it.
@@ -64,8 +78,14 @@ pub struct RaceSpeech {
     /// the course's ambient banks (BANKS.INF's `SWAP` list, +0x38e0) and the one in the bank manager's slot 6
     ambient: sndqueue::AmbientBanks,
     slot6: Slot6,
-    /// the audio system's `+0x372c` crowd boxes (`Audio_LoadCrowd` 0x2209c8, `tricky_game::crowdhost`, row E1b2g7d3b7a)
+    /// the audio system's `+0x372c` crowd boxes (`Audio_LoadCrowd` 0x2209c8, `tricky_game::crowdhost`, rows E1b2g7d3b7a / E1b2g7d3b7b2)
     crowd: CrowdHost,
+    /// decoded `Crowd.bnk` programs (WAV handle + layer metadata) for `SndMidi` voice playback
+    crowd_progs: HashMap<usize, (Handle<AudioSource>, tricky_data::bnk::Layer)>,
+    /// live `SndMidi` voices playing on `Crowd.bnk`, keyed by `lib-snd` voice handle
+    crowd_voices: HashMap<i32, CrowdVoice>,
+    /// 100 Hz tick accumulator for `SndMidi_Tick` 0x2d4108 (`SND_RunTicks` 0x2d05a0)
+    crowd_midi_acc: f32,
     /// the course the banks are for, and its `BANK` (slot 2)
     course: Option<usize>,
     course_bank: Vec<u8>,
@@ -78,6 +98,9 @@ pub struct RaceSpeech {
 
 #[derive(Component)]
 pub struct PlacingSound;
+
+#[derive(Component)]
+pub struct CrowdPlayer;
 
 #[derive(Component)]
 pub struct SpeechPlayer;
@@ -536,7 +559,8 @@ fn wav(s: &tricky_game::sndmt::Sound) -> Vec<u8> {
 pub fn race_speech(
     mut rs: ResMut<RaceSpeech>, sounds: Res<crate::sound::Sounds>, game: Res<ui::Game>, mode: Res<Mode>, race: Res<RaceRes>, time: Res<Time>,
     mut audio: ResMut<Assets<AudioSource>>, mut commands: Commands, sfx: Option<Res<crate::boardsound::BoardSounds>>,
-    playing: Query<Entity, With<PlacingSound>>, mut rider: ResMut<crate::RiderRes>, mut opponents: ResMut<crate::Opponents>,
+    (playing, mut crowd_sinks): (Query<Entity, With<PlacingSound>>, Query<&mut AudioSink, With<CrowdPlayer>>),
+    mut rider: ResMut<crate::RiderRes>, mut opponents: ResMut<crate::Opponents>,
     cam: Query<&GlobalTransform, With<Camera3d>>, music: Res<crate::pathmusic::PathMusic>,
     (list, level, mut levels, career): (Res<crate::LevelList>, Res<crate::LevelRes>, ResMut<ui::AudioLevels>, Res<ui::CareerRes>),
 ) {
@@ -558,7 +582,12 @@ pub fn race_speech(
                     let banks = files.load("data/config/banks.inf").ok().flatten();
                     let audio = files.load("data/config/audio.inf").ok().flatten();
                     let crowd = files.load("data/config/crowd.inf").ok().flatten();
-                    Some(Loaded { host, files, banks, audio, crowd })
+                    let crowd_bank = files
+                        .load(r"|data\audio\Crowd.bnk")
+                        .ok()
+                        .flatten()
+                        .and_then(|b| tricky_data::bnk::parse(&b));
+                    Some(Loaded { host, files, banks, audio, crowd, crowd_bank })
                 })();
                 *s2.lock().unwrap() = Some(loaded);
             });
@@ -596,7 +625,22 @@ pub fn race_speech(
         rs.slot6 = Slot6::default();
         // `Audio_LoadCrowd` 0x2209c8 from `Audio_LoadInGameConfig` 0x211098: 1 box (Audio_RiderCount in 1P), bank kind 3 (Crowd.bnk)
         if let Some(c) = sys.crowd.as_deref() {
-            rs.crowd.load_crowd(c, key.as_bytes(), 1, 3);
+            rs.crowd.load_crowd_with(c, key.as_bytes(), 1, 3, |p| sys.files.load(p).ok().flatten());
+        }
+        if rs.crowd_progs.is_empty() {
+            if let Some(bank) = &sys.crowd_bank {
+                for (&prog_id, prog) in &bank.programs {
+                    if let Some(layer) = prog.layers.first() {
+                        let bytes = if layer.loops() {
+                            layer.loop_wav().unwrap_or_else(|| layer.wav())
+                        } else {
+                            layer.wav()
+                        };
+                        let handle = audio.add(AudioSource { bytes: bytes.into() });
+                        rs.crowd_progs.insert(prog_id, (handle, layer.clone()));
+                    }
+                }
+            }
         }
         let given = std::path::absolute(&level.0.dir).unwrap_or(level.0.dir.clone());
         rs.world = given.parent().and_then(|p| p.parent()).map(|p| p.join("audio").join("world")).unwrap_or_default();
@@ -622,7 +666,12 @@ pub fn race_speech(
         rs.event = Default::default();
         rs.slot6 = Slot6::default();
         rs.ambient.clear_loaded();
+        for (_, v) in rs.crowd_voices.drain() {
+            commands.entity(v.entity).try_despawn();
+        }
+        rs.crowd_midi_acc = 0.0;
         rs.crowd.stop_all(0.0);
+        let _ = rs.crowd.take_voice_actions();
         if !racing {
             return;
         }
@@ -776,9 +825,9 @@ pub fn race_speech(
     for e in bank.stops {
         commands.entity(e).try_despawn();
     }
-    // `CrowdSys_UpdateBoxes` 0x220968 (from `Audio_UpdateSystems` 0x21eb70, before `SpeechSys_UpdateAll`);
-    // STANDIN: EA MIDI (.eam) playback on Crowd.bnk is row E1b2g7d3b7b, and world crowd emitters (`WorldEmitter_Update`
-    // 0x22bf60 → `SndQueue_StartLastVoice` 0x2212a0) are not wired to `CrowdHost::start_sound` yet (calls logged only).
+    // `CrowdSys_UpdateBoxes` 0x220968 (from `Audio_UpdateSystems` 0x21eb70, before `SpeechSys_UpdateAll`) and
+    // `SndMidi_Tick` 0x2d4108 at 100 Hz (`SND_RunTicks` 0x2d05a0) driving `Crowd.bnk` voices (row E1b2g7d3b7b2).
+    // World crowd emitters (`WorldEmitter_Update` 0x22bf60 -> `CrowdHost::start_sound`) are row E1b2g7d3b7c.
     let t_land = if rider.0.grounded { 0.0 } else { (rider.0.land_time - rider.0.air_time).max(0.0) };
     let mult = tricky_game::score::get_multiplier(rider.0.sc.units);
     rs.crowd.update(|_| crowdhost::anticipate_level(t_land, mult));
@@ -787,8 +836,97 @@ pub fn race_speech(
             println!("crowd: {act:?}");
         }
     }
-    // `SpeechSys_UpdateAll` 0x228998, once a frame; its lines decoded and queued on their streams
     let dt = time.delta_secs();
+    rs.crowd_midi_acc += dt.min(0.1) * 100.0;
+    let midi_ticks = rs.crowd_midi_acc as u32;
+    rs.crowd_midi_acc -= midi_ticks as f32;
+    rs.crowd.tick_midi(midi_ticks);
+    // Reap completed one-shot `Crowd.bnk` voices so `SndMidi_VoicesDone` 0x2d3938 finishes at EOT.
+    let mut done_voices = Vec::new();
+    for (&h, v) in rs.crowd_voices.iter_mut() {
+        if v.remaining.is_finite() {
+            v.remaining -= dt;
+            if v.remaining <= 0.0 {
+                done_voices.push(h);
+            }
+        }
+    }
+    for h in done_voices {
+        rs.crowd_voices.remove(&h);
+        rs.crowd.mark_voice_done(h);
+    }
+    let fx_scale = vol * levels.slot(4);
+    for va in rs.crowd.take_voice_actions() {
+        match va {
+            MidiVoiceAction::Start { handle, program, note, volume, velocity, pitch, bend, .. } => {
+                let Some((src, layer)) = rs.crowd_progs.get(&(program as usize)) else {
+                    rs.crowd.mark_voice_done(handle);
+                    continue;
+                };
+                let gain = (volume as f32 / 127.0)
+                    * (velocity as f32 / 127.0)
+                    * (layer.vol as f32 / 127.0)
+                    * fx_scale;
+                let speed = crowdhost::pitch_speed(layer.root, note, layer.detune, layer.bend_range, bend, pitch);
+                let mode = if layer.loops() { PlaybackMode::Loop } else { PlaybackMode::Despawn };
+                let remaining = if layer.loops() { f32::INFINITY } else { layer.duration_secs() / speed.max(0.05) };
+                let entity = commands
+                    .spawn((
+                        AudioPlayer(src.clone()),
+                        PlaybackSettings { mode, volume: Volume::Linear(gain), speed, ..default() },
+                        CrowdPlayer,
+                    ))
+                    .id();
+                rs.crowd_voices.insert(
+                    handle,
+                    CrowdVoice { entity, program: program as usize, note, vel: velocity, vol: volume, pitch, bend, remaining },
+                );
+            }
+            MidiVoiceAction::SetVolume { handle, volume } => {
+                if let Some(v) = rs.crowd_voices.get_mut(&handle) {
+                    v.vol = volume.clamp(0, 127) as u8;
+                    let layer_vol = rs.crowd_progs.get(&v.program).map(|(_, l)| l.vol).unwrap_or(127);
+                    let gain = (v.vol as f32 / 127.0)
+                        * (v.vel as f32 / 127.0)
+                        * (layer_vol as f32 / 127.0)
+                        * fx_scale;
+                    if let Ok(mut sink) = crowd_sinks.get_mut(v.entity) {
+                        sink.set_volume(Volume::Linear(gain));
+                    }
+                }
+            }
+            MidiVoiceAction::SetPitch { handle, pitch } => {
+                if let Some(v) = rs.crowd_voices.get_mut(&handle) {
+                    v.pitch = pitch;
+                    if let Some((_, layer)) = rs.crowd_progs.get(&v.program) {
+                        let speed = crowdhost::pitch_speed(layer.root, v.note, layer.detune, layer.bend_range, v.bend, v.pitch);
+                        if let Ok(sink) = crowd_sinks.get_mut(v.entity) {
+                            sink.set_speed(speed);
+                        }
+                    }
+                }
+            }
+            MidiVoiceAction::SetPitchBend { handle, bend } => {
+                if let Some(v) = rs.crowd_voices.get_mut(&handle) {
+                    v.bend = bend;
+                    if let Some((_, layer)) = rs.crowd_progs.get(&v.program) {
+                        let speed = crowdhost::pitch_speed(layer.root, v.note, layer.detune, layer.bend_range, v.bend, v.pitch);
+                        if let Ok(sink) = crowd_sinks.get_mut(v.entity) {
+                            sink.set_speed(speed);
+                        }
+                    }
+                }
+            }
+            MidiVoiceAction::Release { handle } | MidiVoiceAction::Stop { handle } => {
+                if let Some(v) = rs.crowd_voices.remove(&handle) {
+                    commands.entity(v.entity).try_despawn();
+                }
+                rs.crowd.mark_voice_done(handle);
+            }
+            MidiVoiceAction::SetPan { .. } => {}
+        }
+    }
+    // `SpeechSys_UpdateAll` 0x228998, once a frame; its lines decoded and queued on their streams
     sys.host.update();
     for s in sys.host.take_stops() {
         if let Some(st) = rs.streams.get_mut(&s) {
