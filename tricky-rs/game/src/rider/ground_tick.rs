@@ -787,9 +787,8 @@ impl Rider {
         g.d1 = self.band.0 * 100.0;
         g.d2 = self.band.1 * 100.0;
         g.class = st.kind as u32;
-        // the control state (row G1i1: cruise, prewind or jump); STANDIN: "landing" (0xb) after a hard landing, for
-        // the game's landing states (row G1i2)
-        g.state = if self.hard_land > 0.0 { 0xb } else if matches!(self.ctl, 0xe | 10) { self.ctl } else { 3 };
+        // the control state (rows G1i1, G1i2a: cruise 3, land hard 0xb, land normal 0xc, prewind 0xe, jump 10)
+        g.state = if matches!(self.ctl, 3 | 0xb | 0xc | 0xe | 10) { self.ctl } else { 3 };
         g.mask = 0xffff_ffff;
         // the game's stat bytes (`crate::stats`): speed +0x0e, edging +0x11, grip +0x13 and the cubic term +0x19
         let b = |i: usize| st.bytes[i] as f32;
@@ -802,18 +801,9 @@ impl Rider {
         g
     }
 
-    /// STANDIN: the motion id (rider+0x424: 1 air, 2 ground, 3 rail, 5 wipeout) from the port's own flags, for the
-    /// game's motion state machine (row G18)
+    /// The motion id (`rider+0x424`: 1 air, 2 ground, 3 rail, 4 reset, 5 wipeout, 6 recovery)
     fn lean_motion(&self) -> u32 {
-        if self.rail.is_some() {
-            3
-        } else if self.crashed > 0.0 {
-            5
-        } else if self.grounded {
-            2
-        } else {
-            1
-        }
+        self.motion
     }
 
     /// The lean value one tick on (`cBoarder::vf7` 0x117198), before the tick's motion.

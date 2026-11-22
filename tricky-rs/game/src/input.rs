@@ -317,7 +317,7 @@ pub fn parse_button_map(text: &[u8]) -> PadConfig {
 /// pressed, and pressed or-ed into the looked-at set), the 16 axes (`Input_BindAxis`). (The map's "shown" buttons,
 /// cInput +0x1cc, and the vibration object it then makes are not kept.)
 pub fn bind(cfg: &PadConfig, slots: [u16; 15]) -> ButtonMap {
-    let mut m = ButtonMap { pressed: [0; 0x29], looked_at: [0; 0x29], axes: [(0, false); 16] };
+    let mut m = ButtonMap { pressed: [crate::controls::NONE; 0x29], looked_at: [crate::controls::NONE; 0x29], axes: [(0, false); 16] };
     let mut button = |a: usize, pressed: u32, other: u32| {
         m.pressed[a] = pressed;
         m.looked_at[a] = other | pressed;

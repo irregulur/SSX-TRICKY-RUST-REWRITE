@@ -512,11 +512,15 @@ pub struct Rider {
     pub takeoff_wind: (f32, f32),
     /// ticks before this rider can be hit by another again (`Boarder_RiderCollisions`: three ticks)
     pub hit_wait: u8,
-    /// the control state (rider+0x428) on the snow (row G1i1: [`control_tick`]), the cruise state's object, the
-    /// prewind state's flag (its +8), the records the states set and the boost level they left (+0x130)
+    /// the control state (rider+0x428, rows G1i1, G1i2a: [`control_tick`]), the cruise / landing / natural-air state
+    /// objects, the prewind flag (+8), the hosted trick-clip state (`SpinState_UpdateTrickClips` 0x1272e8), the records
+    /// the states set and the boost level they left (+0x130)
     pub ctl: u32,
     pub cruise: crate::control::Cruise,
+    pub land_normal_ctl: crate::control::LandNormal,
+    pub natural_air_ctl: crate::control::NaturalAir,
     pub prewind_started: u32,
+    pub trick_ctl: control_tick::TrickClips,
     pub rec: control_tick::Records,
     pub boost_lvl: f32,
     /// +0x304, the reset flag: 1 for a reset the game asks itself, 0 for the reset button; `Boarder_PlaceAt`
@@ -565,7 +569,7 @@ impl Rider {
                last_trick: String::new(), trick_timer: 0.0, crashed: 0.0, hard_land: 0.0, crouch_v: 0.0, brake_v: 0.0, jump_c: 0.0, jump_delay: 0.0, height: 0.0,
                course_dir: None, course_pts: None, wipe: None, crash_at: None, gm: None, crash_spray: None, land_puffs_vn: None, lean: [0.0; 3], up: [0.0, 0.0, 1.0, 0.0], recover: None, ai: false, down_t: 0.0, getup: -1.0, stumble: 0.0, wall_hit: None, speed_timer: 0.0, spin_timer: 0.0, spin_used: false, tube_class: u8::MAX, gate_p: 0.0, gate_hi: 0.0, gate_lo: 0.0, gate_still: 0.0, gate_target: 0.0, gate_speed: 0.0, gate_state: 8, gate_rock_dir: 0, band: (0.005, 0.0250417), spin_base: 0.0, flip_base: 0.0, late: false, cause: "", spin_ax: Axis::default(), flip_ax: Axis::default(), air_mode2: false, rail_off: 0.0, rail_time: 0.0, rail_halves: 0, boost_was: false, chain: 0,
                ubers: Vec::new(), uber: 0.0, uber_id: 0, uber_done: false, letters: 0, multiplier: 1,
-               sc: new_score(), tick_acc: 0.0, full_count: 0, rail_kind: 0, rail_lean: 0.0, rail_goal0: 0.0, rail_committed: 0.0, show_parts: Vec::new(), speech: Vec::new(), hit_by: u32::MAX, grab_scored: false, grab_tw: false, hit_wait: 0, att: None, last_hit: Default::default(), impact: 0.0, impact_n: [0.0; 4], knocks: 0.0, slot: 0, place_ray: None, hit_kind: 0, land_time: 0.0, takeoffs: 0, rail_blend: 0.0, rail_word: 0, rail_grid: false, rail_hit: [0.0; 4], spin_st: None, pad_dev: Default::default(), land_word: u32::MAX, land_normal: [0.0, 0.0, 1.0, 0.0], takeoff_wind: (0.0, 0.0), ctl: control_tick::CRUISE, cruise: Default::default(), prewind_started: 0, rec: Default::default(), boost_lvl: 0.0, reset_flag: 0, reset_req: None, reset: None, reset_acc: 0.0, fade: (1.0, 0.0), reset_ctx: ResetCtx::default() };
+               sc: new_score(), tick_acc: 0.0, full_count: 0, rail_kind: 0, rail_lean: 0.0, rail_goal0: 0.0, rail_committed: 0.0, show_parts: Vec::new(), speech: Vec::new(), hit_by: u32::MAX, grab_scored: false, grab_tw: false, hit_wait: 0, att: None, last_hit: Default::default(), impact: 0.0, impact_n: [0.0; 4], knocks: 0.0, slot: 0, place_ray: None, hit_kind: 0, land_time: 0.0, takeoffs: 0, rail_blend: 0.0, rail_word: 0, rail_grid: false, rail_hit: [0.0; 4], spin_st: None, pad_dev: Default::default(), land_word: u32::MAX, land_normal: [0.0, 0.0, 1.0, 0.0], takeoff_wind: (0.0, 0.0), ctl: control_tick::CRUISE, cruise: Default::default(), land_normal_ctl: Default::default(), natural_air_ctl: Default::default(), prewind_started: 0, trick_ctl: Default::default(), rec: Default::default(), boost_lvl: 0.0, reset_flag: 0, reset_req: None, reset: None, reset_acc: 0.0, fade: (1.0, 0.0), reset_ctx: ResetCtx::default() };
         // the start line's `Boarder_PlaceAt` 0x11cae8 (`cBoarder::vf8` 0x116ab8: heading from the path's direction)
         r.att = Some((orient::placed_attitude(placed_heading(yaw), None), yaw));
         r
@@ -678,6 +682,7 @@ impl Rider {
         self.stumble = 0.0;
         self.grounded = false;
         self.set_motion(1);
+        self.set_control(control_tick::NATURAL_AIR);
         self.charge = 0.0;
         self.air_time = 0.0;
         self.rail = None;
@@ -714,6 +719,7 @@ impl Rider {
     }
     pub fn clear_air(&mut self) {
         self.end_spin();
+        self.trick_ctl.reset();
         self.spin = 0.0;
         self.flip = 0.0;
         self.spin_base = 0.0;
@@ -1045,10 +1051,18 @@ impl Rider {
     fn land_as_game(&mut self, o: Orient, v_in: Vec3, n: Vec3, surface: u8, vn: f32) -> bool {
         use std::f32::consts::{FRAC_PI_2, PI};
         let k = |b: u32| f32::from_bits(b);
-        let clip_type = if !self.grab_safe() || (self.uber > 0.0 && !self.uber_done) { 0xe } else { 0 };
+        // `AirMotion_SetFallScale` 0x1049a0: crouch target for `cLandNormalControl` (+8)
+        self.land_normal_ctl.crouch = (vn * 100.0 * -0.000_450_000_02).clamp(0.25, 1.0);
+        let (clip_type, clip_flag4) = if self.trick_ctl.clip_type != 8 {
+            (self.trick_ctl.clip_type as i64, self.trick_ctl.flag(4))
+        } else if !self.grab_safe() || (self.uber > 0.0 && !self.uber_done) {
+            (0xe, false)
+        } else {
+            (0, false)
+        };
         let st = crate::landing::LandingState {
             clip_type,
-            clip_flag4: false,
+            clip_flag4,
             surface: surface as u32,
             board: o.fwd,
             vel: ground_tick::to_game(v_in, 100.0, 0.0),
@@ -1057,7 +1071,7 @@ impl Rider {
         };
         let Some(l) = crate::landing::check_angles(&st, ground_tick::game_dir(n)).filter(|l| l.ok) else {
             self.crash_kind = 0;
-            self.cause = if clip_type != 0 { "grab" } else { "landing angle" };
+            self.cause = if matches!(clip_type, 0xe..=0x10) && !clip_flag4 { "grab" } else { "landing angle" };
             self.wipe_out();
             return false;
         };
@@ -1085,6 +1099,16 @@ impl Rider {
         let deg25 = 25f32.to_radians();
         self.land_kind = if deg25 < l.roll.abs() { 3 } else if deg25 < l.pitch.abs() && l.pitch.abs() < PI - deg25 { 1 } else { 0 };
         self.hard_land = if c.state == 0xb { crate::rider::wipeout::clip_frames(c.clip as u16, self.stats.kind as u8) / 30.0 } else { 0.0 };
+        // `Landing_ChooseState` 0x109308: grab-clip landing snaps crouch to 1 and zeroes brake/steer before entering 0xc
+        if c.state == 0xc && clip_type == 0xe {
+            self.rec.crouch = [1.0, 0.0, 1.0];
+            self.rec.brake = [0.0; 3];
+            self.rec.steer = [0.0; 3];
+            self.crouch_v = 1.0;
+            self.brake_v = 0.0;
+            self.steer = 0.0;
+        }
+        self.set_control(c.state as u32);
         true
     }
     /// Shoved over by another rider: `dv` the velocity change of the shove (m/s). A knock-down is scored as
@@ -1334,9 +1358,11 @@ impl Rider {
                 // air) as the motion is entered. `Boarder_SetMotion` 0x11f610 enters it at once, so a take-off
                 // (`Boarder_TakeOff` 0x128470, `JumpControl_Update`) has not yet set its 0xd: kind 1 only when the state
                 // still was 0xd, a rider back on the snow whose control had not yet left the air's
-                let kind = (self.ctl == 0xd) as u32;
+                let kind = (self.ctl == control_tick::NATURAL_AIR) as u32;
                 self.speech.push(RiderSpeech::AirEnter { kind, air: self.land_time, up: self.vel.y * 100.0 });
-                self.spin_enter_game();
+                if self.ctl == control_tick::SPIN {
+                    self.spin_enter_game();
+                }
             }
         }
         // the wipe-out runs these a game tick at a time itself
@@ -1376,20 +1402,26 @@ impl Rider {
         self.boosting = false;
         self.rail_cooldown = (self.rail_cooldown - dt).max(0.0);
 
-        // ---- the records (`cBoarder::vf7` 0x117198): on the snow the game's, eased toward what its control state
-        // set last tick (row G1i1, `control_tick`); elsewhere (STANDIN, row G1i2) the port's own shaping
+        // ---- the records (`cBoarder::vf7` 0x117198): on the snow and in the air the game's, eased toward what its
+        // control state set last tick (rows G1i1, G1i2a: `control_tick`); on rails (STANDIN, row G1i2b) the port's own
         let speed0 = self.vel.length();
         let sped = self.speed_timer > 0.0;
         let boosting_input = (input.boost && self.boost > 0.0) || sped;
-        let game_ctl = self.grounded && self.rail.is_none();
+        let game_ctl = self.rail.is_none();
         if game_ctl {
             self.ease_records();
-        } else {
-            // (off the snow a ground state gives way to the rail's 0xf or the natural air's 0xd; their ticks are the
-            // port's, row G1i2)
-            if matches!(self.ctl, control_tick::CRUISE | control_tick::PREWIND | control_tick::JUMP) {
-                self.ctl = if self.rail.is_some() { 0xf } else { 0xd };
+            if !self.grounded {
+                self.boost_lvl = 0.0;
+                if matches!(
+                    self.ctl,
+                    control_tick::CRUISE | control_tick::PREWIND | control_tick::JUMP | control_tick::LAND_NORMAL | control_tick::LAND_HARD
+                ) {
+                    self.set_control(control_tick::NATURAL_AIR);
+                }
             }
+        } else {
+            // (on a rail, ground/air states give way to rail 0xf; its control tick is row G1i2b)
+            self.ctl = control_tick::RAIL;
             self.boost_lvl = 0.0;
             // (no `Sfx_OnBoost` 0x2197d8 here: of `Boarder_UpdateBoost` 0x11d038's callers only the cruise and the gate
             // pass its `start`, the pad's bit 4 (`CruiseControl_Update` 0x103050, `Gate2BaseControl_Update` 0x105dec);
@@ -1409,10 +1441,9 @@ impl Rider {
             self.brake_v += e.clamp(-r * dt, r * dt);
         }
 
-        // STANDIN (row G1i2): the reset button in the air and on rails (`NaturalAirControl_Update` pad bit 1,
-        // `RailSlideControl_Update`, both storing no +0x304), whose control states the app does not run; the spin
-        // state's and the snow's are the game's (`spin_tick`, `ground_control`)
-        if input.reset && (self.rail.is_some() || (!self.grounded && self.spin_st.is_none())) {
+        // STANDIN (row G1i2b): the reset button on rails (`RailSlideControl_Update`, storing no +0x304); the snow's,
+        // natural air's and spin's are the game's (`ground_control`, `natural_air_control`, `spin_tick`)
+        if input.reset && self.rail.is_some() {
             self.request_reset(None);
             return;
         }
@@ -1447,9 +1478,10 @@ impl Rider {
             handled = true;
             p = self.pos;
             if left {
-                // off the snow (`Boarder_TakeOff` ran inside the tick): the air from here
+                // off the snow (`Boarder_TakeOff` ran inside the tick): natural air (0xd) settles before spin (0x10)
                 let c = self.charge;
                 self.take_off();
+                self.set_control(control_tick::NATURAL_AIR);
                 self.charge = c;
             } else {
                 let n = self.normal;
@@ -1494,13 +1526,25 @@ impl Rider {
                 self.jump_c = 0.0;
                 self.jump_delay = 0.0;
                 self.take_off();
+                self.set_control(control_tick::SPIN);
                 self.begin_chain(0, steep);
                 jumped = true;
             }
-            if self.spin_st.is_some() { self.spin_tick(&input, dt) } else { self.air_rotation(&input, dt) }
-            if let Some(flag) = self.reset_req.take() {
-                self.request_reset(flag);
-                return;
+            if self.ctl == control_tick::NATURAL_AIR {
+                self.natural_air_control(&input);
+                if let Some(flag) = self.reset_req.take() {
+                    self.request_reset(flag);
+                    return;
+                }
+            } else if self.spin_st.is_some() {
+                self.spin_tick(&input, dt);
+                if let Some(flag) = self.reset_req.take() {
+                    self.request_reset(flag);
+                    return;
+                }
+            } else {
+                self.air_rotation(&input, dt);
+                self.air_grabs(&input, dt);
             }
             // the landing alignment of a spin or flip is `SpinState_Update`'s (G20c3c2, G1a5b3b): until then only a jump
             // or a drop without either keeps the game's attitude (G20c3c, G20c3b)
@@ -1511,7 +1555,6 @@ impl Rider {
                 self.sc.update_spin((-(self.spin - self.spin_base) * m * 57.295776) as i32);
                 self.sc.update_flip(((self.flip - self.flip_base) * 57.295776) as i32);
             }
-            self.air_grabs(&input, dt);
             if input.jump { self.charge = self.crouch_v; }
         }
 
@@ -1954,7 +1997,7 @@ impl Rider {
         if dx < -0.5 { ps2 |= 0x8000; }
         if 0.5 < input.flip { ps2 |= 0x1000; }
         if input.flip < -0.5 { ps2 |= 0x4000; }
-        let ly = if !self.grounded { byte(-input.flip) } else if input.tuck { 0 } else if input.brake { 255 } else { 128 };
+        let ly = if !self.grounded && input.flip != 0.0 { byte(-input.flip) } else if input.tuck { 0 } else if input.brake { 255 } else { 128 };
         self.pad_dev.read(ps2, Some([byte(input.steer), ly, 128, 128]));
     }
 
@@ -2008,9 +2051,22 @@ impl Rider {
             ..Default::default()
         };
         let before = self.spin;
+        // `AnimClip_Advance` 0x15a030 + `SpinState_UpdateTrickClips` 0x1272e8 (row G1i2a)
+        self.trick_ctl.advance(dt);
+        let tc = if st.owed == 0.0 {
+            self.trick_clips_step((word >> 9) & 1, word & 0xff)
+        } else {
+            0
+        };
         // `SpinState_StartFromStick` 0x102158's answer, for the state to ask (row G1a5b3b2)
         let start = crate::jump::spin_start_from_stick(word, self.stats.bytes[12], self.switch != self.data.goofy);
-        let anim = crate::spin::Anim { start_from_stick: start.is_some() as u32, ..Default::default() };
+        let anim = crate::spin::Anim {
+            clip: if self.trick_ctl.clip == 0x300 { 0 } else { self.trick_ctl.clip },
+            clip_type: if self.trick_ctl.clip == 0x300 { 0 } else { self.trick_ctl.clip_type },
+            trick_clips: tc,
+            start_from_stick: start.is_some() as u32,
+            ..Default::default()
+        };
         let calls = crate::spin::spin_update(word, &mut st, &mut r, &anim);
         let started = start.filter(|_| calls.contains(&crate::spin::SpinCall::StartFromStick));
         for c in calls {
@@ -2131,8 +2187,11 @@ impl Rider {
         [f[1], f[2], f[0], f[3]]
     }
     pub fn capture_gated(&self) -> bool { !self.grab_safe() || (self.uber > 0.0 && !self.uber_done) }
-    /// Is the board free to land (no grab clip short of its safe marker)?
+    /// Is the board free to land (no grab, tweak or uber clip short of its safe marker 4)?
     pub fn grab_safe(&self) -> bool {
+        if self.trick_ctl.clip_type != 8 {
+            return !self.trick_ctl.is_unsafe();
+        }
         if self.grab != 0 { return false; }
         match self.grab_out {
             // flag 4 is set once the clip's time is past its fourth marker (`AnimClip_Advance` 0x15a030: marker < the larger of
@@ -2232,6 +2291,7 @@ impl Rider {
             self.steer = m.steer;
             let fakie = self.rail_twist.cos() < -0.5;
             self.take_off();
+            self.set_control(if hop { control_tick::SPIN } else { control_tick::NATURAL_AIR });
             if fakie { self.switch_takeoff = true; self.set_switch(true); }
             self.rail = None;
             self.rail_grid = false;
@@ -2326,6 +2386,7 @@ impl Rider {
             // leaving fakie (or switch) gives the next air trick the switch bonus
             let fakie = self.rail_twist.cos() < -0.5;
             self.take_off();
+            self.set_control(if hop { control_tick::SPIN } else { control_tick::NATURAL_AIR });
             if fakie { self.switch_takeoff = true; self.set_switch(true); }
             self.rail = None;
             self.rail_cooldown = 0.45;

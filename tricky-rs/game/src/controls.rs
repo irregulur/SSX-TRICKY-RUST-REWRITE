@@ -358,12 +358,13 @@ const GRAB_COMBOS: [u32; 15] = [
 ];
 
 impl ButtonMap {
-    /// `DATA/CONFIG/BTNMAP<n>.DAT` (n = stats+0x6c, 0 or 1) as `Pad_SetupVibration` 0x152770 binds it for a
-    /// rider: the 14 buttons (`IS_BOOL`, actions 0x1b..0x28), the 15 grab combos to the rider's trick slots
-    /// (`slots`: column 0 of the rider's and board's `tricky_data::trick_slots::TRICK_SLOTS`), and the 16 axes
-    /// (`IS_ANALOG`). Action ids no grab is bound to keep 0 and 0 (always "down").
+    /// `DATA/CONFIG/BTNMAP<n>.DAT` (n = stats+0x6c, 0 or 1) as `Input_InitDefaults` 0x179238 and `Pad_SetupVibration`
+    /// 0x152770 bind it for a rider: unbound action ids start at `NONE` (`0xffffffff`, never "down"), then the 15 grab
+    /// combos are bound to the rider's trick slots (`slots`: column 0 of the rider's and board's
+    /// `tricky_data::trick_slots::TRICK_SLOTS`), the 14 buttons (`IS_BOOL`, actions 0x1b..0x28), and the 16 axes
+    /// (`IS_ANALOG`).
     pub fn btnmap(n: u32, slots: [u16; 15]) -> ButtonMap {
-        let mut m = ButtonMap { pressed: [0; 0x29], looked_at: [0; 0x29], axes: [(0, false); 16] };
+        let mut m = ButtonMap { pressed: [NONE; 0x29], looked_at: [NONE; 0x29], axes: [(0, false); 16] };
         let mut bind = |a: usize, pressed: u32, other: u32| {
             m.pressed[a] = pressed;
             m.looked_at[a] = other | pressed;

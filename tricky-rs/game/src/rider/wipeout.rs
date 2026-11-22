@@ -759,6 +759,7 @@ impl Rider {
         self.wipe = None;
         self.grounded = on_snow;
         self.set_motion(if on_snow { 2 } else { 1 });
+        self.set_control(if on_snow { control_tick::CRUISE } else { control_tick::NATURAL_AIR });
         self.spin = 0.0;
         self.flip = 0.0;
         self.clear_air();

@@ -87,6 +87,11 @@ fn tuck_crouches_and_brake_brakes_in_cruise() {
     let rails = Rails::default();
     let mut tuck = rider();
     let mut brake = rider();
+    // let the placed riders settle onto the slope (placed 1.0146 m up in NaturalAir, where you cannot brake in mid-air)
+    for _ in 0..30 {
+        tuck.step(&world, &rails, Input::default(), 1.0 / 60.0);
+        brake.step(&world, &rails, Input::default(), 1.0 / 60.0);
+    }
     for _ in 0..30 {
         tuck.step(&world, &rails, Input { tuck: true, ..Input::default() }, 1.0 / 60.0);
         brake.step(&world, &rails, Input { brake: true, ..Input::default() }, 1.0 / 60.0);
