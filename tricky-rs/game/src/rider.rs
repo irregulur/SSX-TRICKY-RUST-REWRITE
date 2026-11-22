@@ -506,7 +506,9 @@ pub struct Rider {
     /// after a take-off (state 0x10), and the pad the game reads (the device the mapper reads, its button map)
     pub spin_st: Option<crate::spin::SpinObj>,
     pub pad_dev: crate::controls::PadDevice,
-    /// the take-off's flight prediction: the landing's surface word and normal (+0x57f0, +0x57e0)
+    /// the take-off's flight prediction: landing point, velocity, normal and surface word (+0x57c0..+0x57f0)
+    pub land_point: [f32; 4],
+    pub land_vel: [f32; 4],
     pub land_word: u32,
     pub land_normal: [f32; 4],
     /// the wind-ups the last take-off left the snow with (rider+0x220, +0x22c, before `Takeoff_SetSpinRates` clears them)
@@ -578,7 +580,7 @@ impl Rider {
                last_trick: String::new(), trick_timer: 0.0, crashed: 0.0, hard_land: 0.0, crouch_v: 0.0, brake_v: 0.0, jump_c: 0.0, jump_delay: 0.0, height: 0.0,
                course_dir: None, course_pts: None, wipe: None, crash_at: None, gm: None, crash_spray: None, land_puffs_vn: None, lean: [0.0; 3], up: [0.0, 0.0, 1.0, 0.0], recover: None, ai: false, down_t: 0.0, getup: -1.0, stumble: 0.0, wall_hit: None, speed_timer: 0.0, spin_timer: 0.0, spin_used: false, tube_class: u8::MAX, gate_p: 0.0, gate_hi: 0.0, gate_lo: 0.0, gate_still: 0.0, gate_target: 0.0, gate_speed: 0.0, gate_state: 8, gate_rock_dir: 0, band: (0.005, 0.0250417), spin_base: 0.0, flip_base: 0.0, late: false, cause: "", spin_ax: Axis::default(), flip_ax: Axis::default(), air_mode2: false, rail_off: 0.0, rail_time: 0.0, rail_halves: 0, boost_was: false, chain: 0,
                ubers: Vec::new(), uber: 0.0, uber_id: 0, uber_done: false, letters: 0, multiplier: 1,
-               sc: new_score(), tick_acc: 0.0, full_count: 0, rail_kind: 0, rail_lean: 0.0, rail_goal0: 0.0, rail_committed: 0.0, show_parts: Vec::new(), speech: Vec::new(), hit_by: u32::MAX, grab_scored: false, grab_tw: false, hit_wait: 0, att: None, last_hit: Default::default(), impact: 0.0, impact_n: [0.0; 4], knocks: 0.0, slot: 0, place_ray: None, hit_kind: 0, land_time: 0.0, takeoffs: 0, rail_blend: 0.0, rail_word: 0, rail_grid: false, rail_hit: [0.0; 4], spin_st: None, pad_dev: Default::default(), land_word: u32::MAX, land_normal: [0.0, 0.0, 1.0, 0.0], takeoff_wind: (0.0, 0.0), ctl: control_tick::CRUISE, cruise: Default::default(), land_normal_ctl: Default::default(), natural_air_ctl: Default::default(), rail_ctl: Default::default(), rail_turn_t: 0.0, prewind_started: 0, trick_ctl: Default::default(), rec: Default::default(), boost_lvl: 0.0, reset_flag: 0, reset_req: None, reset: None, reset_acc: 0.0, fade: (1.0, 0.0), reset_ctx: ResetCtx::default(),
+               sc: new_score(), tick_acc: 0.0, full_count: 0, rail_kind: 0, rail_lean: 0.0, rail_goal0: 0.0, rail_committed: 0.0, show_parts: Vec::new(), speech: Vec::new(), hit_by: u32::MAX, grab_scored: false, grab_tw: false, hit_wait: 0, att: None, last_hit: Default::default(), impact: 0.0, impact_n: [0.0; 4], knocks: 0.0, slot: 0, place_ray: None, hit_kind: 0, land_time: 0.0, takeoffs: 0, rail_blend: 0.0, rail_word: 0, rail_grid: false, rail_hit: [0.0; 4], spin_st: None, pad_dev: Default::default(), land_point: [0.0; 4], land_vel: [0.0; 4], land_word: u32::MAX, land_normal: [0.0, 0.0, 1.0, 0.0], takeoff_wind: (0.0, 0.0), ctl: control_tick::CRUISE, cruise: Default::default(), land_normal_ctl: Default::default(), natural_air_ctl: Default::default(), rail_ctl: Default::default(), rail_turn_t: 0.0, prewind_started: 0, trick_ctl: Default::default(), rec: Default::default(), boost_lvl: 0.0, reset_flag: 0, reset_req: None, reset: None, reset_acc: 0.0, fade: (1.0, 0.0), reset_ctx: ResetCtx::default(),
                vf7: crate::boarder_tick::TickRider { active: 1, time_scale: 1.0, speed_limit: SPEED_CAP * 100.0, ..Default::default() }, speed_sum: 0.0, speed_samples: 0.0 };
         // the start line's `Boarder_PlaceAt` 0x11cae8 (`cBoarder::vf8` 0x116ab8: heading from the path's direction)
         r.att = Some((orient::placed_attitude(placed_heading(yaw), None), yaw));
@@ -1337,7 +1339,7 @@ impl Rider {
         };
         let p = crate::air::predict_at_takeoff(ground_tick::to_game(self.pos, 100.0, 1.0), ground_tick::to_game(self.vel, 100.0, 0.0), ground_tick::game_dir(self.normal), &mut ray);
         self.land_time = p.t_land;
-        (self.land_word, self.land_normal) = (p.word, p.normal);
+        (self.land_point, self.land_vel, self.land_word, self.land_normal) = (p.point, p.vel, p.word, p.normal);
         self.takeoffs = self.takeoffs.wrapping_add(1);
         self.speech.push(RiderSpeech::AirEnter { kind, air: self.land_time, up: self.vel.y * 100.0 });
     }

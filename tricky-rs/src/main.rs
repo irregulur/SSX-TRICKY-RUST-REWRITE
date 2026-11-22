@@ -2816,23 +2816,33 @@ fn chase_camera(
         }
     }
     // C / Triangle: the next camera (board, near, far, over), as in the original's options
+    if let Some(cml) = race.0.cml.clone() {
+        chase.0.set_cml(cml);
+    }
     if game.screen == ui::Screen::Playing && (keys.just_pressed(KeyCode::KeyC) || pads.iter().any(|p| p.just_pressed(GamepadButton::North))) {
         chase.0.cycle(1);
         *flash = 1.5;
     }
     *flash = (*flash - tick.frame_dt).max(0.0);
     for mut t in label.iter_mut() { t.0 = if *flash > 0.0 { chase.0.name().to_uppercase() } else { String::new() }; }
-    // the chase camera on the rider's last tick, by the ticks run (`GameTick`)
-    let (mut pos, mut look) = chase.0.update(&world.0, &rider.0, tick.dt());
+    // the exact game chase camera (row E11d) on all riders in race order, by the ticks run (`GameTick`)
+    let mut all_riders: Vec<&Rider> = Vec::with_capacity(1 + opponents.0.len());
+    all_riders.push(&rider.0);
+    for o in &opponents.0 {
+        all_riders.push(&o.rider);
+    }
+    let (mut pos, mut look) = chase.0.update_riders(&world.0, &all_riders, 0, tick.dt());
     // the camera on the rider as drawn (row G21, `DrawLerp`)
     let shift = rider.1.at(rider.0.pos) - rider.0.pos;
     (pos, look) = (pos + shift, look + shift);
+    let mut use_exact_basis = true;
     let mut roll = chase.0.roll;
     if game.screen == ui::Screen::Menu {
         // the menu looks at the chosen rider in the gate, circling slowly
         let a = rider.0.yaw + 0.6 + (game.since * 0.25).sin() * 0.9;
         look = rider.0.pos + Vec3::Y * 1.0;
         pos = look - Vec3::new(a.sin(), 0.0, a.cos()) * 4.2 + Vec3::Y * 0.7;
+        use_exact_basis = false;
     }
     // TRICKY_ORBIT=distance,angle,height puts the camera around the rider instead (for close-ups)
     if let Ok(o) = std::env::var("TRICKY_ORBIT") {
@@ -2842,13 +2852,14 @@ fn chase_camera(
             look = rider.0.pos + Vec3::Y * 0.9;
             pos = look + Vec3::new(a.sin(), 0.0, a.cos()) * v[0] + Vec3::Y * v[2];
             roll = 0.0;
+            use_exact_basis = false;
         }
     }
     if game.screen == ui::Screen::Menu { roll = 0.0; }
     // TRICKY_CAM=x,y,z,tx,ty,tz (Bevy metres): a fixed camera (for checks)
     if let Ok(o) = std::env::var("TRICKY_CAM") {
         let v: Vec<f32> = o.split(',').filter_map(|x| x.parse().ok()).collect();
-        if v.len() == 6 { pos = Vec3::new(v[0], v[1], v[2]); look = Vec3::new(v[3], v[4], v[5]); roll = 0.0; }
+        if v.len() == 6 { pos = Vec3::new(v[0], v[1], v[2]); look = Vec3::new(v[3], v[4], v[5]); roll = 0.0; use_exact_basis = false; }
     }
     let mut fov_h = chase.0.fov;
     if let Some(s) = intro_view {
@@ -2864,11 +2875,16 @@ fn chase_camera(
         look = if s.at_rider { rider.0.pos + Vec3::Y } else { pos + Vec3::new(dir.x, dir.z, -dir.y) };
         roll = 0.0;
         fov_h = s.fov;
+        use_exact_basis = false;
     }
     let (tf, proj) = &mut *cam;
-    let mut t = Transform::from_translation(pos).looking_at(look, Vec3::Y);
-    t.rotate_local_z(roll);
-    **tf = t;
+    **tf = if use_exact_basis {
+        Transform { translation: pos, rotation: chase.0.rotation(), scale: Vec3::ONE }
+    } else {
+        let mut t = Transform::from_translation(pos).looking_at(look, Vec3::Y);
+        t.rotate_local_z(roll);
+        t
+    };
     // the original's field of view is across the width of the picture
     if let Projection::Perspective(p) = &mut **proj {
         let aspect = p.aspect_ratio.max(0.1);

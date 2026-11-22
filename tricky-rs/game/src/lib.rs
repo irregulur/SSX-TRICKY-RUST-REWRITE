@@ -192,6 +192,7 @@ pub mod particleman;
 pub mod campath;
 pub mod camscript;
 pub mod camera_ctl;
+pub mod camera_host;
 pub mod cml;
 pub mod camera_update;
 pub mod effects;

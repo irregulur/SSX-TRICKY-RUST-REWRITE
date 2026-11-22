@@ -431,13 +431,19 @@ impl CollisionWorld {
     /// First thing a straight line from `from` to `to` runs into (terrain or object, any side).
     /// Returns the distance along the line, if anything is in the way.
     pub fn raycast(&self, from: Vec3, to: Vec3) -> Option<f32> {
+        self.raycast_hit(from, to).map(|(t, _, _)| t * (to - from).length())
+    }
+
+    /// Segment raycast against mesh triangles and movers (folder-level fallback for `World_RayCast` 0x25aff8):
+    /// returns `(t_frac, hit_pos, normal)` facing toward `from`.
+    pub fn raycast_hit(&self, from: Vec3, to: Vec3) -> Option<(f32, Vec3, Vec3)> {
         let d = to - from;
         let len = d.length();
         if len < 1e-4 { return None; }
         let dir = d / len;
         let steps = (len / (CELL * 0.5)).ceil() as i32;
         let mut seen: Vec<(i32, i32)> = Vec::new();
-        let mut best: Option<f32> = None;
+        let mut best: Option<(f32, Vec3)> = None;
         // Moller-Trumbore
         let mut test = |t: &Tri| {
             if self.skip(t) { return; }
@@ -453,7 +459,10 @@ impl CollisionWorld {
             let v = f * dir.dot(q);
             if v < 0.0 || u + v > 1.0 { return; }
             let dist = f * e2.dot(q);
-            if dist > 0.02 && dist < len && best.is_none_or(|b| dist < b) { best = Some(dist); }
+            if dist > 0.02 && dist < len && best.is_none_or(|b| dist < b.0) {
+                let n = if t.face.dot(dir) > 0.0 { -t.face } else { t.face };
+                best = Some((dist, n));
+            }
         };
         for i in 0..=steps {
             let p = from + d * (i as f32 / steps as f32);
@@ -466,7 +475,7 @@ impl CollisionWorld {
             }
         }
         for t in self.movers_in(from.min(to), from.max(to)) { test(t); }
-        best
+        best.map(|(dist, n)| (dist / len, from + dir * dist, n))
     }
 
     /// Debug: describe every wall triangle within `radius` of a point.

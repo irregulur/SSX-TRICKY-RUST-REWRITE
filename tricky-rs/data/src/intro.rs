@@ -82,6 +82,12 @@ impl Cml {
         None
     }
     pub fn has(&self, script: &str) -> bool { self.find(2, script).is_some() }
+    /// Raw `0x174`-byte named camera record body (`CamCamera`: `0x120` view + `0x48` lens + `0x0c` class words)
+    /// from the loaded `.cml` files (`course`, `commonob`, `scripts`).
+    pub fn raw_camera(&self, n: &str) -> Option<&[u8]> {
+        let (d, b) = self.find(0, n)?;
+        d.get(b..b + 0x174)
+    }
     /// A named camera; None for one that rides along with a rider (the chase cameras).
     pub fn camera(&self, n: &str) -> Option<Shot> {
         let (d, b) = self.find(0, n)?;

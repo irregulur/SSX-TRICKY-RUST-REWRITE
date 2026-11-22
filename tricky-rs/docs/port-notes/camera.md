@@ -214,3 +214,27 @@ case-insensitive walk of a kind's list) stays for the app's intro until it moves
   what `CamCamera_GetView` 0x16dda8 returns), then jumps to `CamLens_Update` 0x1730d8 on the view's lens (+4 +0x120,
   `CamCamera_GetLens` 0x16ddb8). Both are empty (`jr ra`) in this build; the verb is inferred from their place.
   0x1730d8 was not a function in Ghidra (8 bytes after `CamLens_SetHeight` 0x1730c0); made one.
+
+## Exact chase camera in the app (row E11d; `game/src/camera_host.rs`, `game/src/race.rs`, `src/main.rs`, `data/src/intro.rs`)
+
+- Replaced `race.rs`'s hand-written `ChaseCam` stand-in with `camera_host::ExactCam`, re-exported as
+  `race::ChaseCam`.
+- **Parameter blocks (`DATA/CAMERA/COMMONOB.CML`)**: `tricky_data::intro::Cml::raw_camera` returns the raw
+  `0x174`-byte camera body (`CamP` `+0x00..+0x120`, `LookP` `+0x120..+0x168`, `f168` near plane, `w170` latch flag)
+  parsed by `CamBlock::parse`; verified against `COMMONOB.CML` on the disc (`chase board`, `chase near`, `chase far`,
+  `chase over`, `chase reverse`, `chase eyes`, `replay cam`, `replay start`).
+- **26-slot rider list**: `ExactCam::update_riders` builds slots `0` (focus rider), `1..8` (opponents in race order),
+  `8` (focus rider's predicted landing point `+0x57c0`), `10`/`11` (prev/next in race order), and `14..26` (by
+  character index), matching `Camera_SetFocusRider` 0x173c50 / `Camera_UpdateRiderTracks` 0x174010, and steps each
+  slot through `camera::track_rider` (`Camera_TrackRider` 0x173270). `Rider::air_enter` now retains `land_point`
+  (`+0x57c0`) and `land_vel` (`+0x57d0`) from `AirPredict_AtTakeoff` 0x123b10 so `CamCamera_EvalLookAt` 0x1722e8
+  computes the exact landing dip.
+- **Per-tick pipeline (60 Hz)**: `cBxCamera::vf1` 0x177078 clock (`+0x10`) & wipe-out blend (`+0x20`) ->
+  `camscript::cut_to` 0x174c98 / `goto_named` 0x174888 -> `camera::eval_position` 0x16e900 (with the 189-float shake
+  table from `SLUS_203.26` `0x337798` and `camera::collide_world` 0x16fe60 / `collide_push` 0x16fb08 backed by
+  `CourseGround::ray_cast` + `CourseGround::query_instances` matching `World_IsBlocked` 0x25c690) ->
+  `camera::eval_look_at` 0x1722e8 -> `camera::smooth_output` 0x174238 -> `camera_update::update_cameras` 0x17f390
+  (producing both the Bevy camera `Transform` rotation basis and the exact 4×4 transposed view matrix at `race+0xc0`,
+  unblocking row E1b2g7d5j3b2).
+- **Stand-in left**: fallback `COMMONOB.CML` preset blocks in `camera_host::fallback_presets` when no `Cml` file is
+  loaded (headless unit tests without disc/folder `.cml`).
