@@ -329,13 +329,15 @@ pub fn read_axis(d: &PadDevice, mask: u32, negate: bool) -> f32 {
     }
 }
 
-/// A button map as the mapper holds it (`cInput` +4, +0xa8, +0x14c): per action id 0..0x28 the buttons that must
-/// be down and the buttons looked at (the map's other set with them), and per axis its mask and negate flag.
+/// A button map as the mapper holds it (`cInput` +4, +0xa8, +0x14c, +0x1cc): per action id 0..0x28 the buttons
+/// that must be down, the buttons looked at (the map's other set with them), per axis its mask and negate flag,
+/// and the "shown" buttons (`Input_SetShownButton` 0x179850, `cInput +0x1cc`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ButtonMap {
     pub pressed: [u32; 0x29],
     pub looked_at: [u32; 0x29],
     pub axes: [(u32, bool); 16],
+    pub shown: [u32; 0x29],
 }
 
 /// The button map's grab combos in file order (`IS_BOOLGRAB` easyA..hardE), the same in both maps.
@@ -364,10 +366,11 @@ impl ButtonMap {
     /// `tricky_data::trick_slots::TRICK_SLOTS`), the 14 buttons (`IS_BOOL`, actions 0x1b..0x28), and the 16 axes
     /// (`IS_ANALOG`).
     pub fn btnmap(n: u32, slots: [u16; 15]) -> ButtonMap {
-        let mut m = ButtonMap { pressed: [NONE; 0x29], looked_at: [NONE; 0x29], axes: [(0, false); 16] };
+        let mut m = ButtonMap { pressed: [NONE; 0x29], looked_at: [NONE; 0x29], axes: [(0, false); 16], shown: [0; 0x29] };
         let mut bind = |a: usize, pressed: u32, other: u32| {
             m.pressed[a] = pressed;
             m.looked_at[a] = other | pressed;
+            m.shown[a] = pressed;
         };
         for (k, s) in slots.iter().enumerate() {
             bind(*s as usize, GRAB_COMBOS[k], SHIFTS);

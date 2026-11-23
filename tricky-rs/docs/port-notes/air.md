@@ -168,8 +168,18 @@ Part of the port notes (index: [README.md](README.md)); units and wording as des
   stay 0); 7 to 9 the actuator setup (align, then up to 5 request polls before giving up, +0x54); 10 reads the pad
   (a failed read or a non-zero status byte is "gone": +0x44 = 1, back to 1). The frame is the pad's 20-byte read
   made into the 0x2c record (`Record::from_pad`), or all zero (valid only when the pad is gone); the motors'
-  timers run last (above) and send `scePadSetActDirect` when changed. The app does not use any of this yet: it
-  reads Bevy's gamepad (E10c3).
+  timers run last (above) and send `scePadSetActDirect` when changed.
+- In the app (row E10c3): `src/padhost.rs` converts Bevy keyboard and gamepad state into PS2 libpad words + sticks
+  (`inputring::Record`), pushes them through `Input_ReadDevices` 0x17a668 -> `InputRecorder_Playback` 0x17a740 ->
+  `Ps2Pad::play` 0x17b278, loads `data/config/btnmap0.dat` and `btnmap1.dat` from `TRICKY_DISC` via
+  `input::parse_button_map` 0x179b18, and binds them via `input::bind` (`Pad_SetupVibration` 0x152770) including the
+  `cInput +0x1cc` "shown" button masks (`Input_SetShownButton` 0x179850: `PadCfg_GrabPressed` for the 15 grab slots,
+  `PadCfg_ButtonPressed` for actions `0x1b..=0x28`, `0` for unbound slots). `Rider::vibration` (`Vibration_Construct`
+  0x150a70, `cPlayer +0x874`) and `Rider::pad_rumble` (`cPS2Device` motors) are driven by `cPlayer::vf11` 0x1532c0
+  (`Rumble_Impact` 0x150a80 on ground/wipe-out spray impacts), `cPlayer::vf12` 0x153350 (`Rumble_Add` 0x150be8 on
+  ground/air/wipe-out wall knocks and `AirMotion_Update` landing `vn * -0.00072000007`), and `cPlayer::vf7` 0x153390
+  (`Rumble_Update` 0x150d18 after `cBoarder::vf7`), ticking `Rumble::tick` (`cPS2Device::vf9` 0x17b270) into Bevy's
+  `GamepadRumbleRequest` channel.
 
 - Our rider jumps through `jump::jump_impulse` (row G1a5b3a): on snow with the ground normal and the board's
   forward (steep lips leaned along the lip, the flag to `Score_StartTrickChain`), off a rail along the board's up;

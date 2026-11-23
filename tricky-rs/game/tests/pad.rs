@@ -117,7 +117,7 @@ fn axes_and_queries_match_the_original() {
         let looked = pressed | [0, 0x3600, g.next() & 0xffff][g.next() as usize % 3];
         r.mem.write_u32(inp + 4, pressed);
         r.mem.write_u32(inp + 0xa8, looked);
-        let mut map = ButtonMap { pressed: [0; 0x29], looked_at: [0; 0x29], axes: [(0, false); 16] };
+        let mut map = ButtonMap { pressed: [0; 0x29], looked_at: [0; 0x29], axes: [(0, false); 16], shown: [0; 0x29] };
         map.pressed[0] = pressed;
         map.looked_at[0] = looked;
         let mut m = Mapper { map: &map, pad: &d };
@@ -340,6 +340,64 @@ fn key_repeat_is_the_original() {
         keys += (k.key != 0) as u32;
     }
     eprintln!("{keys} keys given");
+}
+
+/// Row E10c3: `DATA/CONFIG/BTNMAP0.DAT` and `BTNMAP1.DAT` loaded directly from `TRICKY_DISC`, parsed via
+/// `input::parse_button_map` (`Pad_ParseButtonMap` 0x179b18) and bound via `input::bind` (`Pad_SetupVibration`
+/// 0x152770), match both `ButtonMap::btnmap` and `cInput +0x1cc` (`Input_SetShownButton` 0x179850); and `Ps2Pad::play`
+/// + `Rider::set_host_pad` + `Rider::rumble_add`/`rumble_impact`/`rumble_update` drive `cPlayer::GetControls` and
+/// `cPS2Device` motors end-to-end.
+#[test]
+fn disc_btnmaps_shown_buttons_and_vibration_match_original() {
+    let Ok(disc_path) = std::env::var("TRICKY_DISC") else { return };
+    let mut files = tricky_data::big::Files::new(tricky_data::disc::Disc::open(&disc_path).unwrap());
+    files.mount_game_archives().unwrap();
+    let slots: [u16; 15] = std::array::from_fn(|k| (k as u16 * 7 + 3) % 0x1b);
+    for n in 0..2u32 {
+        let text = files.load(&format!("data/config/btnmap{n}.dat")).unwrap().expect("BTNMAP on disc");
+        let cfg = parse_button_map(&text);
+        if let Some(mut r) = parser_runner() {
+            assert_eq!(game_parse(&mut r, &text), cfg, "disc BTNMAP{n}.DAT parse");
+        }
+        let bound = bind(&cfg, slots);
+        assert_eq!(bound, ButtonMap::btnmap(n, slots), "disc BTNMAP{n}.DAT bind + shown");
+        // Verify cInput +0x1cc shown buttons match grab & bool pressed masks, and unbound slots stay 0
+        for (k, &s) in slots.iter().enumerate() {
+            assert_eq!(bound.shown[s as usize], cfg.grabs[k].0, "map {n} grab shown slot {s}");
+        }
+        for k in 0..14 {
+            assert_eq!(bound.shown[0x1b + k], cfg.bools[k].0, "map {n} bool shown action {:#x}", 0x1b + k);
+        }
+        for s in 0..0x1b {
+            if !slots.contains(&(s as u16)) {
+                assert_eq!(bound.shown[s], 0, "map {n} unbound shown slot {s}");
+            }
+        }
+    }
+
+    // End-to-end Rider with disc BTNMAP0 + Ps2Pad::play + Vibration (cPlayer::vf11/vf12/vf7)
+    let text0 = files.load("data/config/btnmap0.dat").unwrap().unwrap();
+    let cfg0 = parse_button_map(&text0);
+    let mut list = tricky_game::inputring::Input::new();
+    let rec = tricky_game::inputring::Record {
+        raw: [0; 16],
+        valid: 1,
+        analog: 1,
+        buttons: 0x0040 | 0x0080, // Cross + Square
+        sticks: [255, 0, 128, 128], // left stick right + up
+    };
+    list.read_devices(&[rec, tricky_game::inputring::Record::none(false)]);
+    list.playback();
+    let mut r = tricky_game::rider::Rider::new(glam::Vec3::ZERO, 0.0);
+    r.set_host_pad(list.pads[0].dev, Some(cfg0));
+    let bm = r.button_map();
+    assert_eq!(bm.shown[0x1b], tricky_game::controls::X);
+    assert_eq!(bm.shown[0x1d], tricky_game::controls::SQUARE);
+    r.rumble_impact([0.0, 0.0, -2.0, 0.0], [0.0, 0.0, 1.0, 0.0]);
+    assert!(r.vibration.level > 1.0, "Rumble_Impact should raise vibration peak");
+    r.rumble_update();
+    let motors = r.pad_rumble.tick(true);
+    assert!(matches!(motors, Some((1, l)) if l > 0), "Rumble_Impact + Rumble_Update must drive motors: {motors:?}");
 }
 
 #[test]

@@ -92,8 +92,11 @@ enum Call {
     Crash,
     /// `Boarder_AddMeter` 0x11b018
     Meter(f32),
-    /// the rider's controller's virtual +0x64 (`cBoarder::EmitBrakeSpray` 0x11a798: point, velocity, normal)
+    /// the rider's controller's virtual +0x64 (`cPlayer::vf11` 0x1532c0: `cBoarder::EmitBrakeSpray` 0x11a798 +
+    /// `Rumble_Impact` 0x150a80: point, velocity, normal)
     Spray(V4, V4, V4),
+    /// the rider's controller's virtual +0x6c (`cPlayer::vf12` 0x153350: `Rumble_Add` 0x150be8)
+    Knock(f32),
 }
 
 /// The rider as the scripts, the rollers and the walls see it: its handle (`rider_id`), human or not, and
@@ -248,9 +251,8 @@ impl RagEnv for Glue<'_> {
     fn accumulate_impact(&mut self, n: V4) {
         accumulate(self.s, n);
     }
-    /// The rider's controller's virtual +0x64 (a human's: `cPlayer::vf11` 0x1532c0, `cBoarder::EmitBrakeSpray`
-    /// 0x11a798, then `Rumble_Impact` 0x150a80): the spray kept in `crash_spray`, as the ground tick's. STANDIN: no
-    /// rumble (the port drives no pad motors).
+    /// The rider's controller's virtual +0x64 (`cPlayer::vf11` 0x1532c0: `cBoarder::EmitBrakeSpray` 0x11a798 +
+    /// `Rumble_Impact` 0x150a80, row E10c3).
     fn rider_contact(&mut self, point: V4, vel: V4, n: V4) {
         self.s.calls.push(Call::Spray(point, vel, n));
     }
@@ -452,9 +454,10 @@ impl WallEnv for Walls<'_> {
     fn speed_stat(&mut self, _: &WallRider) -> f32 {
         self.who.speed_stat
     }
-    /// The rider's controller's virtual +0x6c (a human's: `cPlayer::vf12` 0x153350, `Rumble_Add`). STANDIN: nothing
-    /// (no pad motors), as the ground tick's.
-    fn knock(&mut self, _: &mut WallRider, _: f32) {}
+    /// The rider's controller's virtual +0x6c (`cPlayer::vf12` 0x153350, `Rumble_Add` 0x150be8, row E10c3).
+    fn knock(&mut self, _: &mut WallRider, amount: f32) {
+        self.s.calls.push(Call::Knock(amount));
+    }
     /// `Instance_OnPlayerContact` 0x13bd40 (`knockables::Knockables::contact`).
     fn contact(&mut self, object: u32, r: &mut WallRider, c: &Contact, rec: &CastRecord) {
         let Some(course) = &self.world.course else { return };
@@ -731,7 +734,11 @@ impl Rider {
                 self.add_meter(m);
             }
             Call::Meter(m) => self.add_meter(m),
-            Call::Spray(p, v, n) => self.crash_spray = Some((to_port(p, 0.01), to_port(v, 0.01), to_port(n, 1.0))),
+            Call::Spray(p, v, n) => {
+                self.crash_spray = Some((to_port(p, 0.01), to_port(v, 0.01), to_port(n, 1.0)));
+                self.rumble_impact(v, n);
+            }
+            Call::Knock(amount) => self.rumble_add(amount),
         }
     }
 

@@ -314,13 +314,14 @@ pub fn parse_button_map(text: &[u8]) -> PadConfig {
 
 /// `Pad_SetupVibration` 0x152770's binding of a parsed map to a rider's mapper: the 15 grab combos to the rider's
 /// trick slots (`slots`, as `ButtonMap::btnmap` takes them), the 14 buttons to actions 0x1b..0x28 (`Input_BindButton`:
-/// pressed, and pressed or-ed into the looked-at set), the 16 axes (`Input_BindAxis`). (The map's "shown" buttons,
-/// cInput +0x1cc, and the vibration object it then makes are not kept.)
+/// pressed, and pressed or-ed into the looked-at set), the 16 axes (`Input_BindAxis`), and the "shown" buttons
+/// (`Input_SetShownButton` 0x179850, `cInput +0x1cc`: grab pressed bits and button pressed bits; unbound slots 0).
 pub fn bind(cfg: &PadConfig, slots: [u16; 15]) -> ButtonMap {
-    let mut m = ButtonMap { pressed: [crate::controls::NONE; 0x29], looked_at: [crate::controls::NONE; 0x29], axes: [(0, false); 16] };
+    let mut m = ButtonMap { pressed: [crate::controls::NONE; 0x29], looked_at: [crate::controls::NONE; 0x29], axes: [(0, false); 16], shown: [0; 0x29] };
     let mut button = |a: usize, pressed: u32, other: u32| {
         m.pressed[a] = pressed;
         m.looked_at[a] = other | pressed;
+        m.shown[a] = pressed;
     };
     for (k, s) in slots.iter().enumerate() {
         let (p, o) = cfg.grabs.get(k).copied().unwrap_or((0, 0));

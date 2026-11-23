@@ -1107,7 +1107,10 @@ impl crate::walls::WallEnv for WallGlue<'_> {
     fn speed_stat(&mut self, _: &crate::walls::WallRider) -> f32 {
         self.r.speed_stat()
     }
-    fn knock(&mut self, _: &mut crate::walls::WallRider, _: f32) {}
+    /// `cPlayer::vf12` 0x153350 (`Rumble_Add` 0x150be8, row E10c3).
+    fn knock(&mut self, _: &mut crate::walls::WallRider, amount: f32) {
+        self.r.rumble_add(amount);
+    }
     /// `Instance_OnPlayerContact` 0x13bd40 (`knockables::Knockables::contact`).
     fn contact(&mut self, object: u32, r: &mut crate::walls::WallRider, c: &crate::walls::Contact, rec: &crate::walls::CastRecord) {
         let rider = crate::knockables::Rider { id: rider_id(self.r), human: !self.r.ai, vel: r.vel };
@@ -1221,8 +1224,10 @@ impl crate::walls::WallEnv for AirWallGlue<'_> {
     fn speed_stat(&mut self, _: &crate::walls::WallRider) -> f32 {
         self.r.speed_stat()
     }
-    /// STANDIN: nothing, for `cPlayer::vf12` 0x153350 (`Rumble_Add`, row E10c3).
-    fn knock(&mut self, _: &mut crate::walls::WallRider, _: f32) {}
+    /// `cPlayer::vf12` 0x153350 (`Rumble_Add` 0x150be8, row E10c3).
+    fn knock(&mut self, _: &mut crate::walls::WallRider, amount: f32) {
+        self.r.rumble_add(amount);
+    }
     /// `Instance_OnPlayerContact` 0x13bd40 (`knockables::Knockables::contact`).
     fn contact(&mut self, object: u32, r: &mut crate::walls::WallRider, c: &crate::walls::Contact, rec: &crate::walls::CastRecord) {
         let rider = crate::knockables::Rider { id: rider_id(self.r), human: !self.r.ai, vel: r.vel };
@@ -1397,9 +1402,11 @@ impl gm::Env for GroundEnv<'_> {
         orient::take_off(&mut tr, &mut glue);
     }
 
-    /// STANDIN: effects only, the spray burst is kept in `crash_spray`, for `cBoarder::EmitBrakeSpray` 0x11a798 (row G19).
+    /// `cPlayer::vf11` 0x1532c0: `cBoarder::EmitBrakeSpray` 0x11a798 (`crash_spray`) and `Rumble_Impact` 0x150a80
+    /// (row E10c3).
     fn crash_virtual(&mut self, _g: &mut gm::Rider, pos: V4, vel: V4, normal: V4) {
         self.r.crash_spray = Some((to_port(pos, 0.01), to_port(vel, 0.01), to_port(normal, 1.0)));
+        self.r.rumble_impact(vel, normal);
     }
 
     /// `Boarder_Wipeout` 0x11d830 with its record. Inside the Megaplex tube the walls and glass only steer the rider

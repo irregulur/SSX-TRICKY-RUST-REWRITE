@@ -29,6 +29,7 @@ mod sfnfont;
 mod coursemusic;
 mod pathmusic;
 mod racespeech;
+mod padhost;
 mod editor;
 use tricky_game::rivals;
 mod rider;
@@ -508,6 +509,7 @@ fn main() {
     .init_resource::<editor::Reload>()
     .insert_resource(career)
     .insert_resource(levels)
+    .insert_resource(padhost::PadHost::load())
     .init_resource::<book::Book>()
     .init_resource::<boardsound::RiderLoops>()
     .init_resource::<hudsprites::HudSprites>()
@@ -1722,13 +1724,15 @@ fn gate_window(level: &Level, i: usize) -> Option<(f32, (f32, f32))> {
 }
 
 fn ride(
-    tick: Res<GameTick>, keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>,
+    tick: Res<GameTick>, keys: Res<ButtonInput<KeyCode>>, pads: Query<(Entity, &Gamepad)>,
     world: Res<World>, rails: Res<RailsRes>, mut rider: ResMut<RiderRes>, mut race: ResMut<RaceRes>,
     mut opponents: ResMut<Opponents>, lib: Res<CharLib>, mut props: ResMut<Props>, mut game: ResMut<ui::Game>, list: Res<LevelList>,
-    mut skill_clock: Local<f32>, mut auto: Local<Option<rider::AiDriver>>, wa: Option<ResMut<worldanim::WorldAnim>>, mut restarted: Local<bool>,
+    mut ride_local: Local<(f32, Option<rider::AiDriver>, bool)>, wa: Option<ResMut<worldanim::WorldAnim>>,
+    mut pad_host: ResMut<padhost::PadHost>, mut rumble_out: EventWriter<bevy::input::gamepad::GamepadRumbleRequest>,
 ) {
-    // the AI skill clock
-    let skill_clock = &mut *skill_clock;
+    // the AI skill clock, autoplay driver, and TRICKY_RESTARTAT latch
+    let (skill_clock, auto, restarted) = &mut *ride_local;
+    let first_pad: Option<(Entity, &Gamepad)> = pads.iter().next();
     let RiderRes(r, lerp) = &mut *rider;
     let key = |a: KeyCode, b: KeyCode| keys.pressed(a) || keys.pressed(b);
     let up = key(KeyCode::KeyW, KeyCode::ArrowUp);
@@ -1749,7 +1753,7 @@ fn ride(
     let playing = game.screen == ui::Screen::Playing;
     let mut restart = keys.just_pressed(KeyCode::Enter) && playing && game.since > 0.3;
     let mut unstick = keys.just_pressed(KeyCode::Backspace);
-    for pad in &pads {
+    for (_, pad) in &pads {
         let x = pad.get(GamepadAxis::LeftStickX).unwrap_or(0.0);
         let y = pad.get(GamepadAxis::LeftStickY).unwrap_or(0.0);
         if x.abs() > 0.15 { input.steer = x; }
@@ -1775,12 +1779,16 @@ fn ride(
     if restart {
         let at = r.spawn;
         r.respawn(at);
-        // a new run: a new score object (`Score_Init`)
+        // a new run: a new score object (`Score_Init`) and motors off (`Input_ResetDevices` 0x17a8b0)
         r.sc = tricky_game::rider::new_score();
         r.score = 0;
         r.boost = 0.0;
         r.letters = 0;
         r.last_trick.clear();
+        r.vibration.level = 0.0;
+        r.pad_rumble.set_small(0, -1);
+        r.pad_rumble.set_large(0.0, -1);
+        tricky_game::inputring::reset_devices(&mut pad_host.input.pads);
         race.0.restart();
         *opponents = make_opponents(at.0 - Vec3::Y * 0.5, at.1, lib.player, lib.chars.len(), game.opponents(), game.round);
         for p in props.0.iter_mut() { p.reset(); }
@@ -1791,7 +1799,7 @@ fn ride(
     // (`Boarder_RequestReset` 0x118f10 with +0x304 = 0: `Boarder_PlaceAt` charges the meter 0.12)
     let mut reset_once = unstick;
     // F: shove whoever is alongside. Knocking a rival down is worth boost, as in the original.
-    let shove = keys.just_pressed(KeyCode::KeyF) || pads.iter().any(|p| p.just_pressed(GamepadButton::RightThumb) || p.just_pressed(GamepadButton::LeftThumb));
+    let shove = keys.just_pressed(KeyCode::KeyF) || pads.iter().any(|(_, p)| p.just_pressed(GamepadButton::RightThumb) || p.just_pressed(GamepadButton::LeftThumb));
     if shove && playing && r.crashed <= 0.0 && race.0.state == RaceState::Running {
         let mut hit = false;
         r.shove = 0.7;
@@ -1998,7 +2006,8 @@ fn ride(
         for o in opponents.0.iter_mut() { o.draw.mark(&o.rider); }
         let dt = TICK;
         // TRICKY_AUTOPLAY: the player's rider drives itself (for screenshots and checks)
-        let input = if !waiting && std::env::var("TRICKY_AUTOPLAY").is_ok() {
+        let autoplay = !waiting && std::env::var("TRICKY_AUTOPLAY").is_ok();
+        let input = if autoplay {
             let d = auto.get_or_insert_with(|| rider::AiDriver::new(0.0, 1.0));
             d.drive(r, &world.0, &race.0.line, &race.0.course, dt)
         } else { input };
@@ -2012,9 +2021,26 @@ fn ride(
         let input = r.finish_input(input);
         // (pressed for the frame's first tick only; none in the app's own start gate, and none once finished:
         // `Boarder_RequestReset` asks none past the finish, +0x418)
-        let input = Input { reset: std::mem::take(&mut reset_once) && !waiting && !held && r.fin.is_none(), ..input };
+        let allow_reset = !waiting && !held && r.fin.is_none();
+        let input = Input { reset: std::mem::take(&mut reset_once) && allow_reset, ..input };
+        // Row E10c3: drive the player's pad through `Input_ReadDevices` -> `InputRecorder_Playback` -> `Ps2Pad::play`
+        // and the disc's parsed `BTNMAP<n>.DAT` (`input::parse_button_map` / `input::bind` / `controls::Mapper`).
+        if !autoplay && !waiting && !held && r.gate_state != 9 && r.fin.is_none() {
+            let rec = padhost::bevy_to_record(&keys, first_pad.map(|(_, p)| p), allow_reset);
+            pad_host.step_tick(rec);
+            r.set_host_pad(pad_host.pad_dev(), pad_host.active_config());
+        } else {
+            r.pad_from_host = false;
+            r.pad_cfg = pad_host.active_config();
+        }
+        r.rumble_muted = !playing || waiting;
         let p_reset_adv = r.reset.map(|s| s.advance);
         r.step(&world.0, &rails.0, input, dt);
+        if let Some(motors) = pad_host.sync_rumble(&mut r.pad_rumble, first_pad.is_some()) {
+            if let Some((gp, _)) = first_pad {
+                padhost::PadHost::emit_bevy_rumble(gp, motors, &mut rumble_out);
+            }
+        }
         if let Some(adv) = p_reset_adv {
             if r.reset.is_none() { race.0.reset_player_follow_placed(adv); }
         }
