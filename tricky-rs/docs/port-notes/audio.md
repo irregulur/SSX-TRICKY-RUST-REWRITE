@@ -761,7 +761,9 @@ Functions already ported under a bare address, named from the code and the Rust 
   `Audio_MusicEvent` 2 / 4 / 6 sent; it answers 1 (done). So the music's events 1..6 are the zones' in and out, and an
   inner part's end takes its zone's music out with it. Its jump tables: 0x39f0e0 (on), 0x39f100 (off), 0x39f120
   (timer). The app's music host (`musichost::MusicHost::event_bit_sound`) runs it for the race's riders, the player
-  being the listener.
+  being the listener. Without the disc (row E1b2g7d6b), `src/pathmusic.rs`'s `WalkZones` runs the same ported
+  `musicsys::set_event_bit_sound` 0x21c0a0 and `musicsys::event_bit_off_timer` 0x21c370 on a minimal memory image and
+  1 s timer queue, feeding events `1..=6` into `Shared::events` and exposing `+0x6e50` through `PathMusic::zone()`.
 - Not settled: 0x233e10 (roll 9, 0x1002046 with 1; its one caller 0x219258 has no callers and fires it when a
   value at +0x18 → +0x1c passes 0.875; `speech.rs` calls it `on_boost_full`, unproven), 0x223a90 (0x2d2d50 on a slot
   unless its byte +0xe is set; from `Path_OnDriverUpdate`), 0x2d14d0 (the sound library's bank-handle state, prefix

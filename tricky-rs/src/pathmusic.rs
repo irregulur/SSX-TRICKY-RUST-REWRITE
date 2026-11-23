@@ -273,10 +273,10 @@ impl PfStream {
 }
 
 impl PathMusic {
-    /// The audio system's +0x6e50: the music zone playing (`Audio_SetEventBitSound` 0x21c0a0 keeps it), 0 for none
-    /// or without the game's music system
+    /// The audio system's +0x6e50: the music zone playing (`Audio_SetEventBitSound` 0x21c0a0 keeps it), from the
+    /// game's music system when running from the disc or [`WalkZones`] on the folder walk (row E1b2g7d6b)
     pub fn zone(&self) -> u32 {
-        self.engine.as_ref().map_or(0, |e| e.0.mem.r32(tricky_game::musichost::SYS + 0x6e50))
+        self.engine.as_ref().map_or_else(|| self.walk_zones.zone(), |e| e.0.mem.r32(tricky_game::musichost::SYS + 0x6e50))
     }
 
     /// `Music_CancelBreak` 0x2257d8 (the audio system, 0), as the rider's glide loop asks it off the air
@@ -285,6 +285,95 @@ impl PathMusic {
         if let Some((h, d)) = self.engine.as_mut() {
             h.cancel_break(&mut d.lock().unwrap(), false);
         }
+    }
+}
+
+/// Music-zone state machine for the folder walk (`Audio_SetEventBitSound` 0x21c0a0 and `Audio_EventBitOffTimer`
+/// 0x21c370, row E1b2g7d6b): runs the ported `tricky_game::musicsys` functions on a minimal memory image and 1 s
+/// off-timers so shortcut zones (`1..=6`) and `+0x6e50` work identically without the disc's `MusicHost`.
+struct WalkZones {
+    mem: tricky_game::pf::Mem,
+    timers: Vec<(f32, u32)>,
+}
+
+const WALK_SYS: u32 = tricky_game::musichost::SYS;
+const WALK_SONG: u32 = 0x0040_0000;
+const WALK_EV: u32 = 0x0040_0100;
+
+impl Default for WalkZones {
+    fn default() -> Self {
+        let mut z = Self { mem: tricky_game::pf::Mem::default(), timers: Vec::new() };
+        z.reset();
+        z
+    }
+}
+
+struct WalkZoneEnv<'a> {
+    timers: &'a mut Vec<(f32, u32)>,
+    events: Vec<u8>,
+}
+
+impl tricky_game::musicsong::SongEnv for WalkZoneEnv<'_> {
+    fn call(&mut self, _: &mut tricky_game::pf::Mem, func: u32, args: &[u32]) -> u32 {
+        use tricky_game::{musicsong, musicsys};
+        match func {
+            musicsys::LISTENER_RIDER => 1,
+            musicsys::SCHEDULE => {
+                self.timers.push((args[1] as f32 * 0.001, args[5]));
+                0
+            }
+            musicsong::PF_POST_EVENT => {
+                self.events.push(args[1] as u8);
+                0
+            }
+            _ => 0,
+        }
+    }
+    fn call_f(&mut self, _: &mut tricky_game::pf::Mem, _: u32, _: &[u32]) -> f32 { 0.0 }
+    fn call_out(&mut self, _: &mut tricky_game::pf::Mem, _: u32, _: &[u32], n: usize) -> Vec<u32> { vec![0; n] }
+}
+
+impl WalkZones {
+    fn reset(&mut self) {
+        let mut m = tricky_game::pf::Mem::default();
+        m.regions.push((WALK_SYS, vec![0; 0x7000]));
+        m.regions.push((WALK_SONG, vec![0; 0x10]));
+        m.regions.push((WALK_EV, vec![0; 0x40]));
+        m.w32(WALK_SYS + 0x36f0, WALK_SONG);
+        m.w32(WALK_SYS + 0x3700, 1);
+        self.mem = m;
+        self.timers.clear();
+    }
+
+    fn zone(&self) -> u32 {
+        self.mem.r32(WALK_SYS + 0x6e50)
+    }
+
+    /// `Audio_SetEventBitSound` 0x21c0a0
+    fn event_bit(&mut self, listener: bool, bit: u32, on: bool) -> Vec<u8> {
+        let mut env = WalkZoneEnv { timers: &mut self.timers, events: Vec::new() };
+        let rider = if listener { 1 } else { 2 };
+        tricky_game::musicsys::set_event_bit_sound(&mut self.mem, &mut env, WALK_SYS, rider, bit, on);
+        env.events
+    }
+
+    /// Advances pending `Audio_EventBitOffTimer` 0x21c370 1-second delays by `dt` seconds.
+    fn tick(&mut self, dt: f32) -> Vec<u8> {
+        let mut ready = Vec::new();
+        let mut keep = Vec::with_capacity(self.timers.len());
+        for (t, bit) in self.timers.drain(..) {
+            let rem = t - dt;
+            if rem <= 0.0 { ready.push(bit); } else { keep.push((rem, bit)); }
+        }
+        self.timers = keep;
+        let mut events = Vec::new();
+        for bit in ready {
+            self.mem.w32(WALK_EV + 0x1c, bit);
+            let mut env = WalkZoneEnv { timers: &mut self.timers, events: Vec::new() };
+            tricky_game::musicsys::event_bit_off_timer(&mut self.mem, &mut env, WALK_SYS, WALK_EV);
+            events.extend(env.events);
+        }
+        events
     }
 }
 
@@ -318,6 +407,8 @@ pub struct PathMusic {
     takeoffs: u32,
     /// the game's music system playing the song, and the driver (shared with the audio thread)
     engine: Option<(tricky_game::musichost::MusicHost, Arc<Mutex<tricky_game::pfplay::Driver>>)>,
+    /// music zone state (`+0x6e50`, `Audio_SetEventBitSound` 0x21c0a0) for the folder walk when `engine` is `None`
+    walk_zones: WalkZones,
 }
 
 #[derive(Component)]
@@ -372,6 +463,7 @@ pub fn path_music(
     if want != pm.want || new_run {
         if let Some(e) = pm.playing.take() { commands.entity(e).try_despawn(); }
         pm.engine = None;
+        pm.walk_zones.reset();
         pm.music_sent = race.0.music.len();
         pm.air = None;
     }
@@ -443,11 +535,21 @@ pub fn path_music(
                 (Some((h, d)), MusicCall::Event(e)) => { let mut d = d.lock().unwrap(); h.music_event(&mut d, e); }
                 (Some((h, d)), MusicCall::EventBit { rider, bit, on }) => { let mut d = d.lock().unwrap(); h.event_bit_sound(&mut d, rider == 0, bit, on); }
                 (None, MusicCall::Event(e)) => pm.shared.events.lock().unwrap().push_back(e as u8),
-                // STANDIN: the walk without the disc has no music system to keep the zones in
-                (None, MusicCall::EventBit { .. }) => {}
+                (None, MusicCall::EventBit { rider, bit, on }) => {
+                    let out = pm.walk_zones.event_bit(rider == 0, bit, on);
+                    if !out.is_empty() {
+                        pm.shared.events.lock().unwrap().extend(out);
+                    }
+                }
             }
         }
         pm.music_sent = events.len();
+        if pm.engine.is_none() && game.screen != ui::Screen::Paused {
+            let out = pm.walk_zones.tick(time.delta_secs());
+            if !out.is_empty() {
+                pm.shared.events.lock().unwrap().extend(out);
+            }
+        }
     }
     // the game's music system: the path variable (`Music_SetPathVar`), then the frame (the song's volume, the
     // scheduler's ticks, Pathfinder's update)
@@ -538,6 +640,48 @@ pub fn path_music(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn walk_zones_handles_event_bits_timers_reentry_and_inner_zone() {
+        let mut z = WalkZones::default();
+        assert_eq!(z.zone(), 0);
+        // Non-listener rider is ignored
+        assert!(z.event_bit(false, 2, true).is_empty());
+        assert_eq!(z.zone(), 0);
+
+        // Listener enters zone 1 (bit 2): plays zone 1 and emits music event 1
+        assert_eq!(z.event_bit(true, 2, true), vec![1]);
+        assert_eq!(z.zone(), 1);
+        // Leaving zone 1 schedules 1.0 s off timer (no immediate event)
+        assert!(z.event_bit(true, 2, false).is_empty());
+        assert_eq!(z.zone(), 1);
+        assert!(z.tick(0.5).is_empty());
+        // Re-entering before 1.0 s keeps zone 1 active when timer fires
+        assert!(z.event_bit(true, 2, true).is_empty());
+        assert!(z.tick(0.6).is_empty());
+        assert_eq!(z.zone(), 1);
+
+        // Entering inner zone (bit 3) keeps zone 1 alive when outer bit 2 turns off
+        assert!(z.event_bit(true, 3, true).is_empty());
+        assert!(z.event_bit(true, 2, false).is_empty());
+        assert!(z.tick(1.1).is_empty());
+        assert_eq!(z.zone(), 1);
+        // Leaving inner zone (bit 3) stops zone 1 after 1.0 s and emits music event 2
+        assert!(z.event_bit(true, 3, false).is_empty());
+        assert_eq!(z.tick(1.0), vec![2]);
+        assert_eq!(z.zone(), 0);
+
+        // Zones 2 (bit 4 -> events 3/4) and 3 (bit 6 -> events 5/6)
+        assert_eq!(z.event_bit(true, 4, true), vec![3]);
+        assert_eq!(z.zone(), 2);
+        assert!(z.event_bit(true, 4, false).is_empty());
+        assert_eq!(z.tick(1.0), vec![4]);
+        assert_eq!(z.event_bit(true, 6, true), vec![5]);
+        assert_eq!(z.zone(), 3);
+        z.reset();
+        assert_eq!(z.zone(), 0);
+    }
+
     /// TRICKY_PFTEST=audio/pf/<song>: walk the song at path value 80 and print the nodes it plays.
     #[test]
     fn walk() {
