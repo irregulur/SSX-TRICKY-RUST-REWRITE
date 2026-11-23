@@ -1938,5 +1938,10 @@ Proven (`SLUS_203.26`):
   (`bankmon::COUNT`) calling `BankInstance_Update` 0x21e8f0 (callback then `BankInstance_UpdatePositional` 0x20b700);
   `BankMonitor_AddInstance` 0x20bd68 allocates the lowest free slot via `BankMonitor_FindFreeInstance` 0x20bce8.
   `RiderLoops` now uses a 64-slot array with lowest-free-slot allocation and `0..64` update order.
-- Left for `E1b2g7d5j3b2` (blocked on `E11d`): feeding `listener_matrix` from the game's camera instead of Bevy's
-  `Camera3d` transform.
+- **Exact camera listener matrix (E1b2g7d5j3b2)**: `src/boardsound.rs` now reads `CamRes.0.view_matrix`
+  (`Game_UpdateCameras` `0x17f390`, `race + 0xc0`) directly via `boardsound::listener_view` whenever the exact
+  chase camera (`E11d`) drives the view (`*mode == Mode::Ride && exact_cam.1`), removing the `STANDIN (row
+  E1b2g7d5j3b2)` in `boardsound.rs` and avoiding the Bevy `Camera3d` transform round-trip and `DrawLerp` shift.
+  `boardsound::listener_matrix` stays only as fallback when an override camera (menu orbit, intro director,
+  free cam, `TRICKY_ORBIT`/`TRICKY_CAM`) is on screen. Verified in
+  `boardsound::tests::exact_cam_view_matrix_feeds_listener_locate_directly`.

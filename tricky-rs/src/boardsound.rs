@@ -106,10 +106,11 @@ fn game_vec(v: Vec3) -> [f32; 3] {
     [v.x, -v.z, v.y]
 }
 
-/// `Game_UpdateCameras` 0x17f390: build the 4x4 transposed view matrix written at `race + 0xc0 + 0x80 * view`
+/// `Game_UpdateCameras` 0x17f390 fallback: build the 4x4 transposed view matrix written at `race + 0xc0 + 0x80 * view`
 /// (`m[0..3]` hold camera right `R = F × U`, up `U`, forward `F` in columns 0, 1, 2; `m[3]` holds
 /// `[-dot(R, cam), -dot(U, cam), -dot(F, cam), 1]`, cm), so `cBXAudio::ListenerLocate` 0x20e730 maps world cm
-/// into `(+X right, +Y up, +Z ahead)`.
+/// into `(+X right, +Y up, +Z ahead)`. Used only when an override camera (menu orbit, intro director, free cam,
+/// `TRICKY_ORBIT`/`TRICKY_CAM`) is active instead of `ExactCam`.
 pub fn listener_matrix(cam: &GlobalTransform) -> [[f32; 4]; 4] {
     let r = game_vec(cam.right().as_vec3());
     let u = game_vec(cam.up().as_vec3());
@@ -122,6 +123,22 @@ pub fn listener_matrix(cam: &GlobalTransform) -> [[f32; 4]; 4] {
         [r[2], u[2], f[2], 0.0],
         [-dot3(r, c), -dot3(u, c), -dot3(f, c), 1.0],
     ]
+}
+
+/// Listener view matrix (`race + 0xc0 + 0x80 * view`, `Game_UpdateCameras` 0x17f390) for `cBXAudio::ListenerLocate`
+/// 0x20e730: feeds `ExactCam::view_matrix` directly whenever the exact game camera drives the view (`exact_active`),
+/// falling back to `listener_matrix` from Bevy's `Camera3d` transform only for override cameras (menu orbit, intro
+/// director, free cam, `TRICKY_ORBIT`/`TRICKY_CAM`).
+pub fn listener_view(
+    exact_active: bool,
+    exact_cam: &tricky_game::race::ChaseCam,
+    fallback: Option<&GlobalTransform>,
+) -> Option<[[f32; 4]; 4]> {
+    if exact_active {
+        Some(exact_cam.view_matrix)
+    } else {
+        fallback.map(listener_matrix)
+    }
 }
 
 /// `BankMonitor_FindFreeInstance` 0x20bce8 (n = 1): lowest free slot index in `0..bankmon::COUNT`.
@@ -286,11 +303,12 @@ impl RiderLoops {
 
     /// One frame of the loops: started for a new ride, else each of the 64 monitor slots updated in index order
     /// (`cController::vf7` 0x21e9d0 -> `BankInstance_Update` 0x21e8f0). `riders` are the race's riders, the player's
-    /// first; `ear` is the listener (the camera), `pan_on` is `career.sound_mode() != 0` (`0x32ca00` / career+0x1670),
-    /// `dt` the monitor's step, `scale` channel slot 4's volume (`SndMgr_GetSlot` 0x211f38 with 4, instance +0x60).
+    /// first; `view` is the listener's transposed view matrix (`race + 0xc0`, `Game_UpdateCameras` 0x17f390),
+    /// `pan_on` is `career.sound_mode() != 0` (`0x32ca00` / career+0x1670), `dt` the monitor's step, `scale` channel
+    /// slot 4's volume (`SndMgr_GetSlot` 0x211f38 with 4, instance +0x60).
     #[allow(clippy::too_many_arguments)]
     fn frame(
-        &mut self, ride: Option<usize>, riders: &[&Rider], ear: Option<&GlobalTransform>, pan_on: bool, dt: f32, bs: &BoardSounds, fx: f32, scale: f32,
+        &mut self, ride: Option<usize>, riders: &[&Rider], view: Option<[[f32; 4]; 4]>, pan_on: bool, dt: f32, bs: &BoardSounds, fx: f32, scale: f32,
         pm: &mut crate::pathmusic::PathMusic, commands: &mut Commands, sinks: &mut Query<&mut AudioSink, With<RiderLoop>>,
     ) {
         // a new ride, or a field of another size (a new heat), starts them again
@@ -324,15 +342,13 @@ impl RiderLoops {
             }
         }
         // each rider's emitter (+0x140) where the listener hears it (`cBXAudio::ListenerLocate` 0x20e730) through the
-        // `Game_UpdateCameras` 0x17f390 transposed view matrix (`+X right, +Y up, +Z ahead`, cm) and career pan flag
-        // (`0x32ca00` / career +0x1670).
-        // STANDIN (row E1b2g7d5j3b2): the app's Bevy `Camera3d` transform, for the game camera's matrix (E11d).
-        let mat = ear.map(listener_matrix);
+        // `Game_UpdateCameras` 0x17f390 transposed view matrix (`race + 0xc0`, `+X right, +Y up, +Z ahead`, cm) and
+        // career pan flag (`0x32ca00` / career +0x1670).
         let located: Vec<(F, (i16, i16))> = riders
             .iter()
             .map(|r| {
                 let p = game_vec(r.pos * 100.0);
-                match tricky_game::sfxcalc::listener_locate(mat, p, pan_on) {
+                match tricky_game::sfxcalc::listener_locate(view, p, pan_on) {
                     Some(l) => (F(l.d2).sqrt(), l.pan.unwrap_or((0, 0))),
                     None => (F(1.0), (0, 0)),
                 }
@@ -478,7 +494,7 @@ pub fn board_sound(
     time: Res<Time>, rider: Res<RiderRes>, game: Res<ui::Game>, mode: Res<Mode>, sounds: Res<crate::sound::Sounds>, bs: Res<BoardSounds>,
     list: Res<crate::LevelList>, mut rl: ResMut<RiderLoops>, mut pm: ResMut<crate::pathmusic::PathMusic>,
     mut commands: Commands, mut loops: Query<(Entity, &BoardLoop, &mut AudioSink), Without<RiderLoop>>, mut sinks: Query<&mut AudioSink, With<RiderLoop>>, mut last: Local<Last>,
-    (cam, opponents, levels, tick, career): (Query<&GlobalTransform, With<Camera3d>>, Res<crate::Opponents>, Res<ui::AudioLevels>, Res<crate::GameTick>, Res<ui::CareerRes>),
+    (cam, exact_cam, opponents, levels, tick, career): (Query<&GlobalTransform, With<Camera3d>>, Res<crate::CamRes>, Res<crate::Opponents>, Res<ui::AudioLevels>, Res<crate::GameTick>, Res<ui::CareerRes>),
 ) {
     if !bs.on { return; }
     let r: &Rider = &rider.0;
@@ -499,7 +515,8 @@ pub fn board_sound(
     // 0x21e9d0 → `BankInstance_Update`): so a frame that ran none leaves them as they are (`GameTick`, row E1a4)
     if tick.n > 0 {
         let pan_on = career.0.sound_mode() != 0;
-        rl.frame(ride, &riders, cam.single().ok(), pan_on, tick.dt(), &bs, fx, levels.slot(4), &mut pm, &mut commands, &mut sinks);
+        let view = listener_view(*mode == Mode::Ride && exact_cam.1, &exact_cam.0, cam.single().ok());
+        rl.frame(ride, &riders, view, pan_on, tick.dt(), &bs, fx, levels.slot(4), &mut pm, &mut commands, &mut sinks);
     }
     // the game values, in cm/s
     let fwd = r.forward();
@@ -592,6 +609,39 @@ mod tests {
         let mono = tricky_game::sfxcalc::listener_locate(Some(m), p, false).unwrap();
         assert_eq!(mono.d2, stereo.d2);
         assert!(mono.pan.is_none());
+    }
+
+    #[test]
+    fn exact_cam_view_matrix_feeds_listener_locate_directly() {
+        let mut exact = tricky_game::race::ChaseCam::default();
+        let world = tricky_game::collide::CollisionWorld::default();
+        let r = Rider::new(Vec3::new(12.0, 3.5, -8.0), 0.45);
+        exact.update(&world, &r, 1.0 / 60.0);
+
+        // When exact camera is active, `listener_view` returns `ExactCam::view_matrix` (`race +0xc0`) directly.
+        let fallback_tf = GlobalTransform::from(Transform::from_xyz(999.0, 0.0, 0.0));
+        let exact_mat = listener_view(true, &exact, Some(&fallback_tf)).unwrap();
+        assert_eq!(exact_mat, exact.view_matrix);
+        // When an override camera (menu/intro/free cam) is active, it falls back to `listener_matrix`.
+        let fallback_mat = listener_view(false, &exact, Some(&fallback_tf)).unwrap();
+        assert_eq!(fallback_mat, listener_matrix(&fallback_tf));
+        assert!(listener_view(false, &exact, None).is_none());
+
+        // `ExactCam::view_matrix` agrees directly with `listener_matrix` built from `ExactCam`'s Bevy pose
+        // and locates the rider in front of the chase camera with matching distance and pan.
+        let bevy_tf = GlobalTransform::from(Transform {
+            translation: exact.pos,
+            rotation: exact.rotation(),
+            scale: Vec3::ONE,
+        });
+        let p = game_vec(r.pos * 100.0);
+        let from_exact = tricky_game::sfxcalc::listener_locate(Some(exact_mat), p, true).unwrap();
+        let from_bevy = tricky_game::sfxcalc::listener_locate(Some(listener_matrix(&bevy_tf)), p, true).unwrap();
+        assert!((from_exact.d2 - from_bevy.d2).abs() < 1e-3, "d2 mismatch: {} vs {}", from_exact.d2, from_bevy.d2);
+        let (az_e, el_e) = from_exact.pan.unwrap();
+        let (az_b, el_b) = from_bevy.pan.unwrap();
+        assert!((az_e as i32 - az_b as i32).abs() <= 2, "az mismatch: {az_e} vs {az_b}");
+        assert!((el_e as i32 - el_b as i32).abs() <= 2, "el mismatch: {el_e} vs {el_b}");
     }
 
     #[test]

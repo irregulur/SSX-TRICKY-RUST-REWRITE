@@ -97,8 +97,11 @@ impl DrawLerp {
     /// before a tick: where it leaves from
     fn mark(&mut self, r: &Rider) { (self.prev, self.prev_yaw) = (r.pos, r.yaw); }
 }
+/// The exact game chase camera (`ExactCam`, row E11d) and whether it currently owns the listener view matrix
+/// (`race +0xc0`, `Game_UpdateCameras` 0x17f390; false during menu orbit, intro director shots, free cam, or
+/// `TRICKY_ORBIT`/`TRICKY_CAM` overrides).
 #[derive(Resource, Default)]
-struct CamRes(ChaseCam);
+pub struct CamRes(pub ChaseCam, pub bool);
 #[derive(Resource)]
 struct RailsRes(Rails);
 #[derive(Resource)]
@@ -1166,6 +1169,7 @@ fn switch_level(
     let mode = cam.0.mode;
     cam.0 = ChaseCam::default();
     cam.0.mode = mode;
+    cam.1 = false;
     game.lineup = true;
 }
 
@@ -2877,6 +2881,7 @@ fn chase_camera(
         fov_h = s.fov;
         use_exact_basis = false;
     }
+    chase.1 = use_exact_basis;
     let (tf, proj) = &mut *cam;
     **tf = if use_exact_basis {
         Transform { translation: pos, rotation: chase.0.rotation(), scale: Vec3::ONE }
