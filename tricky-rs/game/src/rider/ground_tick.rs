@@ -1133,6 +1133,143 @@ impl crate::walls::WallEnv for WallGlue<'_> {
     }
 }
 
+/// What `Boarder_InstanceCollisions` 0x125088 calls in the air (`AirMotion_Update` 0x108378 at 0x1089f8, row E8q),
+/// answered on the course and the port's rider.
+struct AirWallGlue<'a> {
+    r: &'a mut Rider,
+    world: &'a CollisionWorld,
+    course: &'a crate::course_ground::CourseGround,
+    body: crate::collbody::CollBody,
+    /// the sphere tree the last object query hit (the record's +0x30)
+    tree: Option<(usize, usize)>,
+    /// scripts the rollers the rider hit started (`cScriptNode`(3, script, object))
+    starts: Vec<(i32, u32)>,
+}
+
+impl crate::roller::RollerEnv for AirWallGlue<'_> {
+    fn ray_cast(&mut self, q: &crate::sphtree::WorldSphTree) -> (f32, V4, V4) {
+        roller_cast(self.world, self.course, q, false)
+    }
+    fn query_instances(&mut self, q: &crate::sphtree::WorldSphTree) -> (f32, V4, V4) {
+        roller_cast(self.world, self.course, q, true)
+    }
+    /// STANDIN: nothing, for the race's broadphase (`Broadphase_MoveBox` 0x14fe68).
+    fn move_box(&mut self, _: V4, _: V4) {}
+    fn event_script(&self, object: u32, event: u32) -> i32 {
+        self.course.ssf.event_script(object as usize, event as usize)
+    }
+    fn start_script(&mut self, script: i32, object: u32) {
+        self.starts.push((script, object));
+    }
+    /// `Sfx_InstanceCollision` 0x216c50 (the rider's hit on a roller).
+    fn sfx(&mut self, _: u32, object: u32) {
+        let v = to_game(self.r.vel, 100.0, 0.0);
+        self.course.knock.lock().unwrap_or_else(|e| e.into_inner()).knocks.push((object, dot(v, v).sqrt()));
+    }
+}
+
+impl crate::walls::WallEnv for AirWallGlue<'_> {
+    fn cast_walls(&mut self, r: &crate::walls::WallRider) -> (f32, crate::walls::CastRecord) {
+        wall_cast(self.world, self.course, &self.body, r.ground)
+    }
+    /// [`touch_query`]; the tree kept for the contact's record.
+    fn query_objects(&mut self, _: &crate::walls::WallRider) -> (f32, crate::walls::CastRecord, crate::walls::Touched) {
+        let (t, rec, touched, tree) = touch_query(self.world, self.course, &self.body);
+        self.tree = tree;
+        (t, rec, touched)
+    }
+    /// `Boarder_AccumulateImpact` 0x125c48: +0x2e4 += 1 − max(n · +0x2f0, 0), +0x2f0 = n.
+    fn accumulate_impact(&mut self, _: &mut crate::walls::WallRider, n: V4) {
+        accumulate_impact(&mut self.r.impact, &mut self.r.impact_n, n);
+    }
+    /// `Boarder_Translate` 0x1267a0: `CollBody_Translate` 0x236448 on the body.
+    fn translate(&mut self, _: &mut crate::walls::WallRider, by: V4) {
+        self.body.translate(by);
+    }
+    /// `Boarder_TurnFromWall` 0x1257a0 is only called in motion 2 (never in air).
+    fn turn_from_wall(&mut self, _: &mut crate::walls::WallRider, _: V4) {}
+    /// `Boarder_Wipeout` 0x11d830 with the contact (not inside the Megaplex tube, as the ground tick's).
+    fn wipeout(&mut self, r: &mut crate::walls::WallRider, c: &crate::walls::Contact) {
+        if self.r.tube_class != u8::MAX {
+            return;
+        }
+        self.r.pos = to_port(r.pos, 0.01);
+        self.r.vel = to_port(r.vel, 0.01);
+        let n = to_port(c.normal, 1.0);
+        self.r.crash_kind = if n.dot(Vec3::new(self.r.yaw.cos(), 0.0, -self.r.yaw.sin())) > 0.0 { 2 } else { 3 };
+        self.r.cause = "wall";
+        self.r.crash_at = Some((to_port(c.pos, 0.01), n));
+        self.r.wipe_out();
+        r.mode = self.r.motion;
+        r.state = self.r.ctl;
+    }
+    /// `Rider::go_down` does `Score_Crash` 0x156de0 and `Boarder_AddMeter` 0x11b018 itself.
+    fn score_crash(&mut self, _: &mut crate::walls::WallRider) -> f32 {
+        0.0
+    }
+    fn add_meter(&mut self, _: &mut crate::walls::WallRider, _: f32) {}
+    /// `Boarder_Stumble` 0x124dd0: only states 3 and 0xe enter stumble; other non-stumble states (air 0xd/0x10,
+    /// rail 0xf) still lose −0.02 meter (`0xbca3f553`) when `flag == 0`.
+    fn stumble(&mut self, r: &mut crate::walls::WallRider, _: V4, flag: u32) {
+        if r.state == 3 || r.state == 0xe {
+            self.r.stumble_by(flag == 0);
+        } else if r.state != 2 && flag == 0 {
+            self.r.add_meter(f32::from_bits(0xbca3_f553));
+        }
+    }
+    /// `Boarder_GetSpeedStat` 0x11d7b0.
+    fn speed_stat(&mut self, _: &crate::walls::WallRider) -> f32 {
+        self.r.speed_stat()
+    }
+    /// STANDIN: nothing, for `cPlayer::vf12` 0x153350 (`Rumble_Add`, row E10c3).
+    fn knock(&mut self, _: &mut crate::walls::WallRider, _: f32) {}
+    /// `Instance_OnPlayerContact` 0x13bd40 (`knockables::Knockables::contact`).
+    fn contact(&mut self, object: u32, r: &mut crate::walls::WallRider, c: &crate::walls::Contact, rec: &crate::walls::CastRecord) {
+        let rider = crate::knockables::Rider { id: rider_id(self.r), human: !self.r.ai, vel: r.vel };
+        let record = crate::knockables::record_context(rec.pos, rec.normal, self.tree);
+        let mut k = self.course.knock.lock().unwrap_or_else(|e| e.into_inner());
+        k.contact(self.course, object, rider, c, record);
+    }
+    /// The object's flags and controller as the contact left them (`knockables::reread`).
+    fn reread(&mut self, o: &crate::walls::Touched) -> crate::walls::Touched {
+        crate::knockables::reread(self.course, o)
+    }
+    /// `Sfx_InstanceCollision` 0x216c50: the object and the rider's speed, for the app's sound.
+    fn sfx_object(&mut self, r: &crate::walls::WallRider, object: u32) {
+        let speed = dot(r.vel, r.vel).sqrt();
+        self.course.knock.lock().unwrap_or_else(|e| e.into_inner()).knocks.push((object, speed));
+    }
+    fn sfx_wall(&mut self, _: &crate::walls::WallRider) {}
+}
+
+/// `Boarder_InstanceCollisions` 0x125088 in the air (`AirMotion_Update` 0x108378 at 0x1089f8, row E8q):
+/// queries touch objects (`World_QueryInstances` 0x25b878 -> `Instance_OnPlayerContact` 0x13bd40 ->
+/// `Boarder_InstanceBounce` 0x125a00 -> `Boarder_WallImpactCheck` 0x126540 -> `Sfx_InstanceCollision` 0x216c50)
+/// with the bind-pose body (`mask = -1`, before the air wall ray sets `0xcf`), then kicks overlapping rollers
+/// (`roller::rider_kick`) and starts any scripts they queued.
+pub(super) fn air_instance_collisions(r: &mut Rider, world: &CollisionWorld, course: &crate::course_ground::CourseGround) {
+    let o = match &r.att {
+        Some((o, _)) => *o,
+        None => orient::placed_attitude(super::placed_heading(r.yaw), None),
+    };
+    let up = r.board_frame()[2];
+    let pos = to_game(r.pos, 100.0, 1.0);
+    let vel = to_game(r.vel, 100.0, 0.0);
+    let ground = to_game(r.normal, 1.0, 0.0);
+    let mut wr = crate::walls::WallRider { pos, vel, ground, knocks: r.knocks, mode: r.motion, state: r.ctl, up };
+    let body = bind_body_at(pos, o.fwd, up, r.stats.scale);
+    let id = rider_id(r);
+    let mut glue = AirWallGlue { r, world, course, body, tree: None, starts: Vec::new() };
+    crate::walls::instance_collisions(&mut wr, &mut glue);
+    glue.r.vel = to_port(wr.vel, 0.01);
+    kick_rollers(course, &mut wr, id, &mut glue, |g| g.body);
+    let starts = std::mem::take(&mut glue.starts);
+    course.knock.lock().unwrap_or_else(|e| e.into_inner()).start_scripts(course, &starts);
+    r.knocks = wr.knocks;
+    r.pos = to_port(wr.pos, 0.01);
+    r.vel = to_port(wr.vel, 0.01);
+}
+
 /// What the ground tick calls, answered by the port.
 struct GroundEnv<'a> {
     r: &'a mut Rider,

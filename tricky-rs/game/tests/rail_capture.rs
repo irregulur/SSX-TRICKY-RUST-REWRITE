@@ -31,13 +31,39 @@ fn port(v: V4) -> Vec3 {
     Vec3::new(v[0], v[2], -v[1]) * 0.01
 }
 
-/// A long, nearly level rail segment (its spline, the segment) and the port's polyline of it
-fn a_rail(pbd: &tricky_data::pbd::Pbd) -> (u32, [u32; 0x20], Rails) {
+/// A long, nearly level, straight rail segment (its spline, the segment) clear of bouncy touch objects, and the
+/// port's polyline of it
+fn a_rail(cg: &CourseGround, pbd: &tricky_data::pbd::Pbd) -> (u32, [u32; 0x20], Rails) {
+    let unit = |v: V4| {
+        let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt().max(1e-6);
+        [v[0] / l, v[1] / l, v[2] / l]
+    };
     for seg in &pbd.segments {
         let s = tricky_data::pbd::SegmentRec(*seg);
         let (a, b) = (cubic(seg, 0.0).0, cubic(seg, 1.0).0);
         let len = ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2)).sqrt();
         if 600.0 < len && (b[2] - a[2]).abs() < 0.1 * len {
+            let (t0, t1) = (unit(cubic(seg, 0.25).1), unit(cubic(seg, 0.75).1));
+            let dot = t0[0] * t1[0] + t0[1] * t1[1] + t0[2] * t1[2];
+            if dot < 0.999 || (t0[2] - t1[2]).abs() > 0.01 {
+                continue;
+            }
+            // Skip rails pressed against a bouncy touch object (row E8q: `Boarder_InstanceCollisions` runs after
+            // `Rail_TryCapture` in `AirMotion_Update` 0x1089f8).
+            let clear = [0.3f32, 0.5, 0.7].into_iter().all(|u| {
+                let (p, d) = cubic(seg, u);
+                let h = tricky_game::jump::atan2_inline(d[1], d[0]);
+                [0.0f32, 10.0].into_iter().all(|dz| {
+                    let r = Rider::new(port([p[0], p[1], p[2] + dz, 1.0]), tricky_game::rider::wrap(h - std::f32::consts::FRAC_PI_2));
+                    let body = r.bind_body();
+                    let mut iq = tricky_game::worldboarder::WorldBoarder::new(&body, 1);
+                    iq.front_only = true;
+                    cg.query_instances(&mut iq, false, &|_| false).0 < 0.0
+                })
+            });
+            if !clear {
+                continue;
+            }
             let pts: Vec<Vec3> = (0..=40).map(|k| port(cubic(seg, k as f32 / 40.0).0)).collect();
             let mut rail = Rail::new(pts).unwrap();
             rail.spline = s.spline() as usize;
@@ -46,7 +72,7 @@ fn a_rail(pbd: &tricky_data::pbd::Pbd) -> (u32, [u32; 0x20], Rails) {
             return (s.spline(), seg2, Rails(vec![rail], Default::default()));
         }
     }
-    panic!("no long level rail");
+    panic!("no long level straight rail");
 }
 
 /// One tick of a rider flying along the rail at its middle, `over` cm above it, the board turned `turn` from the
@@ -75,7 +101,7 @@ fn fly_vel(world: &CollisionWorld, rails: &Rails, seg: &[u32], over: f32, turn: 
 #[test]
 fn the_air_catches_gari_rails_as_the_game_does() {
     let Some((cg, pbd)) = course() else { return };
-    let (spline, seg, rails) = a_rail(&pbd);
+    let (spline, seg, rails) = a_rail(&cg, &pbd);
     let mut world = CollisionWorld::default();
     world.min_y = -1e9;
     world.course = Some(Arc::new(cg));
@@ -113,7 +139,7 @@ fn the_air_catches_gari_rails_as_the_game_does() {
 #[test]
 fn the_slide_runs_on_the_game_rail_tick() {
     let Some((cg, pbd)) = course() else { return };
-    let (_, seg, rails) = a_rail(&pbd);
+    let (_, seg, rails) = a_rail(&cg, &pbd);
     let mut world = CollisionWorld::default();
     world.min_y = -1e9;
     world.course = Some(Arc::new(cg));

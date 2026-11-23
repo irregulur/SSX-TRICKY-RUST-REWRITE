@@ -26,7 +26,8 @@ fn port(v: V4) -> Vec3 {
     Vec3::new(v[0], v[2], -v[1]) * 0.01
 }
 
-/// Flat snow (normal z over 0.97, a skiable surface) under one of the rails' points, 3 m down at most
+/// Flat snow (normal z over 0.97, a skiable surface, clear of touch objects along the drop path) under one of the
+/// rails' points, 3 m down at most
 fn flat_snow(cg: &CourseGround, pbd: &tricky_data::pbd::Pbd) -> V4 {
     for seg in pbd.segments.iter() {
         let f = |i: usize| f32::from_bits(seg[i]);
@@ -36,7 +37,17 @@ fn flat_snow(cg: &CourseGround, pbd: &tricky_data::pbd::Pbd) -> V4 {
             let (t, h) = cg.ray_cast(&mut q, false, None, &|_| false);
             if let Some(h) = h.filter(|_| 0.0 <= t) {
                 if 0.97 < h.normal[2] && !matches!(h.surface, 0 | 6 | 10) {
-                    return h.pos;
+                    // Check the air drop corridor (+40 cm, flying along +x) is free of bouncy touch objects (row E8q).
+                    let clear = [0.0f32, 100.0, 200.0].into_iter().all(|ox| {
+                        let r = Rider::new(port([h.pos[0] + ox, h.pos[1], h.pos[2] + 40.0, 1.0]), -std::f32::consts::FRAC_PI_2);
+                        let b = r.bind_body();
+                        let mut iq = tricky_game::worldboarder::WorldBoarder::new(&b, 1);
+                        iq.front_only = true;
+                        cg.query_instances(&mut iq, false, &|_| false).0 < 0.0
+                    });
+                    if clear {
+                        return h.pos;
+                    }
                 }
             }
         }

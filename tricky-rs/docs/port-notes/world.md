@@ -517,8 +517,16 @@ Part of the port notes (index: [README.md](README.md)); units and wording as des
 - STANDINs: the rider's pairs and the rollers' pairs are boxes that meet (for the race's broadphase); the body is
   the bind pose's (G5); the rider's handle 1 / 2; the thread's rider velocity is the one at its start; only op 0
   sub-type 0 and new threads are done by these threads (the port's `logic.rs` does the rest, E9b2); no other
-  controller is kept (E7b2), so a touched object has a `controller` in `Touched` only once it is a roller; the air's
-  `Boarder_InstanceCollisions` is not called (the app's air is not `AirMotion_Update` yet, E8p). Without the course's files the old ball props stay.
+  controller is kept (E7b2), so a touched object has a `controller` in `Touched` only once it is a roller.
+  Row E8q (2026-11-23): `Rider::air_motion_update` now calls `ground_tick::air_instance_collisions`
+  (`Boarder_InstanceCollisions` 0x125088 at `AirMotion_Update` 0x1089f8, right after `Rail_TryCapture` and before the
+  air wall ray `0x108a2c`): runs `walls::instance_collisions` (`World_QueryInstances`, `Instance_OnPlayerContact`,
+  `knockables::reread`, `Boarder_InstanceBounce`, `Boarder_WallImpactCheck`, `Sfx_InstanceCollision`) with the
+  bind-pose body (`mask = -1`) and `kick_rollers` (`roller::rider_kick`), updating `knocks` (+0x300), `impact`
+  (+0x2e4), meter (`Boarder_Stumble` 0x124dd0 deducts −0.02 in non-stumble states when `flag == 0` without entering
+  state 2), or `Boarder_Wipeout`. Verified on real disc courses (`tests/air_instances.rs`: Garibaldi knockable spawn
+  + mid-air roller kick, Elysium `HalfPipeThing_Metal` 3403 bounce/stumble, low-speed `knocks`, and high-speed crash).
+  Without the course's files the old ball props stay.
 - Inferred: the pairs' order and pass in the frame (rollers, then pairs, then threads) is our choice.
 
 ## Bouncy fixed objects in a race, checked live (row E8c4; PINE, 2026-10-13)

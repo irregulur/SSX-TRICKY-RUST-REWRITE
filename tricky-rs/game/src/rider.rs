@@ -1626,10 +1626,15 @@ impl Rider {
                 }
             }
         }
-        // `Boarder_InstanceCollisions` 0x1089f8 + wall ray 0x108a2c (after rail capture, skipped when landed/crashed)
+        // `Boarder_InstanceCollisions` 0x125088 (0x1089f8, row E8q) + wall ray (0x108a2c), after rail capture
         if !self.grounded && self.crashed <= 0.0 {
             match &world.course {
-                Some(course) => self.air_wall(world, course),
+                Some(course) => {
+                    ground_tick::air_instance_collisions(self, world, course);
+                    if self.crashed <= 0.0 {
+                        self.air_wall(world, course);
+                    }
+                }
                 None => {
                     let mut q = self.pos;
                     self.walls(world, &mut q);
