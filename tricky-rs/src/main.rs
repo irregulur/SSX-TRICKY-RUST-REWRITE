@@ -15,6 +15,7 @@
 use tricky_data::{character, course, intro, level, logic};
 use tricky_game::{collide, props, rails, trickdata};
 mod ui;
+mod loc;
 mod sound;
 mod spray;
 mod tracks;
@@ -518,11 +519,14 @@ fn main() {
     .init_resource::<coursemusic::CourseMusic>()
     .add_plugins(pathmusic::plugin)
     .add_plugins(racespeech::plugin)
-    .insert_resource(match std::env::var("TRICKY_SCREEN").as_deref() {
-        Ok("play") => ui::Game { screen: ui::Screen::Playing, ..default() },
-        Ok("free") => ui::Game { screen: ui::Screen::Playing, event: ui::Event::FreeRide, ..default() },
-        Ok("results") => { let mut g = ui::Game { screen: ui::Screen::Playing, ..default() }; g.finish(vec![("Elise".into(), Some(151.2), false), ("You".into(), Some(153.9), true), ("Mac".into(), None, false)]); g }
-        _ => ui::Game::default(),
+    .insert_resource({
+        let text = loc::GameText::load();
+        match std::env::var("TRICKY_SCREEN").as_deref() {
+            Ok("play") => ui::Game { screen: ui::Screen::Playing, text, ..default() },
+            Ok("free") => ui::Game { screen: ui::Screen::Playing, event: ui::Event::FreeRide, text, ..default() },
+            Ok("results") => { let mut g = ui::Game { screen: ui::Screen::Playing, text, ..default() }; g.finish(vec![("Elise".into(), Some(151.2), false), ("You".into(), Some(153.9), true), ("Mac".into(), None, false)]); g }
+            _ => ui::Game { text, ..default() },
+        }
     })
     .init_resource::<SmoothDt>()
     .init_resource::<GameTick>()
@@ -1824,9 +1828,9 @@ fn ride(
             }
         }
         if hit {
-            // a knockdown fills the meter, as in the original
+            // a knockdown fills the meter, as in the original (`HUD_DrawPlayerSprites` 0x1a2c40: 0xe93)
             r.add_meter(1.0);
-            r.last_trick = "KNOCKDOWN!".into();
+            r.last_trick = game.text.knockdown();
             r.trick_timer = 2.5;
         }
     }
@@ -2080,23 +2084,23 @@ fn ride(
             let sc = if k == 0 { &mut r.sc } else if let Some(o) = opponents.0.get_mut(k - 1) { &mut o.rider.sc } else { continue };
             sc.push_message(life, kind, value, extra);
             if k != 0 { continue; }
-            // STANDIN: our words for the messages (lap, checkpoint split, show-off time bonus), for the HUD's own
-            // drawing of kinds 0xd, 10 and 11 when the game's HUD is off
+            // HUD messages from `AMERICAN.LOC` (`HUD_DrawPlayerText` 0x1a4f70: 0x115 / 0x116 / 0xe29;
+            // `HUD_DrawPlayerSprites` 0x1a2c40: 0xe40 / 0xe59) when the game's HUD is off
             match kind {
                 0xd => {
                     let left = n - 1;
-                    r.last_trick = if left == 1 { "FINAL LAP".into() } else { format!("{left} LAPS TO GO") };
+                    r.last_trick = game.text.laps_left(left);
                     r.trick_timer = 2.5;
                 }
                 10 => {
                     // the split (`Boarder_GetTimeGap`, hundredths): time behind the leader, or ahead of second
                     let ahead = value >= 0;
                     let t = value.unsigned_abs() as f32 / 100.0;
-                    r.last_trick = format!("CHECKPOINT  {}{}:{:05.2}", if ahead { "+" } else { "-" }, (t / 60.0) as u32, t % 60.0);
+                    r.last_trick = format!("{}  {}{}:{:05.2}", game.text.checkpoint(), if ahead { "+" } else { "-" }, (t / 60.0) as u32, t % 60.0);
                     r.trick_timer = 5.0;
                 }
                 _ => {
-                    r.last_trick = format!("TIME BONUS  {value} seconds");
+                    r.last_trick = game.text.time_bonus(value);
                     r.trick_timer = 2.5;
                 }
             }
@@ -2230,6 +2234,7 @@ fn ride(
                         r.hit_by = o.rider.slot;
                         let down = r.take_hit(push, false);
                         r.speech.push(tricky_game::rider::RiderSpeech::Shoved);
+                        // STANDIN: notice when a rival shoves the player down (original plays RiderSpeech::Shoved, no HUD text)
                         if down { o.rider.add_meter(1.0); r.last_trick = "Shoved!".into(); r.trick_timer = 2.0; }
                         // getting its own back cools the grudge
                         if down || (!was && r.stumble > 0.0) { if let Some(g) = o.grudge.as_mut() { g.got_even(down); } }

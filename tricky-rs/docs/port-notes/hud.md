@@ -1115,3 +1115,43 @@ The runner test (tests/overlaybase.rs) has 45,000 cases over the 75 functions, w
   the 7-word records {texture, w, h, v0, u0, u1, v1} of the sprite set (gApp +0x728) written from immediates
   (record 3 at +0x5c = {−1, 24.0, 29.0, ...}). Called by `cFE3D` vf1 0x263b30 (at 0x263eac) and the start screen's
   vf1 0x182d08 (at 0x182d80).
+
+## Localised HUD and menu text (`Loc_GetString` 0x2c5160, row E5a2)
+
+Proven (`SLUS_203.26` callers of `Loc_GetString` 0x2c5160 + `DATA/LANG/AMERICAN.LOC` / `CONSTANT.LOC`; wired in
+`tricky-rs/src/loc.rs`, `ui.rs`, `main.rs`, `book.rs`):
+
+- **In-race HUD** (`HUD_DrawPlayerText` 0x1a4f70, `HUD_DrawPlayerSprites` 0x1a2c40):
+  - Place ordinals: `0xe44` `"st"`, `0xe54` `"nd"`, `0xe58` `"rd"`, `0xe45` `"th"` (`hudtext::PLACE_NAMES`).
+  - Laps / split / bonus / knockdown / uber: `0xe27` `"LAP"`, `0x115` `"FINAL LAP"`, `0x116` `"%d LAPS TO GO"`,
+    `0xe40` `"CHECKPOINT"`, `0xe59` `"TIME BONUS"`, `0xe29` `"%d seconds"`, `0xe93` `"KNOCKDOWN!"`,
+    `0xdf2` `"UBER TRICK"`.
+  - Show-Off medal targets & captions: `0xe32` `"BRONZE"`, `0xe26` `"FOR SILVER"`, `0xe25` `"FOR GOLD"`,
+    `0xe35` `"GOLD"`, `0xe3b` `"SILVER"`, `0xe28` `"MEDAL"` (lowercase title-font forms: `0xe36`, `0xe3c`, `0xe33`).
+- **Overlays** (`cCountdownOverlay::Draw` 0x1ae4b0, `cPopFinishOverlay::DrawText` 0x1aeb78, `HUD_FormatTime` 0x1a6ba0):
+  - `0xeaf` `"GO!"`, `0xe43` `"FINISH"`, `0xe5b` `"TIME UP"`, `0x15d` `"DNF"`.
+- **Pause menu** (`PauseMenu_BuildMainPage` 0x1ac678):
+  - `0xe63` `"Pause"`, `0x1db` `"continue"`, `0x1e0` `"restart"`, `0x1de` `"quit"`.
+- **Results** (`cResultsOverlay::cResultsOverlay` 0x1af66c..0x1af6ac -> `MODE_TITLES` 0x3384b0 ->
+  `Results_BuildCareerPage` 0x1af950, `Results_BuildMedalPage` 0x1b0bb8, `Results_BuildRiderStatsRows` 0x1b0998,
+  `Results_SetMedalVerdict` 0x1b1ba8):
+  - Round titles: `0xe52` `"Quarter Final Results"`, `0xe55` `"Semi Final Results"`, `0xe42` `"Final Results"`;
+    Show-Off: `0xe56` `"Showoff Results"`.
+  - Qualification & medals: `0x19f` (semi-final qualified), `0x19e` (final qualified), `0x19c` (eliminated),
+    `0x249` `"You didn't win  ...."`.
+  - Labels & buttons: `0xdc4` `"score"`, `0xe61` `"time"`, `0x18d` `"continue"`, `0x191` `"restart"`, `0x18e` `"quit  "`.
+- **Front end, Career & Trick Book** (`Course_GetNameStringId` 0x16b650, `Career_GetStatusName` 0x1634c0,
+  `cFE3DStateCustomBoard` 0x28c690 / `LOCK_TEXTS` 0x3afb78, `cFE3DStateCustomBody` `OUTFIT_NAMES` 0x332c88 /
+  `HELP_TEXTS` 0x3afba0):
+  - Course names: `courses::NAME_IDS` (`0xe1d`, `0xe68`, `0xdf8`, `0xe3e`, `0xe3d`, `0xdf5`, `0xe65`, `0xe6c`, `0xe69`,
+    `0xe65`, `0xe1a`, `0xe6d`).
+  - Career status ranks 0..9: `career::status_name_id` (`0x17..=0x20`: `"Master"`, `"Sensei"`, `"Superstar"`, `"Champ"`,
+    `"Veteran"`, `"Star"`, `"Natural"`, `"Contender"`, `"Rookie"`, `"Newbie"`).
+  - Stat labels: `0x25` `"EDGING:"`, `0x27` `"SPEED:"`, `0x28` `"STABILITY:"`, `0x29` `"TRICKS:"`; `0x26` `"Points"`;
+    events/records: `0xe05` `"Race"`, `0xe06` `"Showoff"`, `0x71` `"Race Record"`, `0xe3f` `"Current Best Score: %d"`,
+    `0x229` `"Not Available"`.
+  - Locked board hints (`0x3afb78`): `0x0cb4..=0x0cbd` (boards 2..11). Locked outfit hints (`0x3afba0`):
+    `0x0cad..=0x0cb1`, `0x0dcf` (outfits 1..6). Outfit names themselves are static ASCII C strings at `0x332c88`
+    (`trickdata::OUTFIT_NAMES`), not `AMERICAN.LOC` entries.
+  - Trick Book: `0xe1a` `"Trick Book"`, `0xe64` `"Chapter %d"`, `0x0c9e` `"COMPLETED"` (0x246b50), `0x022a`
+    `"Trick Book Completed - 1 new board"` (0x1b5a90).

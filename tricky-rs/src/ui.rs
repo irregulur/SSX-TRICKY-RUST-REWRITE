@@ -12,8 +12,7 @@ pub enum Screen { Menu, Playing, Paused, Results }
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Event { Race, ShowOff, FreeRide }
 /// A circuit race is two heats and a final (`Circuit_AfterRaceAdvanceHeat`): the top three go through.
-pub const ROUNDS: [&str; 3] = ["HEAT 1", "HEAT 2", "FINAL"];
-pub const MEDALS: [&str; 3] = ["GOLD", "SILVER", "BRONZE"];
+pub const ROUND_COUNT: usize = 3;
 /// Show-off medal scores (gold, silver, bronze) and time limit (s) per track: the game's course table (0x332f28),
 /// medal table (0x335370) and Pipedream's own thresholds (`Circuit_GetMedal`), via `tricky_game::courses` (row C0).
 /// An unknown folder is taken as Garibaldi.
@@ -236,9 +235,6 @@ impl tricky_game::career::RecordsEnv for RecordsRun<'_> {
 
 /// Board unlock costs in career points (0x332148 table): the original's twelve boards per rider.
 pub const BOARD_POINTS: [u32; 12] = [0, 0, 5, 20, 35, 60, 90, 120, 160, 200, 240, 999];
-/// Career rank by points (`Career_BoardTierFromPoints`): 240 is Master.
-pub const RANKS: [(u32, &str); 10] = [(240, "MASTER"), (200, "rank 1"), (160, "rank 2"), (120, "rank 3"), (90, "rank 4"), (60, "rank 5"), (35, "rank 6"), (20, "rank 7"), (5, "rank 8"), (0, "rank 9")];
-pub fn rank(points: u32) -> &'static str { RANKS.iter().find(|r| points >= r.0).map_or("rank 9", |r| r.1) }
 impl Game {
     /// how far the riders are trained: fully when "master" is picked, else by career points
     pub fn training(&self) -> f32 { if self.master { 1.0 } else { (self.points as f32 / 240.0).min(1.0) } }
@@ -386,13 +382,12 @@ pub struct Game {
     pub row: usize,
     pub board: usize,
     pub track_step: i32,
-    /// the front end's screens as the game's (row G9u), and the game's strings for them (once read from the disc)
+    /// the front end's screens as the game's (row G9u), and the game's strings from `DATA/LANG/AMERICAN.LOC` (row E5a2)
     pub flow: tricky_game::fe_flow::Flow,
-    pub menu_text: Option<tricky_data::loc::LocFile>,
-    pub menu_text_tried: bool,
+    pub text: crate::loc::GameText,
 }
 impl Default for Game {
-    fn default() -> Self { Self { screen: Screen::Menu, event: match std::env::var("TRICKY_EVENT").as_deref() { Ok("showoff") => Event::ShowOff, Ok("freeride") => Event::FreeRide, _ => Event::Race }, round: 0, points: 0, levels: None, rivals: None, attitude: Default::default(), lineup: true, since: 0.0, table: Vec::new(), place: 0, master: false, cursor: 0, pause_cursor: 0, row: 0, board: std::env::var("TRICKY_BOARD").ok().and_then(|b| b.parse().ok()).unwrap_or(0), track_step: 0, flow: tricky_game::fe_flow::Flow::new(), menu_text: None, menu_text_tried: false } }
+    fn default() -> Self { Self { screen: Screen::Menu, event: match std::env::var("TRICKY_EVENT").as_deref() { Ok("showoff") => Event::ShowOff, Ok("freeride") => Event::FreeRide, _ => Event::Race }, round: 0, points: 0, levels: None, rivals: None, attitude: Default::default(), lineup: true, since: 0.0, table: Vec::new(), place: 0, master: false, cursor: 0, pause_cursor: 0, row: 0, board: std::env::var("TRICKY_BOARD").ok().and_then(|b| b.parse().ok()).unwrap_or(0), track_step: 0, flow: tricky_game::fe_flow::Flow::new(), text: crate::loc::GameText::empty() } }
 }
 impl Game {
     pub fn opponents(&self) -> usize { if self.screen != Screen::Menu && self.event != Event::Race { 0 } else { HEAT - 1 } }
@@ -447,17 +442,18 @@ pub fn setup_ui(mut commands: Commands) {
 }
 
 /// The trick book: each trick the player lands is checked against the rider's current chapter.
-pub fn trick_book(mut rider: ResMut<RiderRes>, lib: Res<CharLib>, mut book: ResMut<crate::book::Book>) {
+pub fn trick_book(mut rider: ResMut<RiderRes>, lib: Res<CharLib>, mut book: ResMut<crate::book::Book>, game: Res<Game>) {
     if rider.0.landed.is_empty() { return; }
     let landed: Vec<String> = std::mem::take(&mut rider.0.landed);
     let me = lib.chars.get(lib.player).map(|c| c.name.clone()).unwrap_or_default();
+    let tb = game.text.trick_book();
     for t in landed {
         if let Some((name, chapter)) = book.check(&me, &t) {
             let r = &mut rider.0;
             r.last_trick = match chapter {
-                Some(6) => format!("{}\nTRICK BOOK: {name}\nBOOK COMPLETE - UBERBOARD", r.last_trick),
-                Some(c) => format!("{}\nTRICK BOOK: {name}\nCHAPTER {c} COMPLETE", r.last_trick),
-                None => format!("{}\nTRICK BOOK: {name}", r.last_trick),
+                Some(6) => format!("{}\n{tb}: {name}\n{}", r.last_trick, game.text.trick_book_completed()),
+                Some(c) => format!("{}\n{tb}: {name}\n{} {}", r.last_trick, game.text.chapter(c), game.text.chapter_completed()),
+                None => format!("{}\n{tb}: {name}", r.last_trick),
             };
             r.trick_timer = r.trick_timer.max(3.0);
         }
@@ -475,14 +471,6 @@ pub fn menus(keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, time: Res<T
     let down = keys.just_pressed(KeyCode::ArrowDown) || keys.just_pressed(KeyCode::KeyS) || pad(GamepadButton::DPadDown);
     match game.screen {
         Screen::Menu => {
-            // the game's strings for the screens, read once from the disc (TRICKY_DISC, as the HUD reads it)
-            if !game.menu_text_tried {
-                game.menu_text_tried = true;
-                game.menu_text = std::env::var("TRICKY_DISC").ok()
-                    .and_then(|p| tricky_data::disc::Disc::open(&p).ok())
-                    .and_then(|mut d| d.read_path("/DATA/LANG/AMERICAN.LOC").ok().flatten())
-                    .map(tricky_data::loc::LocFile::new);
-            }
             // the career's locks and the pads in, for the screens (M: fully trained, everything open, as the cheat)
             if keys.just_pressed(KeyCode::KeyM) { game.master = !game.master; game.lineup = true; }
             let master = game.master;
@@ -535,7 +523,7 @@ pub fn menus(keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, time: Res<T
             if back { game.screen = Screen::Menu; game.since = 0.0; game.lineup = true; }
             else if ok && game.since > 0.8 {
                 let through = game.event == Event::Race && game.place < 3;
-                if through && game.round + 1 >= ROUNDS.len() { game.screen = Screen::Menu; }
+                if through && game.round + 1 >= ROUND_COUNT { game.screen = Screen::Menu; }
                 else { if through { game.round += 1; } game.screen = Screen::Playing; }
                 game.since = 0.0;
                 game.lineup = true;
@@ -563,8 +551,6 @@ pub fn course_dir(list: &LevelList, number: u32) -> Option<usize> {
     })
 }
 
-fn ordinal(i: usize) -> &'static str { ["1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th"][i.min(7)] }
-
 pub fn hud(
     game: Res<Game>, race: Res<RaceRes>, list: Res<LevelList>, time: Res<Time>, (smooth, tick): (Res<SmoothDt>, Res<crate::GameTick>), rider: Res<RiderRes>,
     opponents: Res<Opponents>, lib: Res<CharLib>, mode: Res<Mode>, (career, book): (Res<CareerRes>, Res<crate::book::Book>),
@@ -578,11 +564,8 @@ pub fn hud(
     let r = &rider.0;
     let riding = *mode == Mode::Ride;
     let playing = riding && game.screen != Screen::Menu;
-    let track = list.dirs.get(list.current).and_then(|d| d.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-    let track = match track.as_str() {
-        "gari" => "Garibaldi", "snowdream" => "Snowdream", "elysium" => "Elysium Alps", "mesablanca" => "Mesablanca", "merqury" => "Merqury City",
-        "megaplex" => "Tokyo Megaplex", "aloha" => "Aloha Ice Jam", "alaska" => "Alaska", "pipedream" => "Pipedream", "untracked" => "Untracked", "trick" => "Trick Tutorial", o => o,
-    }.to_string();
+    let track_folder = list.dirs.get(list.current).and_then(|d| d.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let track = game.text.course_name_by_folder(&track_folder);
     let me = lib.chars.get(lib.player).map(|c| crate::proper(&c.name)).unwrap_or_else(|| "Rider".into());
     **root = if playing { Visibility::Inherited } else { Visibility::Hidden };
     **panel = if riding && game.screen != Screen::Playing { Visibility::Inherited } else { Visibility::Hidden };
@@ -608,10 +591,10 @@ pub fn hud(
             HudItem::Place => {
                 if game.event == Event::Race && !opponents.0.is_empty() && race.0.state != RaceState::Countdown {
                     let place = standings(&race.0, &opponents.0, &lib, &me).iter().position(|t| t.2).unwrap_or(0);
-                    let lap = if race.0.course_no == 8 { format!("\nlap {}/4", (5 - race.0.laps_left(0).min(4)).min(4)) } else { String::new() };
+                    let lap = if race.0.course_no == 8 { format!("\n{} {}/4", game.text.lap(), (5 - race.0.laps_left(0).min(4)).min(4)) } else { String::new() };
                     // gold in the lead (HUD_DrawPlayerText)
                     if place == 0 { tint = Color::srgb(0.953, 0.729, 0.106); }
-                    format!("{}{lap}", ordinal(place))
+                    format!("{}{lap}", game.text.ordinal(place))
                 } else { String::new() }
             }
             HudItem::Time => match game.event {
@@ -623,7 +606,8 @@ pub fn hud(
             HudItem::Score => {
                 let goal = if game.event == Event::ShowOff {
                     let sh = showoff(&track_key(&list)).0;
-                    match sh.iter().rposition(|s| r.score < *s) { Some(i) => format!("\n{} at {}", MEDALS[i].to_lowercase(), sh[i]), None => "\nGOLD".into() }
+                    let next = sh.iter().rposition(|s| r.score < *s);
+                    format!("\n{}", game.text.showoff_goal(next, next.map(|i| sh[i])))
                 } else { String::new() };
                 format!("{}{}{goal}", r.score, if r.multiplier > 1 { format!("  x{}", r.multiplier) } else { String::new() })
             }
@@ -631,7 +615,7 @@ pub fn hud(
             HudItem::Letters => {
                 let word: String = "TRICKY".chars().enumerate().map(|(i, c)| if (i as u8) < r.letters { c } else { '.' }).collect();
                 if r.tricky() { tint = Color::srgb(1.0, 0.4, 0.85); }
-                let note = if r.tricky() { "  unlimited boost" } else if r.uber_timer > 0.0 { "  UBER READY - grab + K" } else { "" };
+                let note = if r.uber_timer > 0.0 { format!("  {}", game.text.uber_trick()) } else { String::new() };
                 format!("{word}{note}")
             }
             HudItem::Trick => {
@@ -654,10 +638,10 @@ pub fn hud(
             HudItem::Big => {
                 if !playing { String::new() } else {
                     match race.0.state {
-                        RaceState::Countdown => if race.0.intro { String::new() } else if race.0.countdown > 0.4 { format!("{}", race.0.countdown.ceil() as i32) } else { "GO!".into() },
-                        RaceState::Running if race.0.time < 0.8 => "GO!".into(),
-                        RaceState::Finished if game.event == Event::ShowOff => "TIME UP".into(),
-                        RaceState::Finished => if race.0.post == 2 { String::new() } else { "FINISH".into() },
+                        RaceState::Countdown => if race.0.intro { String::new() } else if race.0.countdown > 0.4 { format!("{}", race.0.countdown.ceil() as i32) } else { game.text.go() },
+                        RaceState::Running if race.0.time < 0.8 => game.text.go(),
+                        RaceState::Finished if game.event == Event::ShowOff => game.text.time_up(),
+                        RaceState::Finished => if race.0.post == 2 { String::new() } else { game.text.finish() },
                         _ => String::new(),
                     }
                 }
@@ -669,72 +653,76 @@ pub fn hud(
                     let best = {
                         let mut parts = Vec::new();
                         let (time, score) = career.best(&key);
-                        if let Some(t) = time { parts.push(format!("best time {}", clock(t))); }
-                        if score > 0 { parts.push(format!("best score {score}")); }
-                        if let Some(m) = career.medal(Event::Race, &key) { parts.push(format!("race {}", MEDALS[m].to_lowercase())); }
-                        if let Some(m) = career.medal(Event::ShowOff, &key) { parts.push(format!("show-off {}", MEDALS[m].to_lowercase())); }
-                        if parts.is_empty() { "no results yet".to_string() } else { parts.join("   ") }
+                        if let Some(t) = time { parts.push(format!("{}: {}", game.text.race_record(), clock(t))); }
+                        if score > 0 { parts.push(game.text.best_score(score)); }
+                        if let Some(m) = career.medal(Event::Race, &key) { parts.push(format!("{} {}", game.text.event_race(), game.text.medal_lower(m))); }
+                        if let Some(m) = career.medal(Event::ShowOff, &key) { parts.push(format!("{} {}", game.text.event_showoff(), game.text.medal_lower(m))); }
+                        parts.join("   ")
                     };
                     let st = r.stats;
                     // the screen on top of the game's flow (row G9u2): its title and items in the game's strings
                     let f = &game.flow;
-                    let say = |id: u32| game.menu_text.as_ref().and_then(|l| l.get(id)).unwrap_or_else(|| format!("#{id:x}"));
                     let rider = f.choices.rider[(f.player().max(0) as usize).min(1)] as usize;
                     let label = |it: &tricky_game::fe_flow::Item| match it.label {
-                        tricky_game::fe_flow::Label::Text(id) => say(id),
-                        tricky_game::fe_flow::Label::Course(c) => tricky_game::courses::COURSES.iter().find(|x| x.number == c as u32).map_or(format!("course {c}"), |x| x.name.to_string()),
+                        tricky_game::fe_flow::Label::Text(id) => game.text.get_or_hex(id),
+                        tricky_game::fe_flow::Label::Course(c) => {
+                            let fb = tricky_game::courses::COURSES.iter().find(|x| x.number == c as u32).map_or("course", |x| x.name);
+                            game.text.course_name(c as u32, fb)
+                        }
                         tricky_game::fe_flow::Label::Rider(r) => crate::trickdata::RIDERS[(r as usize).min(11)].name.to_string(),
-                        tricky_game::fe_flow::Label::Outfit(k) => format!("Outfit {}", k + 1),
+                        tricky_game::fe_flow::Label::Outfit(k) => crate::trickdata::OUTFIT_NAMES[rider.min(11)][(k as usize).min(6)].to_string(),
                         tricky_game::fe_flow::Label::Board(k) => crate::trickdata::BOARDS[rider.min(11)][(k as usize).min(11)].name.to_string(),
                     };
-                    let mut menu = match tricky_game::fe_flow::title_text(f.screen(), f.player()) { Some(t) => say(t), None => "S S X   T R I C K Y".to_string() };
-                    menu += "
-
-";
+                    let mut menu = match tricky_game::fe_flow::title_text(f.screen(), f.player()) { Some(t) => game.text.get_or_hex(t), None => "S S X   T R I C K Y".to_string() };
+                    menu += "\n\n";
                     for (k, it) in f.items().iter().enumerate() {
                         let shut = match it.label {
                             _ if f.enabled(it) => String::new(),
-                            tricky_game::fe_flow::Label::Board(k) => format!("  (unlocks at {} pts)", BOARD_POINTS[(k as usize).min(11)]),
-                            _ => "  (locked)".to_string(),
+                            tricky_game::fe_flow::Label::Board(k) => game.text.locked_board_hint(k as usize)
+                                .map(|h| format!("  ({h})"))
+                                .unwrap_or_else(|| format!("  ({})", game.text.locked())),
+                            tricky_game::fe_flow::Label::Outfit(k) => game.text.locked_outfit_hint(k as usize)
+                                .map(|h| format!("  ({h})"))
+                                .unwrap_or_else(|| format!("  ({})", game.text.locked())),
+                            _ => format!("  ({})", game.text.locked()),
                         };
-                        menu += &if k == f.cursor() { format!(">  {}{shut}  <
-", label(it)) } else { format!("{}{shut}
-", label(it)) };
+                        menu += &if k == f.cursor() { format!(">  {}{shut}  <\n", label(it)) } else { format!("{}{shut}\n", label(it)) };
                     }
-                    format!("{menu}
-edging {:.0}  speed {:.0}  stability {:.0}  tricks {:.0}
-{best}
-career points {}
-{}
-
-Up / Down, Enter: pick    Esc: back    M: {}",
-                        st.edging * 100.0, st.speed * 100.0, st.stability * 100.0, st.tricks * 100.0, career.points(), book.summary(&me),
-                        if game.master { "master (fully trained)".to_string() } else { format!("career - {} ({} of 240 pts)", rank(game.points), game.points) })
+                    let [l_edging, l_speed, l_stability, l_tricks] = game.text.stat_labels();
+                    let status = if game.master { game.text.status_name(240) } else { format!("{} ({}/240)", game.text.status_name(game.points), game.points) };
+                    format!("{menu}\n{l_edging} {:.0}  {l_speed} {:.0}  {l_stability} {:.0}  {l_tricks} {:.0}\n{best}\n{} {}\n{}\n\nUp / Down, Enter    Esc    M: {status}",
+                        st.edging * 100.0, st.speed * 100.0, st.stability * 100.0, st.tricks * 100.0, game.text.points_label(), career.points(), book.summary(&me, &game.text))
                 }
                 Screen::Playing => String::new(),
                 Screen::Paused => {
-                    let row = |i: usize, s: &str| if game.pause_cursor == i { format!(">  {s}  <") } else { s.to_string() };
-                    format!("PAUSED\n\n{}\n{}\n{}\n\nUp / Down, Enter    Esc: back to the run", row(0, "Resume"), row(1, "Restart"), row(2, "Quit to menu"))
+                    let row = |i: usize, s: String| if game.pause_cursor == i { format!(">  {s}  <") } else { s };
+                    format!("{}\n\n{}\n{}\n{}", game.text.pause_title(), row(0, game.text.pause_continue()), row(1, game.text.pause_restart()), row(2, game.text.pause_quit()))
                 }
                 Screen::Results => match game.event {
                     Event::Race => {
-                        let mut s = format!("{track}  -  {}\n\n", ROUNDS[game.round.min(2)]);
+                        let mut s = format!("{track}  -  {}\n\n", game.text.race_round_title(game.round));
+                        let dnf = game.text.dnf();
                         for (i, (name, t, you)) in game.table.iter().enumerate() {
-                            s += &format!("{}   {}{}   {}\n", ordinal(i), name, if *you { " (you)" } else { "" }, t.map(clock).unwrap_or_else(|| "--".into()));
+                            s += &format!("{}   {}{}   {}\n", game.text.ordinal(i), name, if *you { " *" } else { "" }, t.map(clock).unwrap_or_else(|| dnf.clone()));
                         }
-                        let last = game.round + 1 >= ROUNDS.len();
+                        let last = game.round + 1 >= ROUND_COUNT;
                         s += &match (game.place < 3, last) {
-                            (true, true) => format!("\n{} MEDAL\n\nEnter: back to the menu", MEDALS[game.place]),
-                            (true, false) => format!("\nYou go through to the {}\n\nEnter: continue    Esc: menu", ROUNDS[game.round + 1].to_lowercase()),
-                            (false, _) => "\nKnocked out - the first three go through\n\nEnter: try again    Esc: menu".to_string(),
+                            (true, true) => format!("\n{} {}\n\nEnter: {}", game.text.medal_caps(game.place), game.text.medal_word(), game.text.opt_continue()),
+                            (true, false) => format!("\n{}\n\nEnter: {}    Esc: {}", game.text.race_qualified(game.round), game.text.opt_continue(), game.text.opt_quit()),
+                            (false, _) => format!("\n{}\n\nEnter: {}    Esc: {}", game.text.race_eliminated(), game.text.opt_restart(), game.text.opt_quit()),
                         };
                         s
                     }
                     Event::ShowOff => {
                         let sh = showoff(&track_key(&list)).0;
                         let medal = sh.iter().position(|s| r.score >= *s);
-                        format!("{track}  -  SHOW-OFF\n\n{me}\nscore {}\ntime {}\n\n{}\n\ngold {}   silver {}   bronze {}\n\nEnter: try again    Esc: menu", r.score, clock(race.0.time),
-                            medal.map(|m| format!("{} MEDAL", MEDALS[m])).unwrap_or_else(|| "No medal".into()), sh[0], sh[1], sh[2])
+                        let verdict = medal
+                            .map(|m| format!("{} {}", game.text.medal_caps(m), game.text.medal_word()))
+                            .unwrap_or_else(|| game.text.won_no_medal());
+                        format!("{track}  -  {}\n\n{me}\n{} {}\n{} {}\n\n{verdict}\n\n{} {}   {} {}   {} {}\n\nEnter: {}    Esc: {}",
+                            game.text.showoff_results_title(), game.text.score_label(), r.score, game.text.time_label(), clock(race.0.time),
+                            game.text.medal_lower(0), sh[0], game.text.medal_lower(1), sh[1], game.text.medal_lower(2), sh[2],
+                            game.text.opt_restart(), game.text.opt_quit())
                     }
                     Event::FreeRide => String::new(),
                 },

@@ -79,16 +79,17 @@ impl Book {
         let finished = ((bits >> (c * 5)) & 31 == 31).then_some(c + 1);
         Some((name, finished))
     }
-    /// The menu's line: the chapter, how far through it, and the next trick to do.
-    pub fn summary(&self, who: &str) -> String {
+    /// The menu's line: the chapter, how far through it, and the next trick to do, using the game's strings
+    /// (`Loc_GetString` 0x2c5160: `0x22a` Trick Book Completed, `0xe1a` Trick Book, `0xe64` Chapter %d).
+    pub fn summary(&self, who: &str, text: &crate::loc::GameText) -> String {
         let who = who.to_ascii_lowercase();
         let Some(list) = self.tricks.get(&who) else { return String::new() };
         let c = self.chapter(&who);
-        if c >= 6 { return "trick book complete - UBERBOARD".into(); }
+        if c >= 6 { return text.trick_book_completed(); }
         let bits = self.bits(&who);
         let n = (0..5).filter(|i| bits & (1 << (c * 5 + i)) != 0).count();
         let next = (c * 5..c * 5 + 5).find(|t| bits & (1 << t) == 0).and_then(|t| list.get(t)).cloned().unwrap_or_default();
-        format!("trick book chapter {}: {n}/5   next: {next}", c + 1)
+        format!("{} {}: {n}/5   {next}", text.trick_book(), text.chapter(c + 1))
     }
 }
 

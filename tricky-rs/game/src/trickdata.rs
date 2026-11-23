@@ -257,6 +257,34 @@ pub const BOARDS: [[Board; 12]; 12] = [
     [Board { name: "Fiesta", kind: 2, bonus: [10, 10, 0, 10] }, Board { name: "Loco Motion", kind: 1, bonus: [10, 0, 0, 20] }, Board { name: "Sand Fish", kind: 2, bonus: [20, 20, 20, 10] }, Board { name: "Party Girl", kind: 2, bonus: [20, 20, 10, 20] }, Board { name: "Dance Explosion", kind: 2, bonus: [40, 50, 20, 20] }, Board { name: "Money Maker", kind: 2, bonus: [30, 40, 30, 30] }, Board { name: "Wind Rider", kind: 2, bonus: [60, 60, 50, 40] }, Board { name: "Booty Call", kind: 0, bonus: [50, 60, 50, 50] }, Board { name: "Heart Breaker", kind: 2, bonus: [60, 70, 80, 60] }, Board { name: "Latin Heat", kind: 2, bonus: [70, 60, 70, 70] }, Board { name: "Rave On", kind: 2, bonus: [80, 80, 70, 80] }, Board { name: "UBERBOARD", kind: 2, bonus: [90, 90, 90, 80] }],
 ];
 
+/// Each rider's seven outfits (`cFE3DStateCustomBody` `OUTFIT_NAMES` 0x332c88, 0x38 bytes a rider, 8 bytes per outfit).
+pub const OUTFIT_NAMES: [[&str; 7]; 12] = [
+    // Eddie
+    ["Retro Thunder", "Electric Jelly", "Five Oh", "Pro Bowl", "Yippee-Ki-Yay", "Dungeon Master", "Master"],
+    // Kaori
+    ["Pink-O-Rama", "Super Excellent", "Sweet Heart", "Sweet Sunshine", "School Yard", "Santa's Helper", "Master"],
+    // Luther
+    ["Yah Baby!", "Bomber", "Blazin' Saddle", "Knockout King", "Star Power", "Thriller", "Master"],
+    // Mac
+    ["Sno Business", "Ranger", "BSS Blender", "Redneck Redux", "Hot Pants", "Special Agent", "Master"],
+    // Moby
+    ["Dark Union", "Hotter Pants", "Freefall", "Army of Noise", "Cosmic Melding", "Jones' Tones", "Master"],
+    // Zoe
+    ["Rawk On", "Tiger X-ray", "Girls Rock!", "Naughty Girl", "Hart Attack", "Royale Trinity", "Master"],
+    // JP
+    ["JP Pit Crew", "Rock-it boy!", "Too Tone", "Euro $tyle", "Mandarin", "MC Maitre D", "Master"],
+    // Elise
+    ["Sweeter Than", "Candy Girl", "Queen B", "Lady Law", "Diamond Back", "Crazy Canuck", "Master"],
+    // Psymon
+    ["Casual Fridays", "Jungle Rawk", "Serpentine", "Bark!Bark!Bark!", "Konvict", "Nightmare", "Master"],
+    // Seeiah
+    ["Grape Love", "Ocelot", "Down Town", "Suede Style", "Auntie Sam", "Dark Matter", "Master"],
+    // Brodi
+    ["Bamboo Peace", "Ohman", "Love Life", "Yin Yang", "Enlightenment", "Ukiyoe Surf", "Master"],
+    // Marisol
+    ["Pink Lady", "Equinox", "Material Girl", "Vintage Rioja", "Gold Rush", "Mechanoid M", "Master"],
+];
+
 /// Each rider's uber tricks by the grab they start from (the trick book's chapter 6,
 /// DATA/TUTORIAL/TRICKDEF.DAT): the last is the rider's signature uber.
 pub const UBER_NAMES: [(&str, &[(&str, &str)]); 12] = [
