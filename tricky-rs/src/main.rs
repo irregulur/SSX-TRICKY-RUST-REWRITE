@@ -480,6 +480,7 @@ fn main() {
     let current = dirs.iter().position(|d| *d == full).unwrap_or(0);
     let Loaded { level, world, rails, line, start, yaw: start_yaw, course, paths, tube, cml, stage, finish_area } = loaded;
     let ai_paths = tricky_game::aiglue::paths_of(&level.ai);
+    let ai_start_paths = tricky_game::aiglue::start_paths_of(&level.ai);
     let (race_lines, course_no) = race_lines_of(&level);
     // TRICKY_SPAWN=x,y,z,yaw (Bevy metres, radians): start the run there instead (for checks)
     let (start, start_yaw) = std::env::var("TRICKY_SPAWN").ok().map(|v| v.split(',').filter_map(|x| x.parse::<f32>().ok()).collect::<Vec<_>>())
@@ -500,7 +501,7 @@ fn main() {
     .insert_resource(RiderRes(Rider::new(start + Vec3::Y * 0.5, start_yaw), DrawLerp::default()))
     .insert_resource(mode)
     .insert_resource(RailsRes(rails))
-    .insert_resource(RaceRes(Race { ai_paths, course, paths, tube, cml, stage, finish_area, race_lines, course_no, ..Race::new(line) }))
+    .insert_resource(RaceRes(Race { ai_paths, ai_start_paths, course, paths, tube, cml, stage, finish_area, race_lines, course_no, ..Race::new(line) }))
     .insert_resource(LevelList { dirs, current })
     .init_resource::<CamRes>()
     .init_resource::<editor::Editor>()
@@ -1164,7 +1165,7 @@ fn switch_level(
     commands.insert_resource(World(loaded.world));
     commands.insert_resource(RailsRes(loaded.rails));
     let (race_lines, course_no) = race_lines_of(&loaded.level);
-    commands.insert_resource(RaceRes(Race { ai_paths: tricky_game::aiglue::paths_of(&loaded.level.ai), race_lines, course_no, course: loaded.course, paths: loaded.paths, tube: loaded.tube, cml: loaded.cml, stage: loaded.stage, finish_area: loaded.finish_area, ..Race::new(loaded.line) }));
+    commands.insert_resource(RaceRes(Race { ai_paths: tricky_game::aiglue::paths_of(&loaded.level.ai), ai_start_paths: tricky_game::aiglue::start_paths_of(&loaded.level.ai), race_lines, course_no, course: loaded.course, paths: loaded.paths, tube: loaded.tube, cml: loaded.cml, stage: loaded.stage, finish_area: loaded.finish_area, ..Race::new(loaded.line) }));
     commands.insert_resource(LevelRes(loaded.level));
     let mode = cam.0.mode;
     cam.0 = ChaseCam::default();
@@ -1936,8 +1937,9 @@ fn ride(
     r.course_dir = dir_at(&race.0.line, race.0.idx);
     r.course_pts = rider::course_points(&race.0.line, race.0.idx, r.pos);
     // resets go back onto the course's AI paths, as the original places riders, from wherever
-    // the rider last was on the snow and riding
+    // the rider last was on the snow and riding (`Boarder_UpdatePathAhead` 0x118090, row E1b2g7d3b4h2a)
     {
+        let player_follow = race.0.ensure_player_follow(r, 1 + opponents.0.len());
         let (paths, ai_paths) = (&race.0.paths, &race.0.ai_paths);
         // what a reset request reads of the race (`Boarder_RequestReset` 0x118f10): the mode, the course, every rider's
         // distance to the finish (+0x374), place (+0x110) and velocity (+0x150) on the race lines
@@ -1951,8 +1953,7 @@ fn ride(
         let keep = |rr: &mut Rider, me: usize, follow: Option<&tricky_game::aipath::Follow>| {
             rr.reset_ctx = rider::ResetCtx { no_reset: false, mode: race.0.mode as i32, course: race.0.course_no as i32, me, riders: riders.clone() };
             if !ai_paths.is_empty() {
-                let f = match follow { Some(f) => Some(*f), None => tricky_game::aiglue::follow_near(ai_paths, rr.pos) };
-                if let Some(f) = f.as_ref() {
+                if let Some(f) = follow {
                     rr.reset_ctx.no_reset = !tricky_game::aiglue::can_reset(ai_paths, f);
                     // in the reset state: where it will place the rider, moved on along its path (row E1b2g7d3b4h)
                     if let Some(s) = rr.reset {
@@ -1966,8 +1967,7 @@ fn ride(
             if !rr.grounded || rr.crashed > 0.0 || rr.rail.is_some() { return; }
             // the game's reset place on the rider's path, at the game's heading (row G20c3b5)
             if !ai_paths.is_empty() {
-                let at = match follow { Some(f) => tricky_game::aiglue::reset_place(ai_paths, f), None => tricky_game::aiglue::reset_place_near(ai_paths, rr.pos) };
-                if let Some((p, h)) = at {
+                if let Some((p, h)) = follow.and_then(|f| tricky_game::aiglue::reset_place(ai_paths, f)) {
                     (rr.safe, rr.safe_heading, rr.safe_external) = ((p, rider::wrap(h - std::f32::consts::FRAC_PI_2)), Some(h), true);
                     return;
                 }
@@ -1979,7 +1979,7 @@ fn ride(
                 rr.safe_external = true;
             }
         };
-        keep(r, 0, None);
+        keep(r, 0, player_follow.as_ref());
         for (k, o) in opponents.0.iter_mut().enumerate() { let f = o.port.ai.as_ref().map(|a| a.follow); keep(&mut o.rider, k + 1, f.as_ref()); }
     }
     for o in opponents.0.iter_mut() {
@@ -2013,11 +2013,15 @@ fn ride(
         // (pressed for the frame's first tick only; none in the app's own start gate, and none once finished:
         // `Boarder_RequestReset` asks none past the finish, +0x418)
         let input = Input { reset: std::mem::take(&mut reset_once) && !waiting && !held && r.fin.is_none(), ..input };
+        let p_reset_adv = r.reset.map(|s| s.advance);
         r.step(&world.0, &rails.0, input, dt);
+        if let Some(adv) = p_reset_adv {
+            if r.reset.is_none() { race.0.reset_player_follow_placed(adv); }
+        }
         r.finish_after(dt);
-        r.apply_pads(&world.0, dt);
+        if r.apply_pads(&world.0, dt) { race.0.snap_player_follow(r.pos); }
         if held { r.vel = Vec3::new(0.0, r.vel.y.min(0.0), 0.0); }
-        if let Some(t) = &race.0.tube { if t.apply(r, race.0.laps_left(0), dt) { if let Some(d) = auto.as_mut() { d.reroute(); } } }
+        if let Some(t) = &race.0.tube { if t.apply(r, race.0.laps_left(0), dt) { race.0.snap_player_follow(r.pos); if let Some(d) = auto.as_mut() { d.reroute(); } } }
         if waiting { r.vel = Vec3::new(0.0, r.vel.y.min(0.0), 0.0); }
         // the game mode the event bits act on (0x32de8c: `courses::Mode` for the app's event)
         race.0.mode = match game.event {
@@ -2028,6 +2032,9 @@ fn ride(
         let others: Vec<(Vec3, Vec3)> = opponents.0.iter().map(|o| (o.rider.pos, o.rider.vel)).collect();
         race.0.place_scores = std::iter::once(&*r).chain(opponents.0.iter().map(|o| &o.rider)).map(|x| tricky_game::race::PlaceScore::of(&x.sc)).collect();
         race.0.update(r, &others, dt);
+        if race.0.state != RaceState::Countdown {
+            race.0.tick_player_follow(r);
+        }
         // what the riders' race-line events said into their scores (row E1b2g7b)
         for h in race.0.hooks.clone() {
             let (k, msg) = match h {
@@ -2139,7 +2146,15 @@ fn ride(
             let held = o.rider.gate_launch(dt);
             let ai = if held || o.rider.gate_state == 9 { Input::default() } else { ai };
             let ai = o.rider.finish_input(ai);
+            let o_reset_adv = o.rider.reset.map(|s| s.advance);
             o.rider.step(&world.0, &rails.0, ai, dt * o.driver.time_scale);
+            if let Some(adv) = o_reset_adv {
+                if o.rider.reset.is_none() {
+                    if let Some(a) = o.port.ai.as_mut() {
+                        tricky_game::aiglue::advance_reset_follow(&race.0.ai_paths, &mut a.follow, adv);
+                    }
+                }
+            }
             o.rider.finish_after(dt);
             if o.rider.apply_pads(&world.0, dt) { o.driver.reroute(); }
             if held { o.rider.vel = Vec3::new(0.0, o.rider.vel.y.min(0.0), 0.0); }
@@ -2310,7 +2325,7 @@ fn ride(
 /// Keep exactly one body per rider, of the right character.
 fn sync_visuals(
     mut commands: Commands, lib: Res<CharLib>, opponents: Res<Opponents>, game: Res<ui::Game>,
-    existing: Query<(Entity, &RiderVisual)>, mut meshes: ResMut<Assets<Mesh>>,
+    existing: Query<(Entity, &RiderVisual)>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     if lib.chars.is_empty() { return; }
     // (who, which rider, which of that rider's boards)
@@ -2322,7 +2337,7 @@ fn sync_visuals(
     have.sort_by_key(key);
     if want == have { return; }
     for (e, _) in &existing { commands.entity(e).despawn(); }
-    for (who, character, board) in want { spawn_visual(&mut commands, who, character, board, &lib, &mut meshes); }
+    for (who, character, board) in want { spawn_visual(&mut commands, who, character, board, &lib, &mut meshes, &mut materials); }
 }
 
 /// The characters' folder (riders, boards, and global textures such as the crowd's).
@@ -2412,7 +2427,19 @@ fn load_chars(level_dir: &Path, images: &mut Assets<Image>, materials: &mut Asse
     lib
 }
 
-fn spawn_visual(commands: &mut Commands, who: Who, character: usize, board: usize, lib: &CharLib, meshes: &mut Assets<Mesh>) -> Entity {
+/// `BoarderRender_Draw` 0x1364d0 fade visibility & blend mode from `rider+0x448` (`Rider::fade.0`, row E1b2g7d3b4h2a):
+/// skipped at `0.0` (`0x136520`), alpha-blended below `0.95` (`0x3f733333` at `0x1367c4`), opaque from `0.95` up.
+fn rider_fade_mode(fade: f32) -> (Visibility, AlphaMode, f32) {
+    if fade <= 0.0 {
+        (Visibility::Hidden, AlphaMode::Blend, 0.0)
+    } else if fade < f32::from_bits(0x3f73_3333) {
+        (Visibility::Inherited, AlphaMode::Blend, fade)
+    } else {
+        (Visibility::Inherited, AlphaMode::Opaque, 1.0)
+    }
+}
+
+fn spawn_visual(commands: &mut Commands, who: Who, character: usize, board: usize, lib: &CharLib, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>) -> Entity {
     let entry = &lib.chars[character];
     // the board's shape goes with its kind (and the rider's stance), its graphic with its number
     let info = &trickdata::BOARDS[entry.data][board.min(11)];
@@ -2430,8 +2457,9 @@ fn spawn_visual(commands: &mut Commands, who: Who, character: usize, board: usiz
                 .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0f32, 1.0, 0.0]; n])
                 .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, verts.iter().map(|v| [v.uv.x, v.uv.y]).collect::<Vec<_>>())
                 .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, vec![[1.0f32; 4]; n]);
-            if let Some(mat) = mat {
-                p.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mat.clone()), BodyPart { part, board }, bevy::render::view::NoFrustumCulling));
+            // Per-rider material clone (sharing the same `Handle<Image>` textures) so `rider+0x448` fade is per rider.
+            if let Some(mat) = mat.and_then(|h| materials.get(h).cloned()).map(|m| materials.add(m)) {
+                p.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(mat), BodyPart { part, board }, bevy::render::view::NoFrustumCulling));
             }
         };
         for (i, part) in entry.model.parts.iter().enumerate() { piece(&part.verts, entry.mats.get(&part.texture), i, false); }
@@ -2445,8 +2473,9 @@ fn spawn_visual(commands: &mut Commands, who: Who, character: usize, board: usiz
 /// Move every rider's body to its rider, pose it, and re-skin the meshes.
 fn animate_visuals(
     time: Res<SmoothDt>, rider: Res<RiderRes>, opponents: Res<Opponents>, lib: Res<CharLib>, race: Res<RaceRes>, game: Res<ui::Game>,
-    mut roots: Query<(&mut RiderVisual, &mut Transform, &Children)>,
-    parts: Query<(&BodyPart, &Mesh3d)>, mut meshes: ResMut<Assets<Mesh>>,
+    mut roots: Query<(&mut RiderVisual, &mut Transform, &mut Visibility, &Children)>,
+    parts: Query<(&BodyPart, &Mesh3d, &MeshMaterial3d<StandardMaterial>)>, mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
     mut scratch: Local<(Vec<[f32; 3]>, Vec<[f32; 3]>)>,
 ) {
     // paused: hold every body as it is
@@ -2455,8 +2484,11 @@ fn animate_visuals(
     // on the game's tick (G5). Drawing only: nothing the game runs reads it (row E1a3), so it stays smooth between
     // ticks without a second copy to draw between
     let dt = time.dt;
-    for (mut vis, mut tf, children) in &mut roots {
+    for (mut vis, mut tf, mut vis_flag, children) in &mut roots {
         let (r, draw): (&Rider, &DrawLerp) = match vis.who { Who::Player => (&rider.0, &rider.1), Who::Ai(i) => match opponents.0.get(i) { Some(o) => (&o.rider, &o.draw), None => continue } };
+        let (want_vis, alpha_mode, fade_alpha) = rider_fade_mode(r.fade.0);
+        if *vis_flag != want_vis { *vis_flag = want_vis; }
+        if want_vis == Visibility::Hidden { continue; }
         let Some(entry) = lib.chars.get(vis.character) else { continue };
         // where the body is and which way it faces
         let on_snow = r.grounded || r.air_time < 0.15 || r.rail.is_some();
@@ -2517,7 +2549,10 @@ fn animate_visuals(
         let board_mats = match (&sample, board_model) { (Some(sm), Some(b)) => b.skin_board(sm), _ => vec![Mat4::IDENTITY] };
         let sun = (tf.rotation.inverse() * Vec3::new(0.35, 0.8, 0.45)).normalize();
         for child in children.iter() {
-            let Ok((part, mesh)) = parts.get(child) else { continue };
+            let Ok((part, mesh, mat_h)) = parts.get(child) else { continue };
+            if let Some(mat) = materials.get_mut(&mat_h.0) {
+                if mat.alpha_mode != alpha_mode { mat.alpha_mode = alpha_mode; }
+            }
             let Some(mesh) = meshes.get_mut(&mesh.0) else { continue };
             let s = &mut *scratch;
             let (pos, nrm) = (&mut s.0, &mut s.1);
@@ -2531,7 +2566,7 @@ fn animate_visuals(
             }
             let col: Vec<[f32; 4]> = nrm.iter().map(|n| {
                 let l = (0.58 + 0.6 * Vec3::from(*n).dot(sun).max(0.0)).min(1.25).powf(2.2);
-                [l, l, l, 1.0]
+                [l, l, l, fade_alpha]
             }).collect();
             mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, pos.clone());
             mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, col);
@@ -2900,3 +2935,20 @@ fn chase_camera(
 
 /// The original's race clock: m:ss.cc (HUD_FormatRaceTime)
 fn clock(t: f32) -> String { let cs = (t.max(0.0) * 100.0) as u32; format!("{}:{:02}.{:02}", cs / 6000, cs / 100 % 60, cs % 100) }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rider_fade_mode_matches_boarder_render_draw_thresholds() {
+        let thresh = f32::from_bits(0x3f73_3333); // 0.95
+        assert_eq!(rider_fade_mode(0.0), (Visibility::Hidden, AlphaMode::Blend, 0.0));
+        assert_eq!(rider_fade_mode(-0.1), (Visibility::Hidden, AlphaMode::Blend, 0.0));
+        let below = f32::from_bits(0x3f73_3332);
+        assert_eq!(rider_fade_mode(below), (Visibility::Inherited, AlphaMode::Blend, below));
+        assert_eq!(rider_fade_mode(0.5), (Visibility::Inherited, AlphaMode::Blend, 0.5));
+        assert_eq!(rider_fade_mode(thresh), (Visibility::Inherited, AlphaMode::Opaque, 1.0));
+        assert_eq!(rider_fade_mode(1.0), (Visibility::Inherited, AlphaMode::Opaque, 1.0));
+    }
+}

@@ -1714,6 +1714,10 @@ impl Rider {
                         return;
                     }
                 } else {
+                    if ctl_input.reset {
+                        self.request_reset(None);
+                        return;
+                    }
                     self.air_rotation(&ctl_input, dt);
                     self.air_grabs(&ctl_input, dt);
                     if self.spin != 0.0 || self.flip != 0.0 { self.att = None; }

@@ -60,3 +60,53 @@ fn computer_rider_rides_its_path() {
     assert!(gone > 50_000.0, "it rode {gone} cm along its paths");
     assert!(far < 60, "{far} ticks over 15 m off the path");
 }
+
+/// Row E1b2g7d3b4h2a: player's path tracking (`Boarder_UpdatePathAhead` 0x118090, `x41c == 1`) on real disc `.aip`
+/// files (`TRICKY_DISC`, skipped without it): initializes from `start_positions` (`cAI::vf14` 0x111108), tracks the
+/// rider across forks and path ends without drawing from `Rand_Game`, and advances in place on reset placement
+/// (`Boarder_AdvanceOnPath` 0x118c08 + `ResetState_PlaceRider` 0x119220).
+#[test]
+fn player_follow_tracks_disc_aip_and_advances_on_reset() {
+    let Ok(disc_path) = std::env::var("TRICKY_DISC") else { return };
+    let mut files = tricky_data::big::Files::new(tricky_data::disc::Disc::open(&disc_path).unwrap());
+    for course in ["gari", "elysium"] {
+        let aip = tricky_data::aip::from_disc(&mut files, course, "aip").unwrap();
+        let paths: Vec<Path> = aip.ai_paths.iter().map(Path::from_aip).collect();
+        let start_idx = aip.start_positions.get(2).copied().map(|i| i as usize);
+        let p0 = &paths[start_idx.unwrap_or(0)];
+        let g2b = |v: [f32; 4]| Vec3::new(v[0], v[2], -v[1]) * 0.01;
+        let start_pos = g2b(p0.position_at(0.0).0);
+        let mut f = tricky_game::aiglue::follow_start(&paths, start_idx, start_pos).expect("player follow");
+        if let Some(si) = start_idx {
+            assert_eq!(f.path, si, "{course}: start_positions[2] should be chosen at gate");
+        }
+        // Move rider smoothly down its initial path and verify update_player_follow advances `along` and never touches Rand_Game.
+        let seed_before = tricky_game::rand::streams().game_snapshot();
+        let mut r = Rider::new(start_pos, 0.0);
+        let mut switched = false;
+        let init_path = f.path;
+        let mut walk_d = 0.0f32;
+        for tick in 0..400 {
+            let cur_len = paths[f.path].length();
+            walk_d = (walk_d + 120.0).min(cur_len);
+            let (gp, _) = paths[f.path].position_at(walk_d);
+            let gd = paths[f.path].direction_at(walk_d);
+            r.pos = g2b(gp);
+            r.vel = Vec3::new(gd[0], gd[2], -gd[1]) * 18.0;
+            let prev_path = f.path;
+            tricky_game::aiglue::update_player_follow(&paths, &mut f, &r, 0, tick);
+            if f.path != prev_path {
+                switched = true;
+                walk_d = f.along;
+            }
+        }
+        assert_eq!(tricky_game::rand::streams().game_snapshot(), seed_before, "{course}: player path follow (x41c=1) must not draw Rand_Game");
+        assert!(switched || f.along > 5000.0, "{course}: follow should advance along course (path {init_path} -> {}, along {:.0})", f.path, f.along);
+
+        // Reset placement advances `Follow` in place via Boarder_AdvanceOnPath + ResetState_GetRespawnPos.
+        let before = (f.path, f.along);
+        tricky_game::aiglue::advance_reset_follow(&paths, &mut f, 1500.0);
+        assert!(f.path != before.0 || f.along >= before.1, "{course}: advance_reset_follow must advance along path");
+        assert!(tricky_game::aiglue::reset_place(&paths, &f).is_some());
+    }
+}

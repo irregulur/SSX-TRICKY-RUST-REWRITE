@@ -1010,8 +1010,33 @@ In the app:
   rectangle as an untextured quad.
 - Inferred: blend 3 is the usual alpha blend, and the GS takes an untextured corner of 0x80 as 0x80 of 0xff, so the
   fade is a mid grey at the overlay's alpha. The human saw the reset fade to grey in PCSX2 (2026-11-20).
-- Left (row E1b2g7d3b4h2): the rider's own fade (+0x448) is not drawn; `cBoarder::vf7` 0x117198's other work (the
-  eases, decays) is not run during the reset; the player's place on its path is still `follow_near`'s STANDIN.
+
+### Rider fade, player path follow, and reset across control states (row E1b2g7d3b4h2a)
+
+Proven (`SLUS_203.26`):
+- `BoarderRender_Draw` 0x1364d0 (`riderdraw.rs`): skips drawing the rider completely when `rider+0x448 == 0.0`
+  (`0x136520`), and switches to the two-pass alpha-blended draw when `rider+0x448 < 0.95` (`0x3f733333` at `0x1367c4`).
+- `cAI::vf14` 0x111108 (`0x1112e8..0x11134c`) assigns each rider `s3` its starting AI path
+  `AIPathSet_GetPath(0x337fb8, s3 + (6 - n) / 2)` via `Boarder_SetRestartPoint` 0x118068 (`rider+0x57a0` main line,
+  `rider+0x57a4` start AI path), and `cBoarder::vf7` 0x117198 (`0x117af4`) calls `Boarder_UpdatePathAhead` 0x118090
+  every tick for both human and computer riders. For a human rider (`x41c == 1`), `choose_path_ahead` skips the AI
+  path-preference roll and does not draw from `Rand_Game`.
+
+In the app:
+- `src/main.rs`: `spawn_visual` gives each rider its own cloned `StandardMaterial` handles (sharing texture handles);
+  `animate_visuals` applies `rider_fade_mode(r.fade.0)` (`Visibility::Hidden` at `<= 0.0`, `AlphaMode::Blend` + vertex
+  alpha `r.fade.0` below `0.95` `0x3f733333`, `AlphaMode::Opaque` + alpha `1.0` at `>= 0.95`) for both the player and
+  opponents.
+- `game/src/aiglue.rs`, `game/src/race.rs`, `src/main.rs`: replaced `aiglue::follow_near` / `reset_place_near`
+  STANDINs with `Race::player_follow` initialized from `.aip` `start_positions[(6 - n) / 2]` (`aiglue::follow_start`),
+  stepped each 60 Hz tick by `aiglue::update_player_follow` (`Boarder_UpdatePathAhead` 0x118090, `x41c = 1`), and
+  advanced in place on reset placement by `aiglue::advance_reset_follow` (`Boarder_AdvanceOnPath` 0x118c08 +
+  `ResetState_GetRespawnPos` 0x196758) for both player and opponents.
+- `game/src/rider.rs` & `game/tests/control_tick.rs`: verified `cBoarder::vf7` 0x117198 eases/decays during reset
+  (unified since G1i2c) and end-to-end reset button handling across `NATURAL_AIR` (`0xd`), `SPIN` (`0x10`, including
+  fallback branch), `RAIL` (`0xf`), `WIPEOUT` (`0x13`), and `GET_UP` (`0x14`).
+- Left (row E1b2g7d3b4h2b): the out-of-bounds boxes as trigger scripts' op 13 (`TriggerScript_ExecOp` 0x13bfd0 at
+  `0x13c3b4`) once script threads run in the app (E9b2).
 
 ### The normal in the air (row G20c2b)
 

@@ -249,3 +249,135 @@ fn rider_step_runs_vf7_order_speed_cap_decays_and_reset_eases() {
     assert!(fell.reset.is_some(), "below world floor should trigger vf7 reset");
     assert_eq!((fell.motion, fell.ctl, fell.reset_flag), (4, RESET, 1));
 }
+
+/// Row E1b2g7d3b4h2a: the reset button works end-to-end through `Rider::step` across air (`NATURAL_AIR` 0xd, `SPIN`
+/// 0x10), rail (`RAIL` 0xf), and wipe-out / get-up (`WIPEOUT` 0x13, `GET_UP` 0x14), and `cBoarder::vf7` 0x117198
+/// runs eases & decays (`brake`, `crouch`, `steer`, `lean`, `body_height`, `impact`, `knocks`, `impact_n`) during
+/// reset while `ResetState_Update` 0x106a90 ramps `fade.0` (+0x448) from 1 -> 0 over 0.5 s and `fade.1` (+0x44c)
+/// from 0 -> 1 past 0.2 s, restoring `(1.0, 0.0)` on placement past 0.8 s.
+#[test]
+fn reset_button_in_air_rail_wipeout_and_vf7_during_reset() {
+    use tricky_game::rider::control_tick::{GET_UP, NATURAL_AIR, RAIL, SPIN, WIPEOUT};
+    let world = slope(300.0, 40.0);
+    let rails = Rails::default();
+    let dt = 1.0 / 60.0;
+    let safe = (Vec3::new(0.0, 15.0, -180.0), 0.0);
+
+    // 1. NATURAL_AIR (0xd): reset button starts reset (no +0x304 write), ramps fade +0x448 and +0x44c, runs vf7
+    //    eases & decays while stationary, and places the rider on the 49th tick with fade restored to (1.0, 0.0).
+    let mut r = Rider::new(Vec3::new(0.0, 50.0, -20.0), 0.0);
+    r.grounded = false;
+    r.motion = 1;
+    r.vel = Vec3::new(0.0, 0.0, -10.0);
+    r.safe = safe;
+    r.set_control(NATURAL_AIR);
+    r.reset_flag = 1; // NaturalAirControl_Update does not overwrite +0x304
+    r.crouch_v = 0.8;
+    r.steer = -0.6;
+    r.rec.crouch = [0.8, 4.0, 0.0];
+    r.rec.steer = [0.6, 5.0, 0.0];
+    r.body_height = 6.0;
+    r.impact = 2.0;
+    r.knocks = 3.0;
+    r.impact_n = [1.0, 0.0, 0.0, 0.0];
+    let n0 = r.respawns;
+    r.step(&world, &rails, Input { reset: true, ..Input::default() }, dt);
+    assert!(r.reset.is_some(), "reset button in NATURAL_AIR must enter reset state");
+    assert_eq!((r.motion, r.ctl, r.reset_flag), (4, RESET, 1));
+    let pos_at_reset = r.pos;
+    let (c0, s0, h0, imp0, kn0, in0) = (r.rec.crouch[0], r.rec.steer[0], r.body_height, r.impact, r.knocks, r.impact_n[0]);
+    let mut saw_mid_fade = false;
+    let mut saw_zero_fade = false;
+    let mut saw_screen_fade = false;
+    let mut ticks = 0u32;
+    while r.reset.is_some() {
+        r.step(&world, &rails, Input::default(), dt);
+        ticks += 1;
+        if ticks == 1 {
+            // Stationary (motion 4) while vf7 eases records & decays impact/knocks/crash_normal
+            assert_eq!(r.pos, pos_at_reset, "rider must stay stationary during reset");
+            assert!(r.rec.crouch[0] < c0, "crouch record must ease during reset");
+            assert!(r.rec.steer[0] < s0, "steer record must ease during reset");
+            assert!(r.body_height < h0, "body_height must ease during reset");
+            assert!(r.impact < imp0, "impact must decay during reset");
+            assert!(r.knocks < kn0, "knocks must decay during reset");
+            assert!(r.impact_n[0] < in0, "crash_normal must decay during reset");
+        }
+        if 0.0 < r.fade.0 && r.fade.0 < f32::from_bits(0x3f73_3333) {
+            saw_mid_fade = true;
+        }
+        if r.fade.0 == 0.0 {
+            saw_zero_fade = true;
+        }
+        if r.fade.1 > 0.0 {
+            saw_screen_fade = true;
+        }
+        assert!(ticks < 60, "reset must complete around 49 ticks");
+    }
+    assert!(saw_mid_fade, "rider +0x448 fade must pass through (0, 0.95)");
+    assert!(saw_zero_fade, "rider +0x448 fade must reach 0.0 past 0.5 s");
+    assert!(saw_screen_fade, "screen +0x44c fade must rise past 0.2 s");
+    assert_eq!(r.fade, (1.0, 0.0), "ResetWaitControl_Exit restores fade to (1.0, 0.0)");
+    assert_eq!(r.respawns, n0 + 1);
+
+    // 2. SPIN (0x10) after takeoff (with spin_st active): reset button enters reset and places rider.
+    let mut r = rider();
+    r.safe = safe;
+    for _ in 0..20 {
+        r.step(&world, &rails, Input::default(), dt);
+    }
+    // Prewind then release jump to enter SPIN (0x10) with spin_st initialized
+    for _ in 0..10 {
+        r.step(&world, &rails, Input { jump: true, ..Input::default() }, dt);
+    }
+    for _ in 0..15 {
+        r.step(&world, &rails, Input::default(), dt);
+        if r.ctl == SPIN && r.spin_st.is_some() {
+            break;
+        }
+    }
+    assert_eq!(r.ctl, SPIN, "jump should enter SPIN");
+    assert!(r.spin_st.is_some());
+    r.step(&world, &rails, Input { reset: true, ..Input::default() }, dt);
+    assert!(r.reset.is_some(), "reset button in SPIN must enter reset state");
+    assert_eq!((r.motion, r.ctl), (4, RESET));
+
+    // 3. RAIL (0xf): reset button enters reset state through Rider::step.
+    let one_rail = Rails(
+        vec![tricky_game::rails::Rail::new(vec![Vec3::new(0.0, 10.0, -10.0), Vec3::new(0.0, 10.0, -80.0)]).unwrap()],
+        Default::default(),
+    );
+    let mut r = Rider::new(Vec3::new(0.0, 10.0, -20.0), 0.0);
+    r.grounded = false;
+    r.rail = Some((0, 10.0, 10.0));
+    r.motion = 3;
+    r.vel = Vec3::new(0.0, 0.0, -10.0);
+    r.safe = safe;
+    r.set_control(RAIL);
+    r.step(&world, &one_rail, Input { reset: true, ..Input::default() }, dt);
+    assert!(r.reset.is_some(), "reset button on RAIL must enter reset state");
+    assert_eq!((r.motion, r.ctl), (4, RESET));
+
+    // 4. WIPEOUT (0x13) and GET_UP (0x14): reset button sets +0x304 = 0, enters reset, and charges meter.
+    for state in [WIPEOUT, GET_UP] {
+        let mut r = rider();
+        r.safe = safe;
+        for _ in 0..15 {
+            r.step(&world, &rails, Input::default(), dt);
+        }
+        r.crashed = 2.0;
+        r.grounded = false;
+        r.motion = if state == GET_UP { 6 } else { 5 };
+        r.surface = 1;
+        r.boost = 0.5;
+        r.reset_flag = 1;
+        r.set_control(state);
+        r.step(&world, &rails, Input { reset: true, ..Input::default() }, dt);
+        assert!(r.reset.is_some(), "reset button in state {state:#x} must enter reset state");
+        assert_eq!((r.motion, r.ctl, r.reset_flag), (4, RESET, 0), "state {state:#x} must clear +0x304 for button");
+        while r.reset.is_some() {
+            r.step(&world, &rails, Input::default(), dt);
+        }
+        assert!(r.boost < 0.45, "button reset from state {state:#x} must charge meter: {}", r.boost);
+    }
+}

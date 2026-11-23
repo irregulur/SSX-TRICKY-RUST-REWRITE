@@ -33,6 +33,11 @@ pub fn input_of(pad: u32) -> Input {
     }
 }
 
+/// The `.aip`'s start-gate AI path indices (`AIP_LoadAIPaths` 0x198518, `cAI::vf14` 0x111108).
+pub fn start_paths_of(ai: &tricky_data::level::AiFile) -> Vec<usize> {
+    ai.aip.as_ref().map_or_else(Vec::new, |a| a.start_positions.iter().map(|&i| i as usize).collect())
+}
+
 /// A course's AI paths as the game keeps them, from the level's form of its `.aip` (`level::AiFile`, folder or disc):
 /// each point's offset as a unit direction and length, each event's file code as its place in the event table
 /// (`aip::EVENT_TYPES`). STANDIN: the directions renormalised from the folder form's offsets, for the `.aip`'s own
@@ -105,22 +110,67 @@ pub fn reset_place(paths: &[Path], f: &Follow) -> Option<(Vec3, f32)> {
     Some((Vec3::new(p.pos[0], p.pos[2], -p.pos[1]) * 0.01, p.heading))
 }
 
-/// [`reset_place`] for a rider the port does not follow along its paths (the player). STANDIN: the respawnable path
-/// nearest `pos` (`AIP_SortLinesByDistance`) projected, where the game keeps the rider's own place on its path every
-/// tick (`Boarder_UpdatePathAhead`; row G20c3b5)
-pub fn reset_place_near(paths: &[Path], pos: Vec3) -> Option<(Vec3, f32)> {
-    reset_place(paths, &follow_near(paths, pos)?)
+/// Starting [`Follow`] for a rider (`cAI::vf14` 0x111108 -> `Boarder_SetRestartPoint` 0x118068 -> `cBoarder::vf8`
+/// 0x116ab8): uses `start_path` when valid and within 50 m of `pos` (so `TRICKY_SPAWN` or mid-course snaps fall back
+/// to the nearest path), else the nearest AI path via `AIP_SortLinesByDistance`, projected from its start.
+pub fn follow_start(paths: &[Path], start_path: Option<usize>, pos: Vec3) -> Option<Follow> {
+    if paths.is_empty() {
+        return None;
+    }
+    let p = game_pos(pos);
+    let pick = |path: usize| -> Follow {
+        let mut f = Follow { path, last: 0.0, along: 0.0, off: 0.0, near: [0.0; 4], ahead: [0.0; 4], heading: 0.0, cache: aipath::Cache::default() };
+        let (d, off) = paths[path].project_from(p, &mut f.near, &mut f.cache);
+        f.along = d;
+        f.last = d;
+        f.off = off;
+        f.ahead = paths[path].position_at(d + 800.0).0;
+        f.heading = crate::jump::atan2_inline(f.ahead[1] - f.near[1], f.ahead[0] - f.near[0]);
+        f
+    };
+    if let Some(k) = start_path.filter(|&k| k < paths.len()) {
+        let f = pick(k);
+        if f.off <= 5000.0 {
+            return Some(f);
+        }
+    }
+    let path = *aipath::sort_by_distance(paths, p, 1, false).first()?;
+    Some(pick(path))
 }
 
-/// The rider's place on the respawnable path nearest `pos` (`AIP_SortLinesByDistance`, projected). STANDIN: for the
-/// player's own place on its path, which the game keeps every tick (`Boarder_UpdatePathAhead`; row G20c3b5)
-pub fn follow_near(paths: &[Path], pos: Vec3) -> Option<Follow> {
-    let p = game_pos(pos);
-    let path = *aipath::sort_by_distance(paths, p, 1, true).first()?;
-    let mut f = Follow { path, last: 0.0, along: 0.0, off: 0.0, near: [0.0; 4], ahead: [0.0; 4], heading: 0.0, cache: aipath::Cache::default() };
-    let (d, _) = paths[path].project_from(p, &mut f.near, &mut f.cache);
-    f.along = d;
-    Some(f)
+/// `Boarder_UpdatePathAhead` 0x118090 for a local player (`x41c == 1`, row E1b2g7d3b4h2a): projects the rider's
+/// position onto its path each 60 Hz tick and switches paths when > 500 cm off (every 60th tick), within 200 cm of
+/// the path end, or past a fork marker. With `x41c == 1`, `choose_path_ahead` never draws from `Rand_Game`.
+pub fn update_player_follow(paths: &[Path], f: &mut Follow, r: &Rider, place: i32, tick: i32) {
+    if f.path >= paths.len() {
+        return;
+    }
+    let c = Chooser {
+        pos: game_pos(r.pos),
+        vel: game_dir(r.vel * 100.0),
+        x41c: 1,
+        class: r.stats.kind as u32,
+        place,
+        meter: r.boost,
+        keep: 1.0,
+    };
+    aipath::update_path_ahead(paths, f, r.fin.is_none(), tick, &c, &mut || 0);
+}
+
+/// Advances a rider's tracked [`Follow`] in place when `ResetState_Update` 0x106a90 places the rider:
+/// `Boarder_AdvanceOnPath` 0x118c08 by `advance` cm followed by `ResetState_PlaceRider` 0x119220's
+/// `ResetState_GetRespawnPos` 0x196758 update of `along` / `near`.
+pub fn advance_reset_follow(paths: &[Path], f: &mut Follow, advance: f32) {
+    if f.path >= paths.len() {
+        return;
+    }
+    aipath::advance_on_path(paths, f, advance);
+    let (along, at) = paths[f.path].respawn_at(f.along);
+    f.along = along;
+    f.last = along;
+    f.near = at;
+    f.ahead = paths[f.path].position_at(along + 800.0).0;
+    f.heading = crate::jump::atan2_inline(f.ahead[1] - f.near[1], f.ahead[0] - f.near[0]);
 }
 
 /// Where the reset state places a rider (row E1b2g7d3b4h): `ResetState_Update` 0x106a90's `Boarder_AdvanceOnPath`

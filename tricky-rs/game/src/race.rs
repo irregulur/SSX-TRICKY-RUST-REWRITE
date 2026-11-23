@@ -367,7 +367,13 @@ impl AiDriver {
 pub enum RaceState { Countdown, Running, Finished }
 pub struct Race { pub line: Vec<Vec3>,
     /// the course's AI paths as the game keeps them (`aiglue::paths_of`), for the ported computer riders (row G4e3)
-    pub ai_paths: Vec<crate::aipath::Path>, pub idx: usize, pub time: f32, pub state: RaceState, pub best: Option<f32>, pub countdown: f32, pub course: AiCourse,
+    /// and the player's `Boarder_UpdatePathAhead` 0x118090 tracking (row E1b2g7d3b4h2a)
+    pub ai_paths: Vec<crate::aipath::Path>,
+    /// the `.aip`'s start-gate AI path indices (`AIP_LoadAIPaths` 0x198518, `cAI::vf14` 0x111108)
+    pub ai_start_paths: Vec<usize>,
+    /// the player's tracked place on `ai_paths` (`rider+0x344`, `Boarder_UpdatePathAhead` 0x118090)
+    pub player_follow: Option<crate::aipath::Follow>,
+    pub idx: usize, pub time: f32, pub state: RaceState, pub best: Option<f32>, pub countdown: f32, pub course: AiCourse,
     /// seconds the show-off clock has gained (`Boarder_HitCheckpoint`'s additions to the race clock)
     pub bonus: f32,
     /// the opponents' AI path network
@@ -400,8 +406,35 @@ pub struct Race { pub line: Vec<Vec3>,
 impl Race {
     /// The original's countdown: GO after 2.5 s (beeps at 0.5, 1.0, 1.5 and 2.0 s).
     /// A race entered: `Rand_SeedGame` seeds the game stream (`cAI::vf14_111108` 0x1112dc; STANDIN seed, see [`crate::rand::RACE_SEED`]).
-    pub fn new(line: Vec<Vec3>) -> Self { crate::rand::seed_game(crate::rand::RACE_SEED); Self { line, ai_paths: Vec::new(), idx: 0, time: 0.0, state: RaceState::Countdown, best: None, countdown: 2.5, course: AiCourse::default(), bonus: 0.0, paths: Default::default(), tube: None, cml: None, intro: false, scene: None, stage: None, finish_area: None, post: 0, post_scripts: Vec::new(), cast: None, race_lines: None, course_no: 0, mode: crate::courses::Mode::CircuitRace as u32, line_riders: Vec::new(), place_scores: Vec::new(), clock: 0.0, line_clock: 0.0, line_frame: 0, hooks: Vec::new(), music: Vec::new(), speech: Vec::new(), places_mem: Default::default() } }
-    pub fn restart(&mut self) { crate::rand::seed_game(crate::rand::RACE_SEED); self.idx = 0; self.time = 0.0; self.state = RaceState::Countdown; self.countdown = 2.5; self.bonus = 0.0; self.post = 0; self.post_scripts.clear(); self.cast = None; self.line_riders.clear(); self.clock = 0.0; self.line_clock = 0.0; self.line_frame = 0; self.hooks.clear(); self.music.clear(); self.speech.clear(); }
+    pub fn new(line: Vec<Vec3>) -> Self { crate::rand::seed_game(crate::rand::RACE_SEED); Self { line, ai_paths: Vec::new(), ai_start_paths: Vec::new(), player_follow: None, idx: 0, time: 0.0, state: RaceState::Countdown, best: None, countdown: 2.5, course: AiCourse::default(), bonus: 0.0, paths: Default::default(), tube: None, cml: None, intro: false, scene: None, stage: None, finish_area: None, post: 0, post_scripts: Vec::new(), cast: None, race_lines: None, course_no: 0, mode: crate::courses::Mode::CircuitRace as u32, line_riders: Vec::new(), place_scores: Vec::new(), clock: 0.0, line_clock: 0.0, line_frame: 0, hooks: Vec::new(), music: Vec::new(), speech: Vec::new(), places_mem: Default::default() } }
+    pub fn restart(&mut self) { crate::rand::seed_game(crate::rand::RACE_SEED); self.player_follow = None; self.idx = 0; self.time = 0.0; self.state = RaceState::Countdown; self.countdown = 2.5; self.bonus = 0.0; self.post = 0; self.post_scripts.clear(); self.cast = None; self.line_riders.clear(); self.clock = 0.0; self.line_clock = 0.0; self.line_frame = 0; self.hooks.clear(); self.music.clear(); self.speech.clear(); }
+    /// Ensures the player's tracked [`Follow`] on `ai_paths` is initialized (`cAI::vf14` 0x111108 ->
+    /// `Boarder_SetRestartPoint` 0x118068, start slot `(6 - n_riders) / 2`, falling back to nearest path).
+    pub fn ensure_player_follow(&mut self, r: &Rider, n_riders: usize) -> Option<crate::aipath::Follow> {
+        if self.player_follow.is_none() && !self.ai_paths.is_empty() {
+            let slot = 6usize.saturating_sub(n_riders) / 2;
+            let start_path = self.ai_start_paths.get(slot).copied();
+            self.player_follow = crate::aiglue::follow_start(&self.ai_paths, start_path, r.pos);
+        }
+        self.player_follow
+    }
+    /// One 60 Hz tick of `Boarder_UpdatePathAhead` 0x118090 for the local player (`x41c == 1`, row E1b2g7d3b4h2a).
+    pub fn tick_player_follow(&mut self, r: &Rider) {
+        if let Some(f) = self.player_follow.as_mut() {
+            let place = self.line_riders.first().map_or(0, |m| m.place);
+            crate::aiglue::update_player_follow(&self.ai_paths, f, r, place, self.line_frame);
+        }
+    }
+    /// Advances the player's tracked [`Follow`] after `ResetState_Update` 0x106a90 places the rider.
+    pub fn reset_player_follow_placed(&mut self, advance: f32) {
+        if let Some(f) = self.player_follow.as_mut() {
+            crate::aiglue::advance_reset_follow(&self.ai_paths, f, advance);
+        }
+    }
+    /// Re-projects the player's tracked [`Follow`] after a teleport pad or Megaplex tube jump.
+    pub fn snap_player_follow(&mut self, pos: Vec3) {
+        self.player_follow = crate::aiglue::follow_start(&self.ai_paths, None, pos);
+    }
     /// Metres of racing line still to go from a line point.
     pub fn remaining(&self, idx: usize) -> f32 { self.line.windows(2).skip(idx).map(|w| (w[1] - w[0]).length()).sum() }
     pub fn progress(&self) -> f32 { if self.line.len() < 2 { 0.0 } else { self.idx as f32 / (self.line.len() - 1) as f32 } }
@@ -1007,6 +1040,9 @@ pub fn self_test(world: &mut CollisionWorld, rails: &Rails, line: &[Vec3], cours
     // rails, the tricks and as the harness (stuck, rejoin, finish). TRICKY_OLDAI: `AiDriver` alone.
     let use_port = !ai_paths.is_empty() && std::env::var("TRICKY_OLDAI").is_err();
     let mut port = PortAi::default();
+    let mut player_follow = crate::aiglue::follow_start(ai_paths, None, r.pos);
+    let mut follow_acc = 0.0f32;
+    let mut follow_tick = 0i32;
     while t < seconds {
         if use_port {
             let view = crate::aiglue::RaceView { grudge: Default::default(), place: 0, me: 0, others: &[], recs: &[], tick: (t * 60.0) as i32, practice: false };
@@ -1036,8 +1072,8 @@ pub fn self_test(world: &mut CollisionWorld, rails: &Rails, line: &[Vec3], cours
         let respawns_before = r.respawns;
         // where the game's reset would place the rider on its path, at the game's heading (row G20c3b5)
         // what a reset request reads (`Boarder_RequestReset` 0x118f10): the rider alone in the race, `AIP_CanResetAt` on
-        // its path; in the reset state the place it will be put, moved on along its path (row E1b2g7d3b4h)
-        let follow = if ai_paths.is_empty() { None } else { match port.ai.as_ref() { Some(a) => Some(a.follow), None => crate::aiglue::follow_near(ai_paths, r.pos) } };
+        // its path; in the reset state the place it will be put, moved on along its path (row E1b2g7d3b4h / E1b2g7d3b4h2a)
+        let follow = if ai_paths.is_empty() { None } else { match port.ai.as_ref() { Some(a) => Some(a.follow), None => player_follow } };
         r.reset_ctx = crate::rider::ResetCtx { no_reset: follow.is_some_and(|f| !crate::aiglue::can_reset(ai_paths, &f)), mode: race.mode as i32, course: race.course_no as i32, me: 0, riders: Vec::new() };
         let game_place = match (follow, r.reset) {
             (Some(f), Some(s)) => crate::aiglue::reset_spot(ai_paths, &f, s.advance),
@@ -1058,14 +1094,44 @@ pub fn self_test(world: &mut CollisionWorld, rails: &Rails, line: &[Vec3], cours
         world.touch_gates(&[r.pos + Vec3::Y * 0.8]);
         if std::env::var("TRICKY_RESETS").is_ok() { for (g, s) in world.gates.iter().zip(shut) { if s && g.t.is_some() { println!("  t {t:.1}: door {} opens (open {:.1}..{:.1} s of {:.1})", g.inst, g.open.0, g.open.1, g.len); } } }
         world.tick_gates(dt);
-        let resetting = r.reset.is_some();
+        let reset_adv = r.reset.map(|s| s.advance);
+        let resetting = reset_adv.is_some();
         r.step(world, rails, input, dt);
+        if let Some(adv) = reset_adv {
+            if r.reset.is_none() {
+                if let Some(a) = port.ai.as_mut() {
+                    crate::aiglue::advance_reset_follow(ai_paths, &mut a.follow, adv);
+                } else if let Some(f) = player_follow.as_mut() {
+                    crate::aiglue::advance_reset_follow(ai_paths, f, adv);
+                }
+            }
+        }
+        if port.ai.is_none() {
+            follow_acc += dt * 60.0;
+            while follow_acc >= 0.5 {
+                follow_acc -= 1.0;
+                if let Some(f) = player_follow.as_mut() {
+                    crate::aiglue::update_player_follow(ai_paths, f, &r, 0, follow_tick);
+                }
+                follow_tick += 1;
+            }
+        }
         if std::env::var("TRICKY_RESETS").is_ok() && resetting != r.reset.is_some() {
             if resetting { println!("  t {t:.2}: placed at {:.1?} heading {:?}", r.pos, r.safe_heading); } else { println!("  t {t:.2}: reset state ({:?}) at {:.1?}", r.reset, r.pos); }
         }
-        if r.apply_pads(world, dt) { ai.reroute(); }
+        if r.apply_pads(world, dt) {
+            ai.reroute();
+            if port.ai.is_none() { player_follow = crate::aiglue::follow_start(ai_paths, None, r.pos); }
+        }
         world.tick_knockables(dt);
-        if let Some(tb) = tube { if tb.apply(&mut r, laps(&race), dt) { ai.reroute(); tube_t = t; println!("  t {t:.1}: up the tube, {} laps to go", laps(&race)); } }
+        if let Some(tb) = tube {
+            if tb.apply(&mut r, laps(&race), dt) {
+                ai.reroute();
+                if port.ai.is_none() { player_follow = crate::aiglue::follow_start(ai_paths, None, r.pos); }
+                tube_t = t;
+                println!("  t {t:.1}: up the tube, {} laps to go", laps(&race));
+            }
+        }
         if std::env::var("TRICKY_TUBE").is_ok() && ((t > tube_t - 2.0 && t < tube_t) || (t - tube_t < 3.0 && t >= tube_t)) && ((t * 10.0) as i32) != (((t - dt) * 10.0) as i32) { println!("    t {t:.1} pos {:.1?} vel {:.1?} grounded {} class {} down {:.1}", r.pos, r.vel, r.grounded, r.tube_class, r.crashed); }
         // a move of more than 3 m in one step: a respawn (counted in `r.respawns`), or not (row E7c3i: the wipe-out's
         // first `Ragdoll_Contacts` pushing a body posed upside down under the snow back out of it, alaska t 110.0; or
