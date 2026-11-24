@@ -1,10 +1,14 @@
-//! Live world-cell and controller host (board row E7b2): drives `AiCells::tick` (`cAIWorld::vf1` 0x115e28) each
-//! 60 Hz frame on a course's `.pbd`, `.ltg`, and `.ssf` (`CourseGround`), spawning and stepping `cAnimObjectNode`
-//! (0x100, `objanim::AnimObject` 0x198810 / 0x199058), `cAnimDeltaNode` (0x101, `objanim::AnimDelta` 0x199d10 /
-//! 0x199db8), and logic controllers (`cDebounceNode` 2, `cDeadNode` 5, `cCounterNode` 6, `cTimerNode` 8,
-//! `cRestoreNode` 0x3ee, `controllers::Controller`) via `TriggerScript_Op0_SpawnController` 0x13c5d0 /
-//! `TriggerScript_ApplyControllerOp` 0x13ac88, and posing animated collision parts on `CourseGround` through
-//! `meshanim::mesh_frame` (`MeshAnim_ApplyFrames` 0x199258 / `MeshAnimNode_GetFrameMatrix` 0x1998d0).
+//! Live world-cell, controller, and script-thread host (board rows E7b2, E9b2): drives `AiCells::tick`
+//! (`cAIWorld::vf1` 0x115e28) and List 3 (`BxList_Add` 0x17d4e8, `BxList_UpdateAll` 0x17d950,
+//! `BxList_MergePending` 0x17d548, `cBxSortObjNode` 0x17d0e0) each 60 Hz frame on a course's `.pbd`, `.ltg`, and
+//! `.ssf` (`CourseGround`), executing live `cScriptNode` threads (`0x13b8c0`, `0x13b978`, `0x13bc78`,
+//! `World_RunScript` 0x13bad8, `World_DeleteScriptObject` 0x13bbc0, `World_FindScript` 0x260dd8), spawning and
+//! stepping `cAnimObjectNode` (0x100, `objanim::AnimObject` 0x198810 / 0x199058), `cAnimDeltaNode` (0x101,
+//! `objanim::AnimDelta` 0x199d10 / 0x199db8), and logic controllers (`cDebounceNode` 2, `cDeadNode` 5,
+//! `cCounterNode` 6, `cTimerNode` 8, `cRestoreNode` 0x3ee, `controllers::Controller`) via
+//! `TriggerScript_Op0_SpawnController` 0x13c5d0 / `TriggerScript_ApplyControllerOp` 0x13ac88, and posing animated
+//! collision parts on `CourseGround` through `meshanim::mesh_frame` (`MeshAnim_ApplyFrames` 0x199258 /
+//! `MeshAnimNode_GetFrameMatrix` 0x1998d0).
 
 use std::collections::{HashMap, HashSet};
 
@@ -23,16 +27,70 @@ use crate::world::World;
 
 type V4 = [f32; 4];
 
-/// Events produced by one 60 Hz [`CellHost::tick`] for the app's visual animation layer (`WorldAnim`).
+/// Per-op side effect emitted by live `.ssf` script threads (`tricky_game::script`, row E9b2) for the app layer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ScriptEvent {
+    /// Op 0 spawned a controller on `object` (raw `.ssf` op-0 `args`: `[sub_type, ...]`).
+    SpawnController { object: usize, args: Vec<u32> },
+    /// Ops 3 / 9 sent a controller message `(p2, p3)` to `object`.
+    ControllerMessage { object: usize, p2: u32, p3: u32 },
+    /// Op 0 sub-type 5 (`cDeadNode` mode 2..=3 or `cRestoreNode` mode 4) hid `object` (`flags & 0xffffff0d | 4`).
+    DeadObject(usize),
+    /// Op 0 sub-type 5 (`RestoreFlags` mode 0 or killed `cRestoreNode`) restored `object`.
+    RestoreObject(usize),
+    /// Op 25 (`RailMan_SetRail` 0x149030): spline rail switched on or off.
+    SetRail { spline: u32, on: bool },
+    /// Op 8 (`Sfx_ScriptSoundPlay` 0x2165c8).
+    ScriptSound { object: usize, sound: u32 },
+    /// Op 13 (`Boarder_RequestReset` 0x118f10) for `rider` handle.
+    ResetRider(u32),
+    /// Op 24 (`Boarder_TeleportToInstance` 0x11a098): teleport `rider` to `object`.
+    Teleport { rider: u32, object: usize },
+}
+
+/// Events produced by `CellHost` (`tick`, `run_script_named`, `run_event_script`) for the app's visual/gameplay layer.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CellEvents {
     /// `(object, effect_id)` scripts started by cell activation, deactivation, or controller finish.
     pub activated_scripts: Vec<(usize, i32)>,
     /// Objects whose controller was killed or finished this tick (so visual controllers on them stop).
     pub killed_objects: Vec<usize>,
+    /// Ordered side effects executed by live `.ssf` script threads (`tricky_game::script`).
+    pub script_events: Vec<ScriptEvent>,
 }
 
-/// Live cell activation, script controller state, and keyframed animation clocks for one course (`CourseGround`).
+/// What kind of List 3 node an entry represents (`cBxSortObjNode` 0x17d0e0 on list 3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum List3Kind {
+    Controller(usize),
+    Script(u64),
+}
+
+/// One node in List 3 (`0x337c60`, list 3): sorted descending by `sort_id` (`+0x20`, `cBxSortObjNode::vf3` 0x17dcb0),
+/// so `BxList_UpdateAll` 0x17d950 walks newest-first (head to tail).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct List3Entry {
+    sort_id: u32,
+    is_dead: bool,
+    kind: List3Kind,
+}
+
+/// A live/waiting `cScriptNode` (`type 0x3e9`) plus the rider context (`+0x150` velocity, `+0x41c` human flag)
+/// visible to `TriggerScript_ExecOp` `0x13bfd0` op 5.
+#[derive(Clone, Debug)]
+struct ThreadState {
+    thread: Thread,
+    vel: V4,
+    human: bool,
+}
+
+/// `World_FindScript` 0x260dd8: case-insensitive (`stricmp`) search of `ssf.functions`.
+pub fn find_script(ssf: &Ssf, name: &str) -> Option<u32> {
+    ssf.functions.iter().position(|f| f.name.eq_ignore_ascii_case(name)).map(|i| i as u32)
+}
+
+/// Live cell activation, List-3 script threads (`cScriptNode`), controller state, and keyframed animation clocks
+/// for one course (`CourseGround`).
 pub struct CellHost {
     pub ai_cells: AiCells,
     pub rider_cells: Vec<i32>,
@@ -43,15 +101,24 @@ pub struct CellHost {
     anim_nodes: HashMap<usize, AnimObject>,
     delta_nodes: HashMap<usize, AnimDelta>,
     logic_nodes: HashMap<usize, Controller>,
-    /// Nodes spawned this frame (`BxList_MergePending`): posed at start time for this frame, stepped from next frame.
+    /// Live List 3 nodes (`BxList_First`..`BxList_NextOrNull`), sorted descending by `sort_id` (newest first).
+    live_list3: Vec<List3Entry>,
+    /// Pending List 3 nodes created this frame (`BxList_Add` 0x17d4e8 on sorted list 3 -> `BxList_MergePending` 0x17d548).
+    pending_list3: Vec<List3Entry>,
+    /// `COUNTER` 0x337c6c (non-type-5 `cBxSortObjNode` sort IDs).
+    next_sort_id: u32,
+    /// `COUNTER5` 0x337c68 (type-5 `cDeadNode` sort IDs).
+    next_dead_id: u32,
+    next_thread_id: u64,
+    /// Objects whose controller was spawned this frame (`pending_list3`).
     pending: HashSet<usize>,
     chans: HashMap<usize, Vec<[f32; 16]>>,
-    threads: Vec<Thread>,
+    threads: HashMap<u64, ThreadState>,
     events: CellEvents,
 }
 
 impl CellHost {
-    /// Build a fresh cell/controller host from a course's parsed `.pbd` and instance count.
+    /// Build a fresh cell/controller/script host from a course's parsed `.pbd` and instance count.
     pub fn new(pbd_bytes: &[u8], pbd: &Pbd, n_objects: usize) -> Self {
         let model_ends = pbd.models.iter().map(|m| f32::from_bits(m.head[5])).collect();
         let inst_models = pbd.instances.iter().map(|r| r[0x30] as i32).collect();
@@ -76,9 +143,14 @@ impl CellHost {
             anim_nodes: HashMap::new(),
             delta_nodes: HashMap::new(),
             logic_nodes: HashMap::new(),
+            live_list3: Vec::new(),
+            pending_list3: Vec::new(),
+            next_sort_id: 0,
+            next_dead_id: 0,
+            next_thread_id: 1,
             pending: HashSet::new(),
             chans: HashMap::new(),
-            threads: Vec::new(),
+            threads: HashMap::new(),
             events: CellEvents::default(),
         }
     }
@@ -115,13 +187,83 @@ impl CellHost {
         self.ai_cells.slots.iter().filter(|s| s.cell.is_some()).count()
     }
 
-    /// Drain queued visual events since the last call.
+    /// Number of waiting `cScriptNode` threads (live + pending on List 3).
+    pub fn active_thread_count(&self) -> usize {
+        self.threads.len()
+    }
+
+    /// Record a `ScriptEvent` produced outside `CellHost` (e.g. `Knockables::contact` thread op).
+    pub fn record_event(&mut self, ev: ScriptEvent) {
+        self.events.script_events.push(ev);
+    }
+
+    /// `World_DeleteScriptObject` 0x13bbc0: walks live List 3 head-to-tail (`BxList_First`..`BxList_NextOrNull`)
+    /// and deletes the first `cScriptNode` (`type 0x3e9`) running function `fn_idx`.
+    pub fn delete_script_object(&mut self, fn_idx: u32) -> bool {
+        let target = ScriptRef::Function(fn_idx);
+        let pos = self.live_list3.iter().position(|e| match e.kind {
+            List3Kind::Script(tid) => self.threads.get(&tid).is_some_and(|st| st.thread.script == target),
+            List3Kind::Controller(_) => false,
+        });
+        if let Some(i) = pos {
+            if let List3Kind::Script(tid) = self.live_list3.remove(i).kind {
+                self.threads.remove(&tid);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Allocate the next `cBxSortObjNode` sort ID (`COUNTER` 0x337c6c, or `COUNTER5` 0x337c68 for type 5) and add
+    /// `kind` onto List 3's pending list (`BxList_Add` 0x17d4e8).
+    fn add_pending_node(&mut self, is_dead: bool, kind: List3Kind) -> u32 {
+        let sort_id = if is_dead {
+            let id = self.next_dead_id;
+            self.next_dead_id = id.wrapping_add(1);
+            id
+        } else {
+            let id = self.next_sort_id;
+            self.next_sort_id = id.wrapping_add(1);
+            id
+        };
+        // `BxList_Add` links new nodes at the head of the pending list (newest first).
+        self.pending_list3.insert(0, List3Entry { sort_id, is_dead, kind });
+        sort_id
+    }
+
+    /// `BxList_MergePending` 0x17d548 on sorted List 3: walks `pending_list3` first-to-last and inserts each node
+    /// into `live_list3` in descending `sort_id` order (`cBxSortObjNode::vf3` 0x17dcb0: `new.sort_id <= existing.sort_id`,
+    /// walking tail-to-head so higher `sort_id` lands closer to the head).
+    fn merge_pending(&mut self) {
+        let pending = std::mem::take(&mut self.pending_list3);
+        for node in pending {
+            // Walk live_list3 from tail to head (`BxList_SortedFirst` / `SortedNextOrNull`) to find the first
+            // existing node where `node.sort_id <= existing.sort_id`, and insert immediately AFTER it (or at head).
+            let mut insert_at = 0usize;
+            for idx in (0..self.live_list3.len()).rev() {
+                if node.sort_id <= self.live_list3[idx].sort_id {
+                    insert_at = idx + 1;
+                    break;
+                }
+            }
+            self.live_list3.insert(insert_at, node);
+        }
+        self.pending.clear();
+    }
+
+    /// Remove any List 3 entries (live or pending) belonging to controller `o`.
+    fn unlink_controller_node(&mut self, o: usize) {
+        self.live_list3.retain(|e| e.kind != List3Kind::Controller(o));
+        self.pending_list3.retain(|e| e.kind != List3Kind::Controller(o));
+    }
+
+    /// Drain queued visual/script events since the last call.
     pub fn drain_events(&mut self) -> CellEvents {
         std::mem::take(&mut self.events)
     }
 
     /// `AIWorld_ClearSlots` 0x115df0 + `World_ResetInstances` 0x115fe8: clear all live cell slots, controllers,
-    /// animation clocks, threads, and pending poses. Caller also resets `CourseGround` flags and poses.
+    /// animation clocks, List 3 nodes/threads, and pending poses. Caller also resets `CourseGround` flags and poses.
     pub fn clear(&mut self) {
         self.ai_cells = AiCells::default();
         self.rider_cells.clear();
@@ -129,6 +271,11 @@ impl CellHost {
         self.anim_nodes.clear();
         self.delta_nodes.clear();
         self.logic_nodes.clear();
+        self.live_list3.clear();
+        self.pending_list3.clear();
+        self.next_sort_id = 0;
+        self.next_dead_id = 0;
+        self.next_thread_id = 1;
         self.pending.clear();
         self.chans.clear();
         self.threads.clear();
@@ -180,9 +327,8 @@ struct TickCtx<'a> {
     batch: SyncBatch,
     /// Queued `(script_id, object)` calls emitted by controller `Update` / `Finish`.
     starts: Vec<(i32, usize)>,
-    /// Deferred script thread execution state.
-    waiting: Vec<Thread>,
-    cur: Option<(ScriptRef, u32, Option<script::Context>, Option<script::Context>)>,
+    /// Currently executing thread state: `(script, object, ctx_a, ctx_b, vel, human)`.
+    cur: Option<(ScriptRef, u32, Option<script::Context>, Option<script::Context>, V4, bool)>,
     depth: u32,
 }
 
@@ -193,6 +339,7 @@ impl<'a> TickCtx<'a> {
         self.host.delta_nodes.remove(&o);
         self.host.logic_nodes.remove(&o);
         self.host.pending.remove(&o);
+        self.host.unlink_controller_node(o);
         self.host.chans.remove(&o);
         self.batch.unpose.push(o);
         self.batch.ctrl.push((o, None));
@@ -211,7 +358,11 @@ impl<'a> TickCtx<'a> {
             return;
         }
         if let Some(mut l) = self.host.logic_nodes.remove(&o) {
+            let was_restore = l.kind == Kind::Restore;
             l.kill(self);
+            if was_restore {
+                self.host.events.script_events.push(ScriptEvent::RestoreObject(o));
+            }
             if l.kind != Kind::Dead {
                 self.detach_controller(o);
             }
@@ -256,6 +407,7 @@ impl<'a> TickCtx<'a> {
     }
 
     fn message_controller(&mut self, o: usize, p2: u32, p3: u32) {
+        self.host.events.script_events.push(ScriptEvent::ControllerMessage { object: o, p2, p3 });
         let val = f32::from_bits(p3);
         if let Some(mut a) = self.host.anim_nodes.remove(&o) {
             a.on_message(val, p2, self);
@@ -279,6 +431,15 @@ impl<'a> TickCtx<'a> {
         if let Some(mut l) = self.host.logic_nodes.remove(&o) {
             l.on_message(val, p2, self);
             self.host.logic_nodes.insert(o, l);
+            return;
+        }
+        // Base `cControllerNode::OnMessage` (7: clear 0x800, 8: set 0x800) for visual-only controllers.
+        if let Some(f) = self.flags.get_mut(o) {
+            match p2 {
+                7 => *f &= 0xffff_f7ff,
+                8 => *f |= 0x800,
+                _ => {}
+            }
         }
     }
 
@@ -314,19 +475,26 @@ impl<'a> TickCtx<'a> {
                                 if let Some(f) = self.flags.get_mut(o) {
                                     *f = restore_flags(*f, 0xffff_0100);
                                 }
+                                self.host.events.script_events.push(ScriptEvent::RestoreObject(o));
                             }
                             Apply::FinishOld => self.finish_controller(o, 1),
                             Apply::Dead { stop } => {
                                 let c = Controller::dead(o as u32, stop, self);
                                 self.host.ctrl[o] = Some(5);
                                 self.host.logic_nodes.insert(o, c);
+                                self.host.pending.insert(o);
+                                self.host.add_pending_node(true, List3Kind::Controller(o));
                                 self.batch.ctrl.push((o, Some(5)));
+                                self.host.events.script_events.push(ScriptEvent::DeadObject(o));
                             }
                             Apply::Restore => {
                                 let c = Controller::restore(o as u32, self);
                                 self.host.ctrl[o] = Some(0x3ee);
                                 self.host.logic_nodes.insert(o, c);
+                                self.host.pending.insert(o);
+                                self.host.add_pending_node(false, List3Kind::Controller(o));
                                 self.batch.ctrl.push((o, Some(0x3ee)));
+                                self.host.events.script_events.push(ScriptEvent::DeadObject(o));
                             }
                         }
                     }
@@ -339,11 +507,13 @@ impl<'a> TickCtx<'a> {
                     self.host.chans.remove(&o);
                     self.host.anim_nodes.insert(o, a);
                     self.host.pending.insert(o);
+                    self.host.add_pending_node(false, List3Kind::Controller(o));
                     if let Some(frames) = self.host.pose_frames(o, start_t) {
                         self.batch.pose.push((o, t, frames));
                     } else {
                         self.batch.ctrl.push((o, Some(t)));
                     }
+                    self.host.events.script_events.push(ScriptEvent::SpawnController { object: o, args: op.args.clone() });
                 }
                 Spawn::Create(0x101) => {
                     let model_end = self.host.model_end(o);
@@ -353,54 +523,86 @@ impl<'a> TickCtx<'a> {
                     self.host.chans.remove(&o);
                     self.host.delta_nodes.insert(o, d);
                     self.host.pending.insert(o);
+                    self.host.add_pending_node(false, List3Kind::Controller(o));
                     if let Some(frames) = self.host.pose_frames(o, start_t) {
                         self.batch.pose.push((o, 0x101, frames));
                     } else {
                         self.batch.ctrl.push((o, Some(0x101)));
                     }
+                    self.host.events.script_events.push(ScriptEvent::SpawnController { object: o, args: op.args.clone() });
                 }
                 Spawn::Create(t @ (2 | 6 | 8)) => {
                     if let Some(c) = Controller::new(o as u32, &op.args, None) {
                         self.host.ctrl[o] = Some(t);
                         self.host.logic_nodes.insert(o, c);
                         self.host.pending.insert(o);
+                        self.host.add_pending_node(false, List3Kind::Controller(o));
                         self.batch.ctrl.push((o, Some(t)));
                     }
                 }
                 Spawn::Create(t) => {
-                    // Other controller types (UVScroll 10, TexFlip 11, Flag 13, Cracked 14, CrowdBox 17, Boost 7, …):
-                    // track type in `ctrl` so `World_CellActivate_RunPersistant` / `World_CellDeactivate` manage
-                    // lifecycle while `WorldAnim` runs the visual effect from `activated_scripts` / `killed_objects`.
+                    // Visual/effect controllers (UVScroll 10, TexFlip 11, Flag 13, Cracked 14, CrowdBox 17,
+                    // UVScrollTexFlip 19, Boost 7, …): track type & flags (`& ~2 | 4`) in `CellHost` so
+                    // `World_CellActivate_RunPersistant` / `World_CellDeactivate` / `op 3, 9, 10, 11` manage
+                    // lifecycle while `WorldAnim` drives the visual effect from `ScriptEvent::SpawnController`.
+                    if matches!(t, 10 | 11 | 13 | 14 | 17 | 19) {
+                        if let Some(f) = self.flags.get_mut(o) {
+                            *f = *f & 0xffff_fffd | 4;
+                        }
+                    }
                     self.host.ctrl[o] = Some(t);
                     self.batch.ctrl.push((o, Some(t)));
+                    self.host.events.script_events.push(ScriptEvent::SpawnController { object: o, args: op.args.clone() });
                 }
             }
         }
     }
 
-    fn run_thread(&mut self, mut t: Thread, armed: bool) {
+    /// Construct a new `cScriptNode` (`0x13b8c0` / `0x13b978` / `0x13bc78`) and run `TriggerScript_Run` immediately;
+    /// if it hits a wait, queue it on List 3's pending list with its `cBxSortObjNode` sort ID.
+    fn spawn_thread(&mut self, mut t: Thread, vel: V4, human: bool) {
         if self.depth >= 12 {
             return;
         }
+        // `cBxSortObjNode::cBxSortObjNode(3, 0x3e9)` reserves its sort_id BEFORE `TriggerScript_Run` runs.
+        let sort_id = self.host.next_sort_id;
+        self.host.next_sort_id = sort_id.wrapping_add(1);
         let saved = self.cur;
-        self.cur = Some((t.script, t.object, t.ctx_a, t.ctx_b));
+        self.cur = Some((t.script, t.object, t.ctx_a, t.ctx_b, vel, human));
         self.depth += 1;
         let done = script::run(&mut t, self);
         self.depth -= 1;
         self.cur = saved;
-        let _ = armed;
         if !done {
-            self.waiting.push(t);
+            let tid = self.host.next_thread_id;
+            self.host.next_thread_id += 1;
+            self.host.threads.insert(tid, ThreadState { thread: t, vel, human });
+            self.host.pending_list3.insert(0, List3Entry { sort_id, is_dead: false, kind: List3Kind::Script(tid) });
         }
     }
 
-    fn run_effect(&mut self, effect: i32, o: usize, armed: bool) {
+    /// Step an existing live `cScriptNode` thread (`cScriptNode::Update` 0x13bd38). Returns true if it ended.
+    fn step_live_thread(&mut self, tid: u64) -> bool {
+        let Some(mut st) = self.host.threads.remove(&tid) else { return true };
+        let saved = self.cur;
+        self.cur = Some((st.thread.script, st.thread.object, st.thread.ctx_a, st.thread.ctx_b, st.vel, st.human));
+        self.depth += 1;
+        let done = script::run(&mut st.thread, self);
+        self.depth -= 1;
+        self.cur = saved;
+        if !done {
+            self.host.threads.insert(tid, st);
+        }
+        done
+    }
+
+    fn run_effect(&mut self, effect: i32, o: usize, rider: u32, vel: V4, human: bool) {
         if effect < 0 || o >= self.host.ctrl.len() {
             return;
         }
         self.host.events.activated_scripts.push((o, effect));
-        let t = Thread::new(ScriptRef::Effect(effect as u32), o as u32 + 1, 0, None, None);
-        self.run_thread(t, armed);
+        let t = Thread::new(ScriptRef::Effect(effect as u32), o as u32 + 1, rider, None, None);
+        self.spawn_thread(t, vel, human);
     }
 
     fn flush_starts(&mut self) {
@@ -410,7 +612,7 @@ impl<'a> TickCtx<'a> {
                 break;
             }
             for (s, o) in starts {
-                self.run_effect(s, o, false);
+                self.run_effect(s, o, 0, [0.0; 4], false);
             }
         }
     }
@@ -485,10 +687,10 @@ impl ScriptEnv for TickCtx<'_> {
         f32::from_bits(r & 0x7f_ffff | 0x3f80_0000) - 1.0
     }
     fn rider_velocity(&self, _: u32) -> V4 {
-        [0.0; 4]
+        self.cur.map_or([0.0; 4], |c| c.4)
     }
     fn rider_x41c(&self, _: u32) -> i32 {
-        0
+        self.cur.map_or(0, |c| c.5 as i32)
     }
     fn controller(&self, object: u32) -> u32 {
         match object.checked_sub(1) {
@@ -517,14 +719,19 @@ impl ScriptEnv for TickCtx<'_> {
                     self.spawn_op((object - 1) as usize, &op, false);
                 }
             }
-            ScriptCall::StartEffect { effect, object, .. } => {
+            ScriptCall::StartEffect { effect, object, rider, ctx_a, ctx_b } => {
                 if object > 0 {
-                    self.run_effect(effect as i32, (object - 1) as usize, false);
+                    let (vel, human) = self.cur.map_or(([0.0; 4], false), |c| (c.4, c.5));
+                    let o = (object - 1) as usize;
+                    self.host.events.activated_scripts.push((o, effect as i32));
+                    let t = Thread::new(ScriptRef::Effect(effect), object, rider, ctx_a, ctx_b);
+                    self.spawn_thread(t, vel, human);
                 }
             }
-            ScriptCall::StartFunction { function, .. } => {
-                let t = Thread::new(ScriptRef::Function(function), 0, 0, None, None);
-                self.run_thread(t, false);
+            ScriptCall::StartFunction { function, rider, ctx_a, ctx_b } => {
+                let (vel, human) = if rider == 0 { ([0.0; 4], false) } else { self.cur.map_or(([0.0; 4], false), |c| (c.4, c.5)) };
+                let t = Thread::new(ScriptRef::Function(function), 0, rider, ctx_a, ctx_b);
+                self.spawn_thread(t, vel, human);
             }
             ScriptCall::ControllerMessage { controller, p2, p3 } => {
                 if controller & 0xf000_0000 == 0x2000_0000 {
@@ -543,6 +750,20 @@ impl ScriptEnv for TickCtx<'_> {
             }
             ScriptCall::SetRail(spline, on) => {
                 self.batch.rails.push((spline, on != 0));
+                self.host.events.script_events.push(ScriptEvent::SetRail { spline, on: on != 0 });
+            }
+            ScriptCall::ScriptSound { object, sound } => {
+                if let Some(o) = object.checked_sub(1) {
+                    self.host.events.script_events.push(ScriptEvent::ScriptSound { object: o as usize, sound });
+                }
+            }
+            ScriptCall::ResetRider(rider) => {
+                self.host.events.script_events.push(ScriptEvent::ResetRider(rider));
+            }
+            ScriptCall::Teleport { rider, object } => {
+                if let Some(o) = object.checked_sub(1) {
+                    self.host.events.script_events.push(ScriptEvent::Teleport { rider, object: o as usize });
+                }
             }
             _ => {}
         }
@@ -571,7 +792,7 @@ impl CellEnv for AiCellBridge<'_, '_> {
         self.ctx.ssf.event_script(o, e as usize)
     }
     fn spawn(&mut self, s: i32, o: usize) {
-        self.ctx.run_effect(s, o, false);
+        self.ctx.run_effect(s, o, 0, [0.0; 4], false);
     }
     fn ctrl_wants(&mut self, o: usize) -> bool {
         self.ctx.rollers.get(&o).copied().unwrap_or(false)
@@ -648,7 +869,6 @@ impl CellHost {
             rand_game,
             batch: SyncBatch::default(),
             starts: Vec::new(),
-            waiting: Vec::new(),
             cur: None,
             depth: 0,
         };
@@ -664,80 +884,136 @@ impl CellHost {
         }
         ctx.flush_starts();
 
-        // List 3: step all controllers created before this frame (`pending` waits until `BxList_MergePending`).
-        let mut anim_ids: Vec<usize> = ctx.host.anim_nodes.keys().copied().collect();
-        anim_ids.sort_unstable();
-        for o in anim_ids {
-            if ctx.host.pending.contains(&o) {
-                continue;
-            }
-            let Some(mut a) = ctx.host.anim_nodes.remove(&o) else { continue };
-            let gone = a.update(&mut ctx);
-            if gone {
-                ctx.detach_controller(o);
-            } else {
-                let t = a.time;
-                let ty = ctx.host.ctrl[o].unwrap_or(0x100);
-                ctx.host.anim_nodes.insert(o, a);
-                if let Some(frames) = ctx.host.pose_frames(o, t) {
-                    ctx.batch.pose.push((o, ty, frames));
+        // List 3 (`BxList_UpdateAll(0x337c60, 3)` 0x17d950): walk live nodes head-to-tail (descending `sort_id`,
+        // newest first), taking the next node before each `vf1` call; controllers and waiting `cScriptNode` threads
+        // step interleaved in exact List 3 order, while newly spawned nodes wait in `pending_list3` until merge.
+        let snapshot: Vec<List3Entry> = ctx.host.live_list3.clone();
+        for entry in snapshot {
+            match entry.kind {
+                List3Kind::Controller(o) => {
+                    if let Some(mut a) = ctx.host.anim_nodes.remove(&o) {
+                        let gone = a.update(&mut ctx);
+                        if gone {
+                            ctx.detach_controller(o);
+                        } else {
+                            let t = a.time;
+                            let ty = ctx.host.ctrl[o].unwrap_or(0x100);
+                            ctx.host.anim_nodes.insert(o, a);
+                            if let Some(frames) = ctx.host.pose_frames(o, t) {
+                                ctx.batch.pose.push((o, ty, frames));
+                            }
+                        }
+                    } else if let Some(mut d) = ctx.host.delta_nodes.remove(&o) {
+                        let gone = d.update(&mut ctx);
+                        if gone {
+                            ctx.detach_controller(o);
+                        } else {
+                            let t = d.anim.time;
+                            ctx.host.delta_nodes.insert(o, d);
+                            if let Some(frames) = ctx.host.pose_frames(o, t) {
+                                ctx.batch.pose.push((o, 0x101, frames));
+                            }
+                        }
+                    } else if let Some(mut l) = ctx.host.logic_nodes.remove(&o) {
+                        let mut deleted = false;
+                        let mut starts = Vec::new();
+                        {
+                            let mut sub = SubCtrlEnv { flags: &mut ctx.flags, ssf: ctx.ssf, deleted: &mut deleted, starts: &mut starts };
+                            l.update(&mut sub);
+                        }
+                        if deleted {
+                            ctx.detach_controller(o);
+                        } else {
+                            ctx.host.logic_nodes.insert(o, l);
+                        }
+                        ctx.starts.extend(starts);
+                    }
+                    ctx.flush_starts();
+                }
+                List3Kind::Script(tid) => {
+                    if !ctx.host.threads.contains_key(&tid) {
+                        continue;
+                    }
+                    if ctx.step_live_thread(tid) {
+                        ctx.host.live_list3.retain(|e| e.kind != List3Kind::Script(tid));
+                    }
+                    ctx.flush_starts();
                 }
             }
         }
 
-        let mut delta_ids: Vec<usize> = ctx.host.delta_nodes.keys().copied().collect();
-        delta_ids.sort_unstable();
-        for o in delta_ids {
-            if ctx.host.pending.contains(&o) {
-                continue;
-            }
-            let Some(mut d) = ctx.host.delta_nodes.remove(&o) else { continue };
-            let gone = d.update(&mut ctx);
-            if gone {
-                ctx.detach_controller(o);
-            } else {
-                let t = d.anim.time;
-                ctx.host.delta_nodes.insert(o, d);
-                if let Some(frames) = ctx.host.pose_frames(o, t) {
-                    ctx.batch.pose.push((o, 0x101, frames));
-                }
-            }
-        }
+        // `BxList_MergePending(0x337c60, 3)` 0x17d548 (`Game_UpdateObjectLists` 0x1814c0): merge pending List 3
+        // nodes (new controllers + waiting `cScriptNode` threads) into `live_list3` sorted descending by `sort_id`.
+        ctx.host.merge_pending();
 
-        let mut logic_ids: Vec<usize> = ctx.host.logic_nodes.keys().copied().collect();
-        logic_ids.sort_unstable();
-        for o in logic_ids {
-            if ctx.host.pending.contains(&o) {
-                continue;
-            }
-            let Some(mut l) = ctx.host.logic_nodes.remove(&o) else { continue };
-            let mut deleted = false;
-            let mut starts = Vec::new();
-            {
-                let mut sub = SubCtrlEnv { flags: &mut ctx.flags, ssf: ctx.ssf, deleted: &mut deleted, starts: &mut starts };
-                l.update(&mut sub);
-            }
-            if deleted {
-                ctx.detach_controller(o);
-            } else {
-                ctx.host.logic_nodes.insert(o, l);
-            }
-            ctx.starts.extend(starts);
-        }
+        let TickCtx { flags, batch, .. } = ctx;
+        apply_batch(course, &flags, batch);
+        self.drain_events()
+    }
+
+    /// `World_RunScript` 0x13bad8: finds function `name` (`World_FindScript` 0x260dd8, case-insensitive), deletes
+    /// any existing live `cScriptNode` running that function (`World_DeleteScriptObject` 0x13bbc0), constructs a new
+    /// `cScriptNode` (`0x13b978`), runs `TriggerScript_Run` immediately, and queues it on `pending_list3` if it waits.
+    pub fn run_script_named(
+        &mut self,
+        course: &CourseGround,
+        name: &str,
+        rand_game: &mut dyn FnMut() -> u32,
+    ) -> CellEvents {
+        let Some(fn_idx) = find_script(&course.ssf, name) else {
+            return CellEvents::default();
+        };
+        self.delete_script_object(fn_idx);
+        let flags = course.snapshot_flags();
+        let mut ctx = TickCtx {
+            host: self,
+            ssf: &course.ssf,
+            flags,
+            rollers: HashMap::new(),
+            rand_game,
+            batch: SyncBatch::default(),
+            starts: Vec::new(),
+            cur: None,
+            depth: 0,
+        };
+        let t = Thread::new(ScriptRef::Function(fn_idx), 0, 0, None, None);
+        ctx.spawn_thread(t, [0.0; 4], false);
         ctx.flush_starts();
+        let TickCtx { flags, batch, .. } = ctx;
+        apply_batch(course, &flags, batch);
+        self.drain_events()
+    }
 
-        // Waiting trigger script threads (`cScriptNode::Update` 0x13bd38).
-        let old_threads = std::mem::take(&mut ctx.host.threads);
-        for t in old_threads {
-            ctx.run_thread(t, false);
+    /// Run an object's event-slot script (`Instance_GetEventScript` 0x25fe78: 0 persistent, 1 contact, 3 finish,
+    /// 4 controller trigger goal) as a live `cScriptNode` (`0x13b8c0`) on `course.ssf`.
+    pub fn run_event_script(
+        &mut self,
+        course: &CourseGround,
+        object: usize,
+        event: usize,
+        rider: u32,
+        vel: V4,
+        human: bool,
+        rand_game: &mut dyn FnMut() -> u32,
+    ) -> CellEvents {
+        let s = course.ssf.event_script(object, event);
+        if s < 0 {
+            return CellEvents::default();
         }
+        let flags = course.snapshot_flags();
+        let mut ctx = TickCtx {
+            host: self,
+            ssf: &course.ssf,
+            flags,
+            rollers: HashMap::new(),
+            rand_game,
+            batch: SyncBatch::default(),
+            starts: Vec::new(),
+            cur: None,
+            depth: 0,
+        };
+        ctx.run_effect(s, object, rider, vel, human);
         ctx.flush_starts();
-        let waiting = std::mem::take(&mut ctx.waiting);
-        ctx.host.threads.extend(waiting);
-
-        // `BxList_MergePending`: nodes spawned this frame will step starting next frame.
-        ctx.host.pending.clear();
-
         let TickCtx { flags, batch, .. } = ctx;
         apply_batch(course, &flags, batch);
         self.drain_events()
@@ -761,14 +1037,11 @@ impl CellHost {
             rand_game,
             batch: SyncBatch::default(),
             starts: Vec::new(),
-            waiting: Vec::new(),
             cur: None,
             depth: 0,
         };
         ctx.spawn_op(object, op, true);
         ctx.flush_starts();
-        let waiting = std::mem::take(&mut ctx.waiting);
-        ctx.host.threads.extend(waiting);
         let TickCtx { flags, batch, .. } = ctx;
         apply_batch(course, &flags, batch);
     }
@@ -791,7 +1064,6 @@ impl CellHost {
             rand_game,
             batch: SyncBatch::default(),
             starts: Vec::new(),
-            waiting: Vec::new(),
             cur: None,
             depth: 0,
         };
@@ -818,7 +1090,6 @@ impl CellHost {
             rand_game,
             batch: SyncBatch::default(),
             starts: Vec::new(),
-            waiting: Vec::new(),
             cur: None,
             depth: 0,
         };

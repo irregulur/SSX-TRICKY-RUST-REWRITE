@@ -306,6 +306,36 @@ impl ScriptEnv for ThreadEnv<'_> {
             }
             ScriptCall::SetRail(spline, on) => {
                 self.course.set_rail_live(spline, on != 0);
+                self.course
+                    .cells
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .record_event(crate::cellhost::ScriptEvent::SetRail { spline, on: on != 0 });
+            }
+            ScriptCall::ScriptSound { object, sound } => {
+                if let Some(o) = object.checked_sub(1) {
+                    self.course
+                        .cells
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .record_event(crate::cellhost::ScriptEvent::ScriptSound { object: o as usize, sound });
+                }
+            }
+            ScriptCall::ResetRider(rider) => {
+                self.course
+                    .cells
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .record_event(crate::cellhost::ScriptEvent::ResetRider(rider));
+            }
+            ScriptCall::Teleport { rider, object } => {
+                if let Some(o) = object.checked_sub(1) {
+                    self.course
+                        .cells
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .record_event(crate::cellhost::ScriptEvent::Teleport { rider, object: o as usize });
+                }
             }
             _ => {}
         }

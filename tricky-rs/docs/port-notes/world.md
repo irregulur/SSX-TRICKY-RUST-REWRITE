@@ -442,6 +442,29 @@ Part of the port notes (index: [README.md](README.md)); units and wording as des
     pending creation frame and `1/60` s clock; Tokyo Megaplex `Pinball_FlipperL` `75` flips via trigger `59`
     (`cDebounceNode` 90 ticks, `Pinball_FlipperL` `cAnimObjectNode` 300 ticks, flags `0x10a111a3` -> `0x10a111a5` ->
     `0x10a111a3`, posed/unposed on `CourseGround`).
+- **Live `.ssf` script threads & List-3 ordering (board row E9b2; `cellhost.rs`, `course_ground.rs`, `knockables.rs`, `src/worldanim.rs`, `src/main.rs`)**:
+  - Proven (`SLUS_203.26`): `Game_UpdateObjectLists` (`0x1814c0`) updates lists `[0, 1, 2, 3, 5, 6, 7, 8, 4, 10, 11]`
+    (`gBxList_UpdateOrder` `0x337c70`) via `BxList_UpdateAll` (`0x17d950`, head-to-tail taking `next` first), then
+    calls `BxList_MergePending(0x337c60, 3)` (`0x17d548`, `DAT_00337cb0 = [3]`). Because List 3 is sorted (`cGame::Init`),
+    `BxList_Add` (`0x17d4e8`) links new `cBxSortObjNode`s (`0x17d0e0`, monotonic `sort_id` at `+0x20` from `COUNTER`
+    `0x337c6c` or `COUNTER5` `0x337c68` for type 5) at the pending head, and `BxList_MergePending` inserts each pending
+    node walking tail-to-head while `cBxSortObjNode::vf3` (`0x17dcb0`: `new.sort_id <= existing.sort_id`) is false —
+    leaving live List 3 sorted **descending by `sort_id` (newest first)** so controllers and waiting `cScriptNode`
+    threads step interleaved newest-first.
+  - Proven (`SLUS_203.26`): `World_RunScript` (`0x13bad8`) looks up the script by case-insensitive `stricmp`
+    (`World_FindScript` `0x260dd8`), calls `World_DeleteScriptObject` (`0x13bbc0`, walking live List 3 head-to-tail
+    to delete the first `cScriptNode` `type 0x3e9` matching `Course_GetScriptEntry`), then constructs `cScriptNode`
+    (`0x13b978`) which runs `TriggerScript_Run` immediately. Engine race starters: `cAI::vf12` (`0x112550`) calls
+    `RaceMode` / `ShowoffMode` / `FreerideMode`; `cPreRaceHandler::Enter` (`0x112b88`) & `cStartRaceHandler::Exit`
+    (`0x1134d0`) call `NoCountdown` when `!Race_HasStartGate`; `cCountdownHandler::Enter` (`0x113520`) calls
+    `StartCountdown`; `cCountdownHandler::Update` (`0x113600`) calls `EndCountdown` on GO.
+  - Wired into `CellHost`, `CourseGround`, `worldanim::world_anim`, and `main::trick_only_ramps`: on disc courses
+    all script threads (area wake, contact event 1, controller goal event 4, `RaceMode`/`ShowoffMode`/`FreerideMode`,
+    `NoCountdown`, `StartCountdown`, `EndCountdown`) run on `tricky_game::script` over `tricky_data::ssf` and stream
+    structured `ScriptEvent`s (`SpawnController`, `ControllerMessage`, `DeadObject`, `RestoreObject`, `SetRail`,
+    `ScriptSound`, `ResetRider`, `Teleport`) directly into `WorldAnim`, `CollisionWorld`, and `Rails`, retiring
+    `SSFLogic.json` thread execution on disc courses while keeping it as folder-only fallback. Verified on real
+    `TRICKY_DISC` (`tests/cellhost.rs` Garibaldi mode/countdown/`World_DeleteScriptObject` + Megaplex List-3 tests).
 
 ## Rigid bodies (row E8c1; `tricky_game::rigidbody`, checked: `tests/rigidbody.rs`)
 

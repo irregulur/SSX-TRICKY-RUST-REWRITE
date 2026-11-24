@@ -185,7 +185,49 @@ impl CourseGround {
         self.cells.lock().unwrap_or_else(|e| e.into_inner()).anim_time(object)
     }
 
-    /// Advance `AiCells::tick` (`cAIWorld::vf1` 0x115e28) and all live course controllers by one 60 Hz frame (row E7b2).
+    /// Whether `object` currently has a controller blocking contact scripts (`Instance_OnPlayerContact` 0x13bd40).
+    pub fn blocks_contact(&self, object: usize) -> bool {
+        self.cells.lock().unwrap_or_else(|e| e.into_inner()).blocks_contact(object)
+    }
+
+    /// `World_FindScript` 0x260dd8: case-insensitive function index lookup in `self.ssf`.
+    pub fn find_script(&self, name: &str) -> Option<u32> {
+        crate::cellhost::find_script(&self.ssf, name)
+    }
+
+    /// `World_DeleteScriptObject` 0x13bbc0: delete the first live List-3 `cScriptNode` running function `fn_idx`.
+    pub fn delete_script_object(&self, fn_idx: u32) -> bool {
+        self.cells.lock().unwrap_or_else(|e| e.into_inner()).delete_script_object(fn_idx)
+    }
+
+    /// `World_RunScript` 0x13bad8: run a named `.ssf` script function (`RaceMode`, `ShowoffMode`, `FreerideMode`,
+    /// `StartCountdown`, `EndCountdown`, `NoCountdown`, …) as a live List-3 `cScriptNode` (row E9b2).
+    pub fn run_script_named(&self, name: &str, rand_game: &mut dyn FnMut() -> u32) -> crate::cellhost::CellEvents {
+        self.cells
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .run_script_named(self, name, rand_game)
+    }
+
+    /// Run an object's `.ssf` event-slot script (`0` persistent, `1` contact, `3` finish, `4` trigger goal) on
+    /// `CellHost`'s live `cScriptNode` runner (row E9b2).
+    pub fn run_event_script(
+        &self,
+        object: usize,
+        event: usize,
+        rider: u32,
+        vel: V4,
+        human: bool,
+        rand_game: &mut dyn FnMut() -> u32,
+    ) -> crate::cellhost::CellEvents {
+        self.cells
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .run_event_script(self, object, event, rider, vel, human, rand_game)
+    }
+
+    /// Advance `AiCells::tick` (`cAIWorld::vf1` 0x115e28) and all live List-3 controllers & script threads by one
+    /// 60 Hz frame (rows E7b2, E9b2).
     pub fn tick_cells(
         &self,
         riders: &[V4],

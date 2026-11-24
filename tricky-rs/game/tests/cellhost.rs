@@ -125,3 +125,113 @@ fn megaplex_pinball_flipper_75_flips_300_ticks_and_restores() {
     assert_eq!(cg.object_flags(75), 0x10a1_10a3);
     assert_eq!(cg.cells.lock().unwrap().active_cell_count(), 0);
 }
+
+#[test]
+fn garibaldi_mode_and_countdown_scripts_and_delete_script_object() {
+    use tricky_game::cellhost::ScriptEvent;
+    let Some(cg) = load_course("gari") else { return };
+    let mut rand = || 0u32;
+
+    // `World_FindScript` 0x260dd8 is case-insensitive (`stricmp`).
+    assert!(cg.find_script("RaceMode").is_some(), "gari has RaceMode");
+    assert_eq!(cg.find_script("racemode"), cg.find_script("RACEMODE"));
+    assert!(cg.find_script("ShowoffMode").is_some(), "gari has ShowoffMode");
+    assert!(cg.find_script("FreerideMode").is_some(), "gari has FreerideMode");
+    let cd_name = if cg.find_script("StartCountdown").is_some() { "StartCountdown" } else { "CountDownStart" };
+    assert!(cg.find_script(cd_name).is_some(), "gari has countdown script");
+
+    // Running `RaceMode` hides show-off-only objects via `cDeadNode` (clearing flag 0x21) and emits `DeadObject`.
+    let ev_race = cg.run_script_named("RaceMode", &mut rand);
+    let race_dead: Vec<usize> = ev_race
+        .script_events
+        .iter()
+        .filter_map(|e| match e { ScriptEvent::DeadObject(o) => Some(*o), _ => None })
+        .collect();
+    assert!(!race_dead.is_empty(), "RaceMode hides mode-specific objects via cDeadNode");
+    for &o in &race_dead {
+        assert_eq!(cg.object_flags(o) & 0xf2, 0, "object {o} dead flags cleared (& 0xffffff0d) after RaceMode");
+        assert_eq!(cg.object_flags(o) & 4, 4, "object {o} has controller bit 4 set");
+        assert_eq!(cg.controller_type(o), Some(5), "object {o} holds cDeadNode");
+    }
+
+    // Reset + ShowoffMode hides a different set of objects than RaceMode.
+    cg.reset_cells();
+    let ev_show = cg.run_script_named("ShowoffMode", &mut rand);
+    let show_dead: Vec<usize> = ev_show
+        .script_events
+        .iter()
+        .filter_map(|e| match e { ScriptEvent::DeadObject(o) => Some(*o), _ => None })
+        .collect();
+    assert!(!show_dead.is_empty(), "ShowoffMode hides race-only objects");
+    assert_ne!(race_dead, show_dead, "RaceMode and ShowoffMode hide distinct object sets");
+
+    // `StartCountdown` runs live `cScriptNode` threads (including child threads with `op 4` waits): stays on
+    // List 3 pending during creation frame, merges into live List 3 via `BxList_MergePending`, and runs to completion.
+    cg.reset_cells();
+    let far = far_corner(&cg);
+    let start_pos = cg.with_world(|w| {
+        w.objects
+            .iter()
+            .enumerate()
+            .find(|&(i, _)| cg.ssf.event_script(i, 0) >= 0)
+            .map_or(far, |(_, o)| [(o.min[0] + o.max[0]) * 0.5, (o.min[1] + o.max[1]) * 0.5, (o.min[2] + o.max[2]) * 0.5, 1.0])
+    });
+    cg.tick_cells(&[start_pos], 1, start_pos, false, &mut rand);
+
+    let mut total_events = 0usize;
+    let ev0 = cg.run_script_named(cd_name, &mut rand);
+    total_events += ev0.script_events.len();
+    assert!(cg.cells.lock().unwrap().active_thread_count() > 0, "{cd_name} spawns waiting cScriptNode thread(s)");
+    for _ in 0..300 {
+        let ev = cg.tick_cells(&[start_pos], 1, start_pos, false, &mut rand);
+        total_events += ev.script_events.len();
+    }
+    assert!(total_events > 0, "{cd_name} emitted live script events across its countdown waits");
+    assert_eq!(cg.cells.lock().unwrap().active_thread_count(), 0, "{cd_name} threads finished cleanly within 5 s");
+
+    // `World_DeleteScriptObject` 0x13bbc0: find a Garibaldi `.ssf` function that itself waits (`op 4`),
+    // start it via `World_RunScript`, merge pending -> live via one `tick_cells`, and verify
+    // `World_DeleteScriptObject` deletes that exact live `cScriptNode` (and returns false once gone).
+    let (wait_idx, wait_name) = cg
+        .ssf
+        .functions
+        .iter()
+        .enumerate()
+        .find(|(_, f)| f.ops.iter().any(|op| op.op == 4))
+        .map(|(i, f)| (i as u32, f.name.clone()))
+        .expect("gari has a script function with an op 4 wait");
+    cg.run_script_named(&wait_name, &mut rand);
+    let before_merge = cg.cells.lock().unwrap().active_thread_count();
+    assert!(before_merge > 0, "{wait_name} waits on pending List 3");
+    // Before `BxList_MergePending`, `World_DeleteScriptObject` only scans live List 3 (`BxList_First`).
+    assert!(!cg.delete_script_object(wait_idx), "pending thread is not in live List 3 before merge");
+    cg.tick_cells(&[start_pos], 1, start_pos, false, &mut rand);
+    let live_count = cg.cells.lock().unwrap().active_thread_count();
+    assert!(live_count > 0, "{wait_name} merged into live List 3");
+    assert!(cg.delete_script_object(wait_idx), "World_DeleteScriptObject deletes live {wait_name} thread");
+    assert_eq!(cg.cells.lock().unwrap().active_thread_count(), live_count - 1);
+    assert!(!cg.delete_script_object(wait_idx), "no second {wait_name} thread remains to delete");
+}
+
+#[test]
+fn list3_update_steps_newest_sort_id_first() {
+    // Proves `BxList_Add` 0x17d4e8 + `BxList_MergePending` 0x17d548 + `BxList_UpdateAll(3)` 0x17d950 order:
+    // on Megaplex, spawning trigger 59 (cDebounceNode 2, 90 ticks) followed by Pinball_FlipperL 75 (cAnimObjectNode
+    // 0x100, 300 ticks) merges both into live List 3 descending by `sort_id` so 75 steps before 59, and calling
+    // `run_event_script(59, 1, ...)` directly through `CellHost` produces the exact same controller transitions.
+    let Some(cg) = load_course("megaple") else { return };
+    let mut rand = || 0u32;
+    let at_75 = object_center(&cg, 75);
+    cg.tick_cells(&[at_75], 4, at_75, false, &mut rand);
+    let ev = cg.run_event_script(59, 1, 1, [0.0, 500.0, 0.0, 0.0], true, &mut rand);
+    assert_eq!(cg.controller_type(59), Some(2));
+    assert_eq!(cg.controller_type(75), Some(0x100));
+    assert!(ev.script_events.iter().any(|e| matches!(e, tricky_game::cellhost::ScriptEvent::SpawnController { object: 75, .. })));
+    // Pending on creation frame (t == 0.0), then advances on tick 1 after merge.
+    assert_eq!(cg.anim_time(75), Some(0.0));
+    cg.tick_cells(&[at_75], 4, at_75, false, &mut rand);
+    // Tick 1 merges pending -> live (does NOT step nodes created before tick 1's merge until tick 2, OR wait:
+    // `run_event_script` happened before `tick_cells`, so `pending_list3` merges at end of tick 1, and steps on tick 2).
+    cg.tick_cells(&[at_75], 4, at_75, false, &mut rand);
+    assert!(cg.anim_time(75).unwrap() > 0.0, "75 advances once merged onto live List 3");
+}

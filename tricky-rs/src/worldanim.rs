@@ -10,10 +10,11 @@
 //! its goal, and StartCountDown when the countdown starts. Controllers tick at 60 Hz as in the game.
 
 use crate::level::{quat4, Level, ObjMesh};
-use crate::logic::{FlagDef, FlipDef, ScrollDef, WOp, WorldScript};
+use crate::logic::{AnimDef, FlagDef, FlipDef, ScrollDef, WOp, WorldScript};
 use crate::props::Kind;
 use crate::rider::RaceState;
-use crate::{g2b, material, ui, AnimObjects, GameTick, LevelEntity, LevelRes, MeshBuf, Opponents, Props, RaceRes, RiderRes, TexCache, World};
+use crate::{g2b, material, ui, AnimObjects, GameTick, LevelEntity, LevelRes, MeshBuf, Opponents, Props, RaceRes, RailsRes, RiderRes, TexCache, World};
+use tricky_game::cellhost::{CellEvents, ScriptEvent};
 use bevy::math::Affine2;
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
@@ -68,7 +69,7 @@ pub struct WorldAnim {
     /// objects with a controller that keeps their touch script from running (ticks; -1 for good)
     busy: HashMap<usize, i32>,
     threads: Vec<Thread>, boxes: Vec<(usize, Vec3, Vec3)>,
-    started: bool, counting: bool,
+    started: bool, counting: bool, ended_countdown: bool,
     /// the controllers in the order they were made (the game ticks them in its node list's order)
     flip_order: Vec<usize>, crowd_order: Vec<usize>,
     cracks: HashMap<usize, Crack>, counters: HashMap<usize, Counter>, crowds: HashMap<usize, Crowd>,
@@ -347,6 +348,69 @@ impl WorldAnim {
         }
     }
 
+    /// Apply live `.ssf` script-thread events from `CellHost` (`tricky_game::script` on `tricky_data::ssf`,
+    /// row E9b2) to `WorldAnim`, `CollisionWorld`, and `Rails`.
+    pub fn apply_cell_events(
+        &mut self,
+        ev: CellEvents,
+        level: &Level,
+        anims: &mut AnimObjects,
+        world: &mut tricky_game::collide::CollisionWorld,
+        rails: &mut tricky_game::rails::Rails,
+    ) {
+        for inst in ev.killed_objects {
+            self.kill_instance(inst);
+        }
+        for se in ev.script_events {
+            match se {
+                ScriptEvent::SpawnController { object, args } => {
+                    let w = |k: usize| args.get(k).copied().unwrap_or(0);
+                    let f = |k: usize| f32::from_bits(w(k));
+                    let anim_def = || AnimDef {
+                        mode: w(1) as i32,
+                        start: f(2),
+                        end: f(3),
+                        rate: f(4),
+                        rate2: f(5),
+                        random_start: w(7) != 0,
+                        reverse: w(8) == 4,
+                    };
+                    match w(0) {
+                        10 => self.apply(level, anims, object, WOp::Scroll(ScrollDef { mode: w(1) as i32, du: f(2), dv: f(3), run: f(4), pause: f(5), life: f(6) })),
+                        11 => self.apply(level, anims, object, WOp::Flip(FlipDef { start: w(1) as i32, back: w(2) != 0, speed: f(3), life: f(4), mode: w(5) as i32 })),
+                        13 => self.apply(level, anims, object, WOp::Flag(FlagDef { mirror: w(1) == 1, rate: f(2), amp: f(3), life: f(4) })),
+                        14 => self.apply(level, anims, object, WOp::Crack(crate::logic::CrackDef { life: f(1), health: f(2) })),
+                        17 => self.apply(level, anims, object, WOp::Crowd(crate::logic::CrowdDef { rows: w(2) as i32, cols: w(3) as i32 })),
+                        19 => {
+                            self.apply(level, anims, object, WOp::Scroll(ScrollDef { mode: w(1) as i32, du: f(2), dv: f(3), run: f(4), pause: f(5), life: f(6) }));
+                            self.apply(level, anims, object, WOp::Flip(FlipDef { start: w(7) as i32, back: w(8) != 0, speed: f(9), life: f(10), mode: w(11) as i32 }));
+                        }
+                        0x100 | 0x102 | 0x103 => self.apply(level, anims, object, WOp::Anim(anim_def())),
+                        0x101 => self.apply(level, anims, object, WOp::Delta(anim_def())),
+                        _ => {}
+                    }
+                }
+                ScriptEvent::ControllerMessage { object, p2, p3 } => {
+                    self.apply(level, anims, object, WOp::Param(p2 as i32, f32::from_bits(p3)));
+                }
+                ScriptEvent::DeadObject(o) => {
+                    self.killed.push(o);
+                    world.off.insert(o as u32);
+                }
+                ScriptEvent::RestoreObject(o) => {
+                    world.off.remove(&(o as u32));
+                    world.dead.remove(&(o as u32));
+                }
+                ScriptEvent::SetRail { spline, on } => {
+                    for r in rails.0.iter_mut().filter(|r| r.spline == spline as usize) {
+                        r.on = on;
+                    }
+                }
+                ScriptEvent::ScriptSound { .. } | ScriptEvent::ResetRider(_) | ScriptEvent::Teleport { .. } => {}
+            }
+        }
+    }
+
     /// Stop visual controllers on instance `i` when `World_CellDeactivate` 0x260108 kills its controller (row E7b2).
     pub fn kill_instance(&mut self, i: usize) {
         if self.flips.remove(&i).is_some() {
@@ -388,6 +452,7 @@ impl WorldAnim {
         self.impact = 0.0;
         self.started = false;
         self.counting = false;
+        self.ended_countdown = false;
         for f in self.flags.iter_mut() { f.active = false; f.phase = 0.0; f.rate = 0.0; f.amp = f.amp0; f.life = 0; }
         for o in anims.0.iter_mut() {
             if o.prop.is_some() || (o.budget.is_none() && o.def.random_start) { continue; }
@@ -558,12 +623,14 @@ fn bounds(level: &Level, i: usize, cache: &mut HashMap<std::path::PathBuf, ObjMe
 }
 
 /// The level's object scripts and controllers each frame (`World_CellActivate_RunPersistant` 0x25fed0,
-/// `Instance_OnPlayerContact` 0x13bd40, `World_ResetInstances` 0x115fe8, `cCrackedNode::vf17` 0x1457e8).
+/// `Instance_OnPlayerContact` 0x13bd40, `World_ResetInstances` 0x115fe8, `World_RunScript` 0x13bad8,
+/// `cCrackedNode::vf17` 0x1457e8).
 #[allow(clippy::too_many_arguments)]
 pub fn world_anim(
     tick: Res<GameTick>, game: Res<ui::Game>, level: Res<LevelRes>, race: Res<RaceRes>, rider: Res<RiderRes>, opponents: Res<Opponents>,
     wa: Option<ResMut<WorldAnim>>, mut anims: ResMut<AnimObjects>, mut materials: ResMut<Assets<StandardMaterial>>, mut meshes: ResMut<Assets<Mesh>>,
     props: Option<ResMut<Props>>, mut cell_mats: Query<&mut MeshMaterial3d<StandardMaterial>>, mut world: ResMut<World>,
+    mut rails: ResMut<RailsRes>,
     cam_q: Query<&GlobalTransform, With<Camera3d>>,
 ) {
     let Some(mut wa) = wa else { return };
@@ -571,14 +638,32 @@ pub fn world_anim(
     let w = &level.logic.world;
     // a restart (World_ResetInstances 0x115fe8 with the AI world's cells dropped, 0x115df0): every
     // object's controller goes and its flags come back as loaded, the script threads are cleared
-    // (0x149a88), and the cells waking again run the always-on scripts once more
+    // (0x149a88), and the event mode script (`cAI::vf12` 0x112550) + waking cells set things going again
     if wa.restart {
         wa.restart = false;
         wa.reset_run(&mut anims, &level.logic.anim_delta);
-        if let Some(course) = &world.0.course {
-            course.reset_cells();
-        }
         world.0.reset_run();
+        if let Some(course) = world.0.course.clone() {
+            course.reset_cells();
+            world.0.off.clear();
+            for r in rails.0.0.iter_mut() {
+                r.on = true;
+                if r.spline != usize::MAX {
+                    course.set_rail_live(r.spline as u32, true);
+                }
+            }
+            let mode_name = match game.event {
+                ui::Event::Race => "RaceMode",
+                ui::Event::ShowOff => "ShowoffMode",
+                ui::Event::FreeRide => "FreerideMode",
+            };
+            let ev = course.run_script_named(mode_name, &mut tricky_game::rand::rand_game);
+            wa.apply_cell_events(ev, level, &mut anims, &mut world.0, &mut rails.0);
+            if game.event == ui::Event::FreeRide {
+                let ev = course.run_script_named("NoCountdown", &mut tricky_game::rand::rand_game);
+                wa.apply_cell_events(ev, level, &mut anims, &mut world.0, &mut rails.0);
+            }
+        }
         if std::env::var("TRICKY_WADBG").is_ok() { eprintln!("worldanim: run restarted, level state reset"); }
     }
     if game.screen == ui::Screen::Paused { return; }
@@ -598,9 +683,10 @@ pub fn world_anim(
             for &(i, h) in &w.wake { wa.run(w, level, &mut anims, Src::Header(h), 0, Some(i), 0); }
         }
     }
-    // Live cells (`cAIWorld::vf1` 0x115e28 -> `AiCells::tick`, row E7b2): activate/deactivate cells around riders and
-    // camera at 60 Hz, stepping `cAnimObjectNode` / `cAnimDeltaNode` / logic controllers and forwarding visual scripts.
-    if let Some(course) = world.0.course.clone() {
+    // Live cells & List-3 script threads (`cAIWorld::vf1` 0x115e28 + `BxList_UpdateAll(3)` 0x17d950, rows E7b2 & E9b2):
+    // activate/deactivate cells, step controllers and waiting `.ssf` `cScriptNode` threads at 60 Hz, and apply events.
+    let course = world.0.course.clone();
+    if let Some(course) = &course {
         let to_cm = |p: Vec3| [p.x * 100.0, -p.z * 100.0, p.y * 100.0, 1.0];
         let mut rider_pos_cm: Vec<[f32; 4]> = Vec::with_capacity(1 + opponents.0.len());
         rider_pos_cm.push(to_cm(rider.0.pos));
@@ -612,23 +698,33 @@ pub fn world_anim(
         let show_off = game.event == ui::Event::ShowOff;
         for _ in 0..tick.n {
             let ev = course.tick_cells(&rider_pos_cm, race_1c, cam_cm, show_off, &mut tricky_game::rand::rand_game);
-            for (inst, eff) in ev.activated_scripts {
-                if eff >= 0 {
-                    wa.run(w, level, &mut anims, Src::Header(eff as usize), 0, Some(inst), 0);
-                }
-            }
-            for inst in ev.killed_objects {
-                wa.kill_instance(inst);
+            wa.apply_cell_events(ev, level, &mut anims, &mut world.0, &mut rails.0);
+        }
+    }
+    // the countdown starts (`cCountdownHandler::Enter` 0x113520 -> `World_RunScript("StartCountdown")`) and ends
+    // (`cCountdownHandler::Update` 0x113600 -> `World_RunScript("EndCountdown")`)
+    let r = &race.0;
+    if r.countdown >= 2.5 { wa.counting = false; wa.ended_countdown = false; }
+    if r.state == RaceState::Countdown && !r.intro && game.screen == ui::Screen::Playing && r.countdown < 2.5 && !wa.counting {
+        wa.counting = true;
+        wa.ended_countdown = false;
+        if game.event != ui::Event::FreeRide {
+            if let Some(course) = &course {
+                let name = if course.find_script("StartCountdown").is_some() { "StartCountdown" } else { "CountDownStart" };
+                let ev = course.run_script_named(name, &mut tricky_game::rand::rand_game);
+                wa.apply_cell_events(ev, level, &mut anims, &mut world.0, &mut rails.0);
+            } else if let Some(f) = w.function("StartCountDown").or_else(|| w.function("CountDownStart")) {
+                wa.run(w, level, &mut anims, Src::Function(f), 0, None, 0);
             }
         }
     }
-    // the countdown starts: StartCountDown (which calls CountDownStart, the lights)
-    let r = &race.0;
-    if r.countdown >= 2.5 { wa.counting = false; }
-    if r.state == RaceState::Countdown && !r.intro && game.screen == ui::Screen::Playing && r.countdown < 2.5 && !wa.counting {
-        wa.counting = true;
-        if game.event != ui::Event::FreeRide {
-            if let Some(f) = w.function("StartCountDown").or_else(|| w.function("CountDownStart")) { wa.run(w, level, &mut anims, Src::Function(f), 0, None, 0); }
+    if wa.counting && !wa.ended_countdown && r.state == RaceState::Running {
+        wa.ended_countdown = true;
+        if let Some(course) = &course {
+            if game.event != ui::Event::FreeRide {
+                let ev = course.run_script_named("EndCountdown", &mut tricky_game::rand::rand_game);
+                wa.apply_cell_events(ev, level, &mut anims, &mut world.0, &mut rails.0);
+            }
         }
     }
     // a rider touches a trigger with no controller on it: its collision script
@@ -639,14 +735,15 @@ pub fn world_anim(
     // that impact in cm/s, default 0: it only cracks)
     let watouch = std::env::var("TRICKY_WATOUCH").unwrap_or_default();
     let (ids, forced_impact) = watouch.split_once(',').map_or((watouch.as_str(), 0.0), |(a, b)| (a, b.parse().unwrap_or(0.0)));
-    let forced: Vec<usize> = ids.split('+').filter_map(|v| v.parse().ok()).filter(|i| !wa.busy.contains_key(i) && w.touch.contains_key(i)).collect();
+    let is_busy = |wa: &WorldAnim, i: usize| wa.busy.contains_key(&i) || course.as_ref().is_some_and(|c| c.blocks_contact(i));
+    let forced: Vec<usize> = ids.split('+').filter_map(|v| v.parse().ok()).filter(|&i| !is_busy(&wa, i) && w.touch.contains_key(&i)).collect();
     // glass is solid: a rider in contact with its triangles (riding on it, the pane just under the
     // surface he rides, or the body against it) hits it (Instance_OnPlayerContact 0x13bd40). On a
     // pane the first contact's collision script makes the crack, after that each contact is an
     // impact (cCrackedNode vf17 0x1457e8, at most one every 30 ticks); the underside's script
     // breaks the lot.
     let mut glass = Vec::new();
-    for &i in wa.glass.iter().filter(|i| w.touch.contains_key(i) && !wa.busy.contains_key(i)) {
+    for &i in wa.glass.iter().filter(|&&i| w.touch.contains_key(&i) && !wa.busy.contains_key(&i)) {
         let touch = riders.iter().find_map(|(p, v)| world.0.contact(i as u32, *p, crate::rider::BODY_RADIUS + 0.05, 0.35).map(|n| (impact(*v, n), *v)));
         let touch = touch.or_else(|| forced.contains(&i).then_some((forced_impact, rider.0.vel)));
         if let Some(t) = touch { glass.push((i, t)); }
@@ -655,22 +752,41 @@ pub fn world_anim(
         wa.impact_vel = vel;
         if let Some(c) = wa.cracks.get_mut(&i) { if c.cool == 0 { c.impact(imp); } continue; }
         wa.impact = imp;
-        if !level.logic.cracks.contains_key(&i) { wa.busy.insert(i, 60); }
-        if let Some(&h) = w.touch.get(&i) { wa.run(w, level, &mut anims, Src::Header(h), 0, Some(i), 0); }
+        if let Some(course) = &course {
+            if !course.blocks_contact(i) {
+                if !level.logic.cracks.contains_key(&i) { wa.busy.insert(i, 60); }
+                let vel_cm = [vel.x * 100.0, -vel.z * 100.0, vel.y * 100.0, 0.0];
+                let ev = course.run_event_script(i, 1, 1, vel_cm, true, &mut tricky_game::rand::rand_game);
+                wa.apply_cell_events(ev, level, &mut anims, &mut world.0, &mut rails.0);
+            }
+        } else {
+            if !level.logic.cracks.contains_key(&i) { wa.busy.insert(i, 60); }
+            if let Some(&h) = w.touch.get(&i) { wa.run(w, level, &mut anims, Src::Header(h), 0, Some(i), 0); }
+        }
         wa.impact = 0.0;
     }
     // anything else: its collision script, then not again for a second
     let is_glass = |i: &usize| level.logic.cracks.contains_key(i) || wa.glass.contains(i);
     let hit: Vec<usize> = forced.iter().copied().filter(|i| !is_glass(i))
-        .chain(wa.boxes.iter().filter(|(i, lo, hi)| !wa.busy.contains_key(i) && !is_glass(i) && bodies.iter().any(|b| inside(*b, *lo, *hi))).map(|b| b.0)).collect();
+        .chain(wa.boxes.iter().filter(|(i, lo, hi)| !is_busy(&wa, *i) && !is_glass(i) && bodies.iter().any(|b| inside(*b, *lo, *hi))).map(|b| b.0)).collect();
     for i in hit {
-        wa.busy.insert(i, 60);
-        if let Some(&h) = w.touch.get(&i) { wa.run(w, level, &mut anims, Src::Header(h), 0, Some(i), 0); }
+        if let Some(course) = &course {
+            wa.busy.insert(i, 60);
+            let vel = rider.0.vel;
+            let vel_cm = [vel.x * 100.0, -vel.z * 100.0, vel.y * 100.0, 0.0];
+            let ev = course.run_event_script(i, 1, 1, vel_cm, true, &mut tricky_game::rand::rand_game);
+            wa.apply_cell_events(ev, level, &mut anims, &mut world.0, &mut rails.0);
+        } else {
+            wa.busy.insert(i, 60);
+            if let Some(&h) = w.touch.get(&i) { wa.run(w, level, &mut anims, Src::Header(h), 0, Some(i), 0); }
+        }
     }
-    // threads waiting
-    let mut ready = Vec::new();
-    wa.threads.retain_mut(|t| { t.wait -= dt; if t.wait <= 0.0 { ready.push((t.src, t.pc, t.inst)); false } else { true } });
-    for (src, pc, inst) in ready { wa.run(w, level, &mut anims, src, pc, inst, 0); }
+    // threads waiting (folder-only fallback; on disc courses `CellHost` steps List-3 `cScriptNode` threads)
+    if course.is_none() {
+        let mut ready = Vec::new();
+        wa.threads.retain_mut(|t| { t.wait -= dt; if t.wait <= 0.0 { ready.push((t.src, t.pc, t.inst)); false } else { true } });
+        for (src, pc, inst) in ready { wa.run(w, level, &mut anims, src, pc, inst, 0); }
+    }
     // the iris doors: a script opened them; their clip runs, and the drawn door follows it
     for i in std::mem::take(&mut wa.opened) { world.0.open_gate(i as u32); }
     world.0.tick_gates(dt);
@@ -680,15 +796,24 @@ pub fn world_anim(
     }
     // controllers at 60 Hz, on the game's ticks
     for _ in 0..tick.n { wa.tick(); }
-    // controllers that reached their goal: the object's EffectTriggerSlot (a crack or counter with
+    // controllers that reached their goal: the object's EffectTriggerSlot (event 4; a crack or counter with
     // no such script just ends)
     for _ in 0..4 {
         let fire = std::mem::take(&mut wa.fire);
         if fire.is_empty() { break; }
         for i in fire {
-            match w.trigger.get(&i) {
-                Some(&h) => wa.run(w, level, &mut anims, Src::Header(h), 0, Some(i), 0),
-                None => { wa.cracks.remove(&i); }
+            if let Some(course) = &course {
+                if course.ssf.event_script(i, 4) >= 0 {
+                    let ev = course.run_event_script(i, 4, 0, [0.0; 4], false, &mut tricky_game::rand::rand_game);
+                    wa.apply_cell_events(ev, level, &mut anims, &mut world.0, &mut rails.0);
+                } else {
+                    wa.cracks.remove(&i);
+                }
+            } else {
+                match w.trigger.get(&i) {
+                    Some(&h) => wa.run(w, level, &mut anims, Src::Header(h), 0, Some(i), 0),
+                    None => { wa.cracks.remove(&i); }
+                }
             }
         }
     }

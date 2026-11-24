@@ -1344,13 +1344,49 @@ fn trick_only_ramps(game: Res<ui::Game>, mut world: ResMut<World>, mut rails: Re
     let key = (game.event, world.0.len());
     if *last != Some(key) {
         *last = Some(key);
-        world.0.off = world.0.mode_off[k].clone();
-        let sw = rails.0.1[k].clone();
-        for r in rails.0.0.iter_mut() { r.on = sw.get(&r.spline).copied().unwrap_or(true); }
-        // the course's rail grid too (row G20c2c1b1): the capture runs on it
-        if let Some(c) = &world.0.course { for r in rails.0.0.iter().filter(|r| r.spline != usize::MAX) { c.set_rail_live(r.spline as u32, r.on); } }
+        if let Some(course) = world.0.course.clone() {
+            world.0.off.clear();
+            for r in rails.0.0.iter_mut() {
+                r.on = true;
+                if r.spline != usize::MAX {
+                    course.set_rail_live(r.spline as u32, true);
+                }
+            }
+            let mode_name = match game.event {
+                ui::Event::Race => "RaceMode",
+                ui::Event::ShowOff => "ShowoffMode",
+                ui::Event::FreeRide => "FreerideMode",
+            };
+            let mut apply = |ev: tricky_game::cellhost::CellEvents| {
+                for se in ev.script_events {
+                    match se {
+                        tricky_game::cellhost::ScriptEvent::DeadObject(o) => { world.0.off.insert(o as u32); }
+                        tricky_game::cellhost::ScriptEvent::RestoreObject(o) => { world.0.off.remove(&(o as u32)); }
+                        tricky_game::cellhost::ScriptEvent::SetRail { spline, on } => {
+                            for r in rails.0.0.iter_mut().filter(|r| r.spline == spline as usize) {
+                                r.on = on;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            };
+            apply(course.run_script_named(mode_name, &mut tricky_game::rand::rand_game));
+            if game.event == ui::Event::FreeRide {
+                apply(course.run_script_named("NoCountdown", &mut tricky_game::rand::rand_game));
+            }
+        } else {
+            // STANDIN (levels folder without course collision): static `SSFLogic.json` hide/rail tables
+            world.0.off = world.0.mode_off[k].clone();
+            let sw = rails.0.1[k].clone();
+            for r in rails.0.0.iter_mut() { r.on = sw.get(&r.spline).copied().unwrap_or(true); }
+        }
     }
-    for p in props.0.iter_mut().filter(|p| p.kind == props::Kind::Static) { p.hidden = world.0.mode_off[k].contains(&(p.inst as u32)); }
+    if world.0.course.is_some() {
+        for p in props.0.iter_mut().filter(|p| p.kind == props::Kind::Static) { p.hidden = world.0.off.contains(&(p.inst as u32)); }
+    } else {
+        for p in props.0.iter_mut().filter(|p| p.kind == props::Kind::Static) { p.hidden = world.0.mode_off[k].contains(&(p.inst as u32)); }
+    }
     for mut v in &mut q { let want = if on { Visibility::Inherited } else { Visibility::Hidden }; if *v != want { *v = want; } }
 }
 
