@@ -98,7 +98,7 @@ matches the original.
 | X1 | No stand-ins left: `grep -rn STANDIN tricky-rs` is empty | any | F8 | | [est] |
 | X2 | Function index at 100% ported (every function either ported or marked not needed, with a reason, e.g. PS2 hardware glue) | any | F1 | | [est] |
 | X3 | Function index at 100% checked | any | F4, X2 | | [est] |
-| E12f2 | The PS2 memory card driver, part 2 (`tricky_game::memcard`): `MemCard_Process` 0x23e0d0 (the state machine), vf2 0x23edc8, vf13 0x23fb60, vf53 0x23ffe0, `MemCard_CheckRoomForFiles` 0x23fcb8, `MemCard_FormatSaveTitle` 0x1ce8f8 and the SJIS converters 0x23d628..0x23d868; checked in the runner like E12f1 | any | E12f1 | irregulur/lynx (2026-11-24) | Gap of E12f1 |
+| E12f2b | The PS2 memory card driver, the rest (`tricky_game::memcard`): vf2 0x23edc8 (the per-frame sync), vf13 0x23fb60, vf53 0x23ffe0, `MemCard_CheckRoomForFiles` 0x23fcb8, `MemCard_FormatSaveTitle` 0x1ce8f8 and the SJIS converters 0x23d628..0x23d868; checked in the runner like E12f1 | any | E12f2a | | Split of E12f2 |
 | X4 | Full playthrough of World Circuit, race and show-off, every course, gold everywhere, on our code | any | C1–C16 | | [est] |
 | X5 | 100% completion: every rider maxed, every trick book chapter, every unlock | any | X4 | | [est] |
 | X6 | Runs from the player's own disc only: no SSX-Library, no Python export step, no vgmstream | any | E2–E5, G10 | | [est] |
@@ -116,6 +116,7 @@ matches the original.
 
 | ID | Task | Section | Who | Date | Commit |
 |---|---|---|---|---|---|
+| E12f2a | Split of E12f2: `MemCard_Process` 0x23e0d0, the memory card driver's state machine (`memcard::process_state`), checked in the runner on every state (`tests/memcard.rs`, 19 of 21 mutants, 2 equivalent) | P4 | irregulur/lynx | 2026-11-24 | 55cba82 |
 | E12f1 | The PS2 memory card driver `cPS2MemCard`, part 1: constructor, reset, destructors, the starters that hand `MemCard_Process` a state, the port and file helpers and the small virtuals (80 functions, 6 of them unindexed) in `tricky_game::memcard`, checked in the runner (`tests/memcard.rs`, 24 of 25 mutants, 1 equivalent) | P4 | irregulur/lynx | 2026-11-24 | b6caa4f |
 | E10d | The pad config's game-bytes helpers: the three pair parsers, the six `PadCfg_*` getters, `cPadDevice`'s constructor, empty virtuals and destructor, `cPS2Device`'s destructor and vf8 (`tricky_game::input::bytes`), checked in the runner (`tests/pad_bytes.rs`, 8 of 9 mutants, 1 equivalent) | P4 | irregulur/lynx | 2026-11-24 | 5cf4599 |
 | X2c | The 39 small helpers the compiler copied into many files (28 `Vec4_ScaleCopy*`, the empty constructors, `Vec4_AddTo`, the `memcpy` wrappers, `Rand_Init`, `Vec3_PackShort`, `Mat4_TransformVec4Copy1`, `Mem_DeleteIfFlag9`, `PtrArray_FreeAll`): `tricky_game::copies`, checked in the runner (`tests/copies.rs`, 10 of 12 mutants, 2 equivalent) | P4 | irregulur/lynx | 2026-11-24 | 60dde47 |
@@ -1843,3 +1844,4 @@ matches the original.
 - 2026-11-24 irregulur/lynx: E10d done.
 - 2026-11-24 irregulur/lynx: added E12f1 (memory card driver, small part).
 - 2026-11-24 irregulur/lynx: E12f1 done; added E12f2 (gap of E12f1).
+- 2026-11-24 irregulur/lynx: split E12f2 into E12f2a (done) and E12f2b (open).
