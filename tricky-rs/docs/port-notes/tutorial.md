@@ -135,8 +135,23 @@ state change). In the tutorial:
 logged, against `lesson.rs` on a scripted `Env` (200,000 random steps). It found one difference, now fixed: the Wait
 menu's refresh (`FUN_0014daa8`) at the page and trick levels does not clear the string list, only sets the first
 string (the action level clears all seven), so the strings left from an earlier menu stay. Also read there: the
-Practice Enter writes 0 to byte +0x5a70 of the game's player object (not modelled), and `Replay_Clear` runs only
+Practice Enter writes 0 to byte +0x5a70 of the game's focus rider (gApp+0x730 → +0xa4), and `Replay_Clear` runs only
 when the game object has a replay (+0x40).
+
+Row C11b5 (proven): rider+0x5a70 is the score object's (+0x5820) +0x250, the trick name `Score_AnnounceTrick` formats
+(`Score_GetTrickName` 0x157978 returns its address; no other code in the binary stores to rider+0x5a70). So the
+Practice Enter (0x14e74c, after the camera pick and before the speech is cleared) empties the trick name, and the
+Practice Update's `strlen` of it sets "trick seen" (+0x64) only for a trick named during the practice. Ported as
+`Env::clear_trick_text`; `tests/lesson.rs` now runs `Score_GetTrickName` for real on the rider's memory and checks the
+name's first byte each step (dropping the clear fails at step 12,092).
+
+The start-up as a whole (`LessonMan_Init` 0x14aaa0, `Lesson::start`, checked in `tests/lesson_pads.rs`): the rider
+(+0x510) is the focus rider's character (stats +0x38); the files are named by its short name (`gRider_Table` +8:
+Eddi, Kaor, Luth, Mac, Moby, Zoe, Jp, Elis, Psym, Seei, Brod, Mari): the six sheets `data/textures/tb_<name><page>.ssh`
+first (each sheet's five entries added to the renderer as "01".."05" and the sheet freed), then the archive
+`data/tutorial/<name>.big`; +0xa0 / +0xa4 = 20.0; the recording buffer's position and count 0; `LessonMan_Reset`
+0x14b5a8 also sets +0x84..+0x9c to 1. The preview's recording is `|data\tutorial\<name><NN>.inp` (0x31df38; the `|`
+sends the open to the mounted archives).
 
 The race side (row C11b4, `lesson::RaceLesson`, `race_lesson_modes_match_the_original`): modes 6 to 10 of `cAI`
 (`Race_CreateHandlers` 0x1125c8 makes the handler for a mode; `vf9` 0x1125a0 notes the mode the handlers last ran for

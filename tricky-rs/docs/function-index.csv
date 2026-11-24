@@ -920,7 +920,7 @@ address,size,name,system,status
 0x14a980,116,cCollideEmitterNodeState::__tf,runtime,host
 0x14aa10,80,cRigidBodyState::__tf,runtime,host
 0x14aa60,64,cReplayRecordHeader::__tf,runtime,host
-0x14aaa0,2684,LessonMan_Init,tutorial,ported
+0x14aaa0,2684,LessonMan_Init,tutorial,checked
 0x14b520,136,cLessonMan::~cLessonMan,tutorial,not started
 0x14b5a8,140,LessonMan_Reset,tutorial,ported
 0x14b638,300,LessonMan_EndAttempt,tutorial,ported
@@ -967,7 +967,7 @@ address,size,name,system,status
 0x14e558,304,cLessonPerformHandler::Enter,game,not started
 0x14e688,32,cLessonPerformHandler::Update,game,not started
 0x14e6a8,36,cLessonPerformHandler::Exit,game,ported
-0x14e6d0,240,cLessonPracticeHandler::Enter,game,not started
+0x14e6d0,240,cLessonPracticeHandler::Enter,game,checked
 0x14e7c0,108,cLessonPracticeHandler::Update,game,not started
 0x14e830,8,cLessonPracticeHandler::Exit,game,not started
 0x14e838,196,cLessonPracticeEndHandler::Enter,game,not started

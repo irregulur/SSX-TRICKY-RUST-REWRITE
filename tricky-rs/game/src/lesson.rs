@@ -131,8 +131,12 @@ pub trait Env {
     /// `Replay_Clear` when the replay exists.
     fn replay_clear(&mut self);
     fn rand_fx(&mut self) -> u32;
-    /// The practice handler's test of the trick text (`FUN_00157978(...+0x5820)` non-empty).
+    /// The practice handler's test of the trick text: the focus rider's (`gApp+0x730 → +0xa4`) score (+0x5820) trick
+    /// name (`Score_GetTrickName` 0x157978: its +0x250, the name `Score_AnnounceTrick` formats) non-empty (`strlen`).
     fn trick_text_nonempty(&self) -> bool;
+    /// `cLessonPracticeHandler::Enter` 0x14e6d0's `sb zero, 0x5a70` on the focus rider: that trick name's first byte
+    /// cleared (rider+0x5820+0x250), so a trick named before the practice does not count as seen in it.
+    fn clear_trick_text(&mut self);
     /// The game object's "done" flag (`gApp+0x730 → +0x54`), set by the Exit handler.
     fn set_done(&mut self);
     /// One step of the lesson course's load (`FUN_00112920` 0x112920: the texture files bound as they arrive, the
@@ -248,6 +252,30 @@ impl RaceLesson {
     }
 }
 
+/// The riders' short names (`gRider_Table` 0x331ea8 + 8, read at 0x331eb0 by rider), the game's rider order: the
+/// lesson's files are named by them.
+pub const RIDER_SHORT: [&str; 12] = ["Eddi", "Kaor", "Luth", "Mac", "Moby", "Zoe", "Jp", "Elis", "Psym", "Seei", "Brod", "Mari"];
+
+/// What `LessonMan_Init` 0x14aaa0 loads for the rider (`+0x510`, the focus rider's character, its stats +0x38): the
+/// six pages' trick pictures (`data/textures/tb_<rider><page>.ssh`, 0x31df70 with ".ssh" 0x36e430, page 0..5; each
+/// sheet's entries 0..4 added to the renderer as "01".."05", 0x36e438, the 30 handles at +0x470; the sheet freed),
+/// the lesson archive (`data/tutorial/<rider>.big`, 0x31df58, opened with `BigArchive_Open` into +0xa8), and the
+/// two pad maps ([`crate::input::LessonPads`]). The recording buffer (+0x46c, "LessonBuffer", 0x4d598 bytes filled
+/// with 0xdeadc0de) starts with its position and count 0. +0xa0 and +0xa4 are 20.0, +0x514 the trick info
+/// (`cGameTrickInfo`, gApp+0x60).
+#[derive(Clone, Debug, PartialEq)]
+pub struct LessonStart {
+    pub sheets: [String; 6],
+    pub archive: String,
+    pub pads: crate::input::LessonPads,
+}
+
+/// The recording of a trick (`cLessonPreviewHandler::Enter` 0x14e138: 0x31df38 `|data\tutorial\%s%02d.inp` with the
+/// rider's short name and trick + 1; the `|` asks the file system for the mounted archives' copy)
+pub fn recording_path(rider: usize, trick: i32) -> String {
+    format!("|data\\tutorial\\{}{:02}.inp", RIDER_SHORT[rider], trick + 1)
+}
+
 /// `cLessonMan`'s state (offsets in the comments).
 #[derive(Clone, Debug)]
 pub struct Lesson {
@@ -277,8 +305,26 @@ pub struct Lesson {
 }
 
 impl Lesson {
-    /// `LessonMan_Init` 0x14aaa0 + `FUN_0014b5a8` 0x14b5a8: all zero, then `LessonMan_SetState(1)`; the menu
-    /// window starts at 0, the rider is the player's.
+    /// `LessonMan_Init` 0x14aaa0 as a whole: [`Lesson::new`] on the focus rider and what it loads ([`LessonStart`]):
+    /// the pictures' sheets and the archive by the rider's short name, and the pad maps made over the player's
+    /// `cInput` (`input`) from the default button map (`map0`, `Pad_LoadButtonMap` with 0: `None` when it failed) on
+    /// the rider's trick slots (0x333098 by character and board kind)
+    pub fn start(
+        rider: usize,
+        input: &mut crate::controls::ButtonMap,
+        map0: Option<&crate::input::PadConfig>,
+        slots: [u16; 15],
+    ) -> (Lesson, LessonStart) {
+        let name = RIDER_SHORT[rider];
+        let sheets = std::array::from_fn(|page| format!("data/textures/tb_{name}{page}.ssh"));
+        let archive = format!("data/tutorial/{name}.big");
+        let pads = crate::input::LessonPads::new(input, map0, slots);
+        (Lesson::new(rider), LessonStart { sheets, archive, pads })
+    }
+
+    /// `LessonMan_Init` 0x14aaa0's fields + `LessonMan_Reset` 0x14b5a8: all zero (the reset also sets the seven
+    /// words +0x84..+0x9c to 1, which nothing here reads), then `LessonMan_SetState(1)`; the menu window starts at 0,
+    /// the rider is the focus rider's character.
     pub fn new(rider: usize) -> Self {
         let mut l = Lesson {
             state: State::None,
@@ -487,6 +533,7 @@ impl Lesson {
                 self.setup_rider(env);
                 let r = env.rand_fx();
                 self.cam_pick = PRACTICE_CAMS[(r % 3) as usize];
+                env.clear_trick_text();
                 env.speech_clear();
                 env.hud_hide(10);
                 env.hud_show(0xe);
@@ -797,6 +844,7 @@ mod tests {
         fn replay_clear(&mut self) { self.log.push("rclr".into()) }
         fn rand_fx(&mut self) -> u32 { self.rand }
         fn trick_text_nonempty(&self) -> bool { self.text }
+        fn clear_trick_text(&mut self) { self.text = false }
         fn set_done(&mut self) { self.log.push("done".into()) }
         fn load_step(&mut self) -> bool { true }
         fn clear_pad_key(&mut self) { self.log.push("clearkey".into()) }
@@ -814,6 +862,12 @@ mod tests {
         l.tick(e);
         assert_eq!(l.state, State::Wait);
         assert_eq!(l.panel, WAIT_PANEL);
+    }
+
+    #[test]
+    fn recording_path_is_the_game_format() {
+        assert_eq!(recording_path(3, 0), "|data\\tutorial\\Mac01.inp");
+        assert_eq!(recording_path(11, 29), "|data\\tutorial\\Mari30.inp");
     }
 
     #[test]

@@ -108,6 +108,7 @@ impl Env for Mock {
     }
     fn rand_fx(&mut self) -> u32 { self.log.push("rand".into()); self.s.rand }
     fn trick_text_nonempty(&self) -> bool { self.s.text }
+    fn clear_trick_text(&mut self) { self.s.text = false }
     fn set_done(&mut self) { self.done = true }
     fn load_step(&mut self) -> bool { self.s.loaded }
     fn clear_pad_key(&mut self) { self.log.push("clearkey".into()) }
@@ -143,7 +144,8 @@ fn lesson_manager_matches_the_original() {
     let hud_a = r.mem.alloc(0x400);
     let hud_b = r.mem.alloc(0x500);
     let hud_x = r.mem.alloc(0x20);
-    let textbuf = r.mem.alloc(0x10);
+    // (the focus rider's trick name: its score +0x5820, `Score_GetTrickName` +0x250, run for real)
+    let textbuf = gobj + 0x5820 + 0x250;
     let cam = r.mem.alloc(0x10);
     r.mem.write_u32(GAPP, app);
     r.mem.write_u32(app + 0x730, game);
@@ -257,7 +259,7 @@ fn lesson_manager_matches_the_original() {
         });
         let (lg, s) = (log.clone(), textbuf);
         let _ = (&lg, s);
-        r.stub(0x157978, move |c, _| c.set_gpr(2, textbuf as u64));
+        r.allow(0x157978);
         r.stub(0x2fd260, |c, m| {
             let mut a = c.gpr(4) as u32;
             let mut n = 0u64;
@@ -358,6 +360,7 @@ fn lesson_manager_matches_the_original() {
         assert_eq!(w(&mut r.mem, 0x5c) as i32, lesson.count, "step {step}: count");
         assert_eq!(w(&mut r.mem, 0x60) as i32, lesson.last_action, "step {step}: last action");
         assert_eq!(w(&mut r.mem, 0x64) != 0, lesson.trick_seen, "step {step}: trick seen");
+        assert_eq!(rb(&mut r.mem, textbuf) != 0, env.s.text, "step {step}: the trick name");
         for k in 0..7 {
             assert_eq!(w(&mut r.mem, 0x68 + 4 * k), lesson.items[k as usize], "step {step}: item {k} (state {} -> {}, level {}, count {})", prev_state, lesson.state as u32, lesson.menu_level, lesson.count);
         }

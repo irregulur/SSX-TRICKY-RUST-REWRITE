@@ -6,11 +6,13 @@
 //! or failing). Then `input::LessonPads::new` on the same player's map, map and rider must give the same three
 //! tables kept for the player (+0xdc..), for the lesson (+0x2a4..) and left in the player's `cInput`; and the
 //! preview's swap (`Pad_SetConfig` from `cLessonPreviewHandler::Enter` / `Exit`) runs the real `Pad_SetConfig` on
-//! both.
+//! both. Row C11b5 adds the rest of the start-up (`lesson::Lesson::start`): the files it loads, by the rider's short
+//! name read from the ELF (the six picture sheets, then the archive, through a `sprintf` stand-in on the game's own
+//! format strings), the rider, +0xa0 / +0xa4 and the recording's position and count.
 
 use r5900::Runner;
 use tricky_game::controls::ButtonMap;
-use tricky_game::input::{LessonPads, PadConfig, PadTables};
+use tricky_game::input::{PadConfig, PadTables};
 
 struct Rng(u64);
 impl Rng {
@@ -32,8 +34,54 @@ const SET_CONFIG: u32 = 0x17a2f8;
 const REAL: [u32; 12] =
     [0x17a290, SET_CONFIG, 0x2ce114, 0x17a018, 0x17a028, 0x17a108, 0x17a118, 0x17a128, 0x17a138, 0x179818, 0x179838, LESSON_INIT];
 /// stood in for, answering 0x40 (an address nobody reads)
-const STUBS: [u32; 12] =
-    [0x17cf50, 0x154d20, 0x14b5a8, 0x2cc808, 0x2fca28, 0x2c8018, 0x2c266c, 0x2ccfc0, 0x23bb70, 0x23bc28, 0x14f550, SHAPE];
+const STUBS: [u32; 9] = [0x17cf50, 0x154d20, 0x14b5a8, 0x2cc808, 0x2c266c, 0x2ccfc0, 0x23bb70, 0x14f550, SHAPE];
+/// `sprintf`, `File_LoadAlloc`, `BigArchive_Open`: stood in for and their strings logged
+const SPRINTF: u32 = 0x2fca28;
+const LOAD_ALLOC: u32 = 0x2c8018;
+const BIG_OPEN: u32 = 0x23bc28;
+
+fn cstr(m: &mut r5900::Mem, mut a: u32) -> String {
+    let mut s = String::new();
+    loop {
+        let b = (m.read_u32(a & !3) >> (8 * (a & 3))) as u8;
+        if b == 0 {
+            return s;
+        }
+        s.push(b as char);
+        a += 1;
+    }
+}
+
+/// `sprintf` for the formats `LessonMan_Init` uses (`%s`, `%d`, `%02d`), from the registers
+fn sprintf(c: &r5900::Cpu, m: &mut r5900::Mem) -> String {
+    let fmt = cstr(m, c.gpr(5) as u32);
+    let mut args = (6..12).map(|k| c.gpr(k) as u32);
+    let mut out = String::new();
+    let mut it = fmt.chars().peekable();
+    while let Some(ch) = it.next() {
+        if ch != '%' {
+            out.push(ch);
+            continue;
+        }
+        let mut spec = String::new();
+        while let Some(&n) = it.peek() {
+            it.next();
+            if n.is_ascii_alphabetic() {
+                spec.push(n);
+                break;
+            }
+            spec.push(n);
+        }
+        let a = args.next().unwrap();
+        match spec.as_str() {
+            "s" => out.push_str(&cstr(m, a)),
+            "d" => out.push_str(&(a as i32).to_string()),
+            "02d" => out.push_str(&format!("{:02}", a as i32)),
+            _ => panic!("sprintf {spec}"),
+        }
+    }
+    out
+}
 const ALLOC: u32 = 0x2ccf70;
 const LOAD_MAP: u32 = 0x179a88;
 /// the renderer's +0x154 (a picture added)
@@ -62,6 +110,25 @@ fn lesson_pad_maps_match_the_original() {
     }
     let buf = r.mem.alloc(0x10);
     r.stub(ALLOC, move |c, _| c.set_gpr(2, buf as u64));
+    let files: std::rc::Rc<std::cell::RefCell<Vec<String>>> = Default::default();
+    r.stub(SPRINTF, |c, m| {
+        let s = sprintf(c, m);
+        let at = c.gpr(4) as u32;
+        for (k, b) in s.bytes().chain([0]).enumerate() {
+            let a = at + k as u32;
+            let w = m.read_u32(a & !3);
+            let sh = 8 * (a & 3);
+            m.write_u32(a & !3, (w & !(0xff << sh)) | ((b as u32) << sh));
+        }
+    });
+    for f in [LOAD_ALLOC, BIG_OPEN] {
+        let fl = files.clone();
+        r.stub(f, move |c, m| {
+            let p = cstr(m, c.gpr(if f == BIG_OPEN { 5 } else { 4 }) as u32);
+            fl.borrow_mut().push(p);
+            c.set_gpr(2, 0x40);
+        });
+    }
     let map: std::rc::Rc<std::cell::RefCell<Option<PadConfig>>> = Default::default();
     let mp = map.clone();
     r.stub(LOAD_MAP, move |c, m| {
@@ -133,6 +200,7 @@ fn lesson_pad_maps_match_the_original() {
         r.cpu.set_gpr(4, lesson as u64);
         r.cpu.set_gpr(5, 0);
         r.cpu.set_gpr(6, 0);
+        files.borrow_mut().clear();
         r.call(LESSON_INIT).unwrap_or_else(|e| panic!("case {case}: {e}"));
         // (the rider's slots as the game reads them, and our table of them)
         let slots: [u16; 15] = std::array::from_fn(|k| {
@@ -141,7 +209,17 @@ fn lesson_pad_maps_match_the_original() {
         });
         let table = &tricky_data::trick_slots::TRICK_SLOTS[ch as usize][kind as usize];
         assert_eq!(slots, std::array::from_fn(|k| table[k][0]), "case {case}: the trick table");
-        let pads = LessonPads::new(&mut ours, cfg.as_ref(), slots);
+        let p = r.mem.read_u32(0x331eb0 + 0x38 * ch);
+        let name = cstr(&mut r.mem, p);
+        assert_eq!(name, tricky_game::lesson::RIDER_SHORT[ch as usize], "case {case}: the rider's short name");
+        let (l, start) = tricky_game::lesson::Lesson::start(ch as usize, &mut ours, cfg.as_ref(), slots);
+        let pads = start.pads;
+        let mut want: Vec<String> = start.sheets.to_vec();
+        want.push(start.archive.clone());
+        assert_eq!(*files.borrow(), want, "case {case}: the files");
+        assert_eq!(r.mem.read_u32(lesson + 0x510) as usize, l.rider, "case {case}: the rider");
+        assert_eq!([r.mem.read_u32(lesson + 0xa0), r.mem.read_u32(lesson + 0xa4)], [20f32.to_bits(); 2], "case {case}");
+        assert_eq!([r.mem.read_u32(buf), r.mem.read_u32(buf + 4)], [l.rec_pos, l.rec_len], "case {case}: the recording");
         let player = tables_at(&mut r.mem, lesson + 0xdc, lesson + 0x180, lesson + 0x224);
         let lessons = tables_at(&mut r.mem, lesson + 0x2a4, lesson + 0x348, lesson + 0x3ec);
         assert_eq!(player, pads.player, "case {case}: the player's tables kept");
