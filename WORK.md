@@ -1822,3 +1822,4 @@ matches the original.
 - 2026-11-24 irregulur/neon: G11e done (`Cml::{scene_actors, anim_keys}`, `AnimHost::{first_marker_frame, ensure_scene_files_loaded}`, `tricky_game::scenehost::SceneHost`, wired `RaceScene`/`PreRace`/`EndRace` into `ui.rs` & `main.rs`, replacing `intro::plan_post` and `chase_camera`'s `STG`/`GAT` draws when `TRICKY_DISC` is present; verified against real Garibaldi CML + `SLUS_203.26`; needs a play test).
 - 2026-11-24 irregulur/lynx: X2a done; added X2b (gap of X2a).
 - 2026-11-24 irregulur/lynx: X2b done.
+- 2026-11-24 irregulur/lynx: `cAIWorld::~cAIWorld` 0x116650 added to G4k4's port and test (same shape), index checked.
