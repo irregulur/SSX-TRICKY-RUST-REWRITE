@@ -4324,85 +4324,85 @@ address,size,name,system,status
 0x23d738,52,Object_Delete,common,ported
 0x23d770,248,Ascii_ToSjis,save,not started
 0x23d868,160,Sjis_ToAscii,save,not started
-0x23d908,52,cPS2MemCard::cPS2MemCard,save,not started
-0x23d940,88,cPS2MemCard::~cPS2MemCard,save,not started
-0x23d998,364,cPS2MemCard::vf1_23d998,save,not started
-0x23db08,8,cPS2MemCard::vf6_23db08,save,not started
-0x23db10,48,cPS2MemCard::vf5_23db10,save,not started
-0x23db40,136,MemCard_ReadDir,save,not started
-0x23dbc8,116,cPS2MemCard::vf12_23dbc8,save,not started
-0x23dc40,12,cPS2MemCard::vf61_23dc40,save,not started
-0x23dd10,8,cPS2MemCard::vf7_23dd10,save,not started
-0x23dd70,12,cPS2MemCard::vf9_23dd70,save,not started
-0x23dd80,8,cPS2MemCard::vf14_23dd80,save,not started
-0x23dd88,8,cPS2MemCard::vf15_23dd88,save,not started
-0x23dd90,104,MemCard_BuildSavePath,save,not started
-0x23ddf8,12,cPS2MemCard::vf4_23ddf8,save,not started
-0x23de08,60,cPS2MemCard::vf39_23de08,save,not started
-0x23de48,80,cPS2MemCard::vf27_23de48,save,not started
-0x23de98,8,cPS2MemCard::vf28_23de98,save,not started
-0x23dea0,8,cPS2MemCard::vf30_23dea0,save,not started
-0x23dea8,116,cPS2MemCard::BeginSave,save,not started
-0x23df20,96,cPS2MemCard::BeginSaveSlot,save,not started
-0x23df80,20,cPS2MemCard::SaveMore,save,not started
-0x23df98,16,cPS2MemCard::vf34_23df98,save,not started
-0x23dfa8,12,cPS2MemCard::vf36_23dfa8,save,not started
-0x23dfb8,8,cPS2MemCard::EndSave,save,not started
-0x23e038,84,cPS2MemCard::BeginLoadSlot,save,not started
-0x23e090,20,cPS2MemCard::LoadMore,save,not started
-0x23e0a8,16,cPS2MemCard::vf24_23e0a8,save,not started
-0x23e0b8,12,cPS2MemCard::vf26_23e0b8,save,not started
-0x23e0c8,8,cPS2MemCard::EndLoad,save,not started
+0x23d908,52,cPS2MemCard::cPS2MemCard,save,checked
+0x23d940,88,cPS2MemCard::~cPS2MemCard,save,checked
+0x23d998,364,cPS2MemCard::vf1_23d998,save,checked
+0x23db08,8,cPS2MemCard::vf6_23db08,save,checked
+0x23db10,48,cPS2MemCard::vf5_23db10,save,checked
+0x23db40,136,MemCard_ReadDir,save,checked
+0x23dbc8,116,cPS2MemCard::vf12_23dbc8,save,checked
+0x23dc40,12,cPS2MemCard::vf61_23dc40,save,checked
+0x23dd10,8,cPS2MemCard::vf7_23dd10,save,checked
+0x23dd70,12,cPS2MemCard::vf9_23dd70,save,checked
+0x23dd80,8,cPS2MemCard::vf14_23dd80,save,checked
+0x23dd88,8,cPS2MemCard::vf15_23dd88,save,checked
+0x23dd90,104,MemCard_BuildSavePath,save,checked
+0x23ddf8,12,cPS2MemCard::vf4_23ddf8,save,checked
+0x23de08,60,cPS2MemCard::vf39_23de08,save,checked
+0x23de48,80,cPS2MemCard::vf27_23de48,save,checked
+0x23de98,8,cPS2MemCard::vf28_23de98,save,checked
+0x23dea0,8,cPS2MemCard::vf30_23dea0,save,checked
+0x23dea8,116,cPS2MemCard::BeginSave,save,checked
+0x23df20,96,cPS2MemCard::BeginSaveSlot,save,checked
+0x23df80,20,cPS2MemCard::SaveMore,save,checked
+0x23df98,16,cPS2MemCard::vf34_23df98,save,checked
+0x23dfa8,12,cPS2MemCard::vf36_23dfa8,save,checked
+0x23dfb8,8,cPS2MemCard::EndSave,save,checked
+0x23e038,84,cPS2MemCard::BeginLoadSlot,save,checked
+0x23e090,20,cPS2MemCard::LoadMore,save,checked
+0x23e0a8,16,cPS2MemCard::vf24_23e0a8,save,checked
+0x23e0b8,12,cPS2MemCard::vf26_23e0b8,save,checked
+0x23e0c8,8,cPS2MemCard::EndLoad,save,checked
 0x23e0d0,2136,MemCard_Process,save,not started
-0x23e928,92,MemCard_StartGetInfo,save,not started
-0x23e988,40,cPS2MemCard::vf10_23e988,save,not started
-0x23e9b0,104,cPS2MemCard::vf8_23e9b0,save,not started
-0x23ea18,96,MemCard_GetSlotError,save,not started
-0x23ea78,32,cPS2MemCard::vf60_23ea78,save,not started
-0x23ea98,40,MemCard_ClearCurrentSlotStatus,save,not started
-0x23eac0,88,MemCard_ResetState,save,not started
-0x23eb18,16,MemCard_ClearName,save,not started
-0x23eb28,32,cPS2MemCard::vf40_23eb28,save,not started
-0x23eb48,20,MemCard_GetSlotStatus,save,not started
-0x23eb60,28,cPS2MemCard::vf16_23eb60,save,not started
-0x23eb80,88,cPS2MemCard::vf44_23eb80,save,not started
-0x23ebd8,24,cPS2MemCard::vf47_23ebd8,save,not started
-0x23ed08,8,cPS2MemCard::vf37_23ed08,save,not started
-0x23ed10,8,cPS2MemCard::vf38_23ed10,save,not started
-0x23ed18,44,cPS2MemCard::vf56_23ed18,save,not started
-0x23ed48,24,MemCard_FlagSlot,save,not started
-0x23ed60,24,MemCard_MarkSlotDirty,save,not started
-0x23ed78,56,cPS2MemCard::vf54_23ed78,save,not started
-0x23edb0,24,cPS2MemCard::vf55_23edb0,save,not started
+0x23e928,92,MemCard_StartGetInfo,save,checked
+0x23e988,40,cPS2MemCard::vf10_23e988,save,checked
+0x23e9b0,104,cPS2MemCard::vf8_23e9b0,save,checked
+0x23ea18,96,MemCard_GetSlotError,save,checked
+0x23ea78,32,cPS2MemCard::vf60_23ea78,save,checked
+0x23ea98,40,MemCard_ClearCurrentSlotStatus,save,checked
+0x23eac0,88,MemCard_ResetState,save,checked
+0x23eb18,16,MemCard_ClearName,save,checked
+0x23eb28,32,cPS2MemCard::vf40_23eb28,save,checked
+0x23eb48,20,MemCard_GetSlotStatus,save,checked
+0x23eb60,28,cPS2MemCard::vf16_23eb60,save,checked
+0x23eb80,88,cPS2MemCard::vf44_23eb80,save,checked
+0x23ebd8,24,cPS2MemCard::vf47_23ebd8,save,checked
+0x23ed08,8,cPS2MemCard::vf37_23ed08,save,checked
+0x23ed10,8,cPS2MemCard::vf38_23ed10,save,checked
+0x23ed18,44,cPS2MemCard::vf56_23ed18,save,checked
+0x23ed48,24,MemCard_FlagSlot,save,checked
+0x23ed60,24,MemCard_MarkSlotDirty,save,checked
+0x23ed78,56,cPS2MemCard::vf54_23ed78,save,checked
+0x23edb0,24,cPS2MemCard::vf55_23edb0,save,checked
 0x23edc8,3752,cPS2MemCard::vf2_23edc8,save,not started
 0x23fb60,344,cPS2MemCard::vf13_23fb60,save,not started
 0x23fcb8,236,MemCard_CheckRoomForFiles,save,not started
-0x23fda8,140,cPS2MemCard::vf11_23fda8,save,not started
-0x23fe38,12,MemCard_IsErrorCode,save,not started
-0x23fe48,92,cPS2MemCard::vf59_23fe48,save,not started
-0x23fea8,24,cPS2MemCard::vf32_23fea8,save,not started
-0x23fec0,8,cPS2MemCard::vf48_23fec0,save,not started
-0x23fec8,8,cPS2MemCard::vf49_23fec8,save,not started
-0x23fed0,8,cPS2MemCard::vf50_23fed0,save,not started
-0x23fed8,44,cPS2MemCard::vf51_23fed8,save,not started
-0x23ff08,8,cPS2MemCard::vf20_23ff08,save,not started
-0x23ff10,8,cPS2MemCard::vf17_23ff10,save,not started
-0x23ff18,32,cPS2MemCard::vf18_23ff18,save,not started
-0x23ff38,44,cPS2MemCard::vf19_23ff38,save,not started
-0x23ff68,8,cPS2MemCard::vf42_23ff68,save,not started
-0x23ff70,44,cPS2MemCard::vf43_23ff70,save,not started
-0x23ffa0,8,cPS2MemCard::vf21_23ffa0,save,not started
-0x23ffb0,28,MemCard_GetCurrentSlotError,save,not started
-0x23ffd0,8,cPS2MemCard::vf58_23ffd0,save,not started
-0x23ffd8,8,cPS2MemCard::vf57_23ffd8,save,not started
+0x23fda8,140,cPS2MemCard::vf11_23fda8,save,checked
+0x23fe38,12,MemCard_IsErrorCode,save,checked
+0x23fe48,92,cPS2MemCard::vf59_23fe48,save,checked
+0x23fea8,24,cPS2MemCard::vf32_23fea8,save,checked
+0x23fec0,8,cPS2MemCard::vf48_23fec0,save,checked
+0x23fec8,8,cPS2MemCard::vf49_23fec8,save,checked
+0x23fed0,8,cPS2MemCard::vf50_23fed0,save,checked
+0x23fed8,44,cPS2MemCard::vf51_23fed8,save,checked
+0x23ff08,8,cPS2MemCard::vf20_23ff08,save,checked
+0x23ff10,8,cPS2MemCard::vf17_23ff10,save,checked
+0x23ff18,32,cPS2MemCard::vf18_23ff18,save,checked
+0x23ff38,44,cPS2MemCard::vf19_23ff38,save,checked
+0x23ff68,8,cPS2MemCard::vf42_23ff68,save,checked
+0x23ff70,44,cPS2MemCard::vf43_23ff70,save,checked
+0x23ffa0,8,cPS2MemCard::vf21_23ffa0,save,checked
+0x23ffb0,28,MemCard_GetCurrentSlotError,save,checked
+0x23ffd0,8,cPS2MemCard::vf58_23ffd0,save,checked
+0x23ffd8,8,cPS2MemCard::vf57_23ffd8,save,checked
 0x23ffe0,244,cPS2MemCard::vf53_23ffe0,save,not started
-0x23fff0,28,cPS2MemCard::vf52_23fff0,save,not started
-0x240010,44,cPS2MemCard::vf46_240010,save,not started
-0x240040,44,cPS2MemCard::vf45_240040,save,not started
-0x240070,44,cPS2MemCard::vf41_240070,save,not started
-0x2400a0,8,cPS2MemCard::vf3_2400a0,save,not started
+0x23fff0,28,cPS2MemCard::vf52_23fff0,save,checked
+0x240010,44,cPS2MemCard::vf46_240010,save,checked
+0x240040,44,cPS2MemCard::vf45_240040,save,checked
+0x240070,44,cPS2MemCard::vf41_240070,save,checked
+0x2400a0,8,cPS2MemCard::vf3_2400a0,save,checked
 0x2400a8,80,cPS2MemCard::__tf,runtime,host
-0x2400f8,36,cMemCard::~cMemCard,save,not started
+0x2400f8,36,cMemCard::~cMemCard,save,checked
 0x240120,64,cMemCard::__tf,runtime,host
 0x2401a0,16,Rand_Init,common,checked
 0x2401b0,20,Rand_SaveSnapshot,common,checked

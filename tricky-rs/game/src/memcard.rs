@@ -1,0 +1,554 @@
+//! The PS2 memory card driver `cPS2MemCard` (0x23d908..0x2400f8), part 1 (board row E12f1): its constructor,
+//! reset, destructor and small virtuals and helpers on the game's bytes. Not here yet: `MemCard_Process` 0x23e0d0
+//! (the state machine the starters hand a state to), vf2 0x23edc8, vf13 0x23fb60, vf53 0x23ffe0,
+//! `MemCard_CheckRoomForFiles` 0x23fcb8 and the SJIS converters.
+//!
+//! The driver (`c` below): +0 its table, +4 the state, +0xc, +0x10 the port, +0x14 the files' count (4), +0x18,
+//! +0x1c the file picked, +0x20 / +0x2c the buffer and size handed to a save or load, +0x24, +0x30 a buffer,
+//! +0x34..+0x4c flags; +0x71, +0xb1, +0xf1, +0x131 strings of 0x40 (the name, the directory, the path, the
+//! game's directory); the two ports' words from +0x174 (0x14 a port: +0x174, +0x178 the status, +0x17c the
+//! result, +0x180 formatted, +0x184 changed); the files from +0x19c (0x70 a file: +0x19c, +0x1a0 flags, +0x1a4,
+//! +0x1a8 the name); +0x380 a directory entry, +0x3c0 the directory read, +0x4c0 a name. The `sceMc*` calls,
+//! `MemCard_Process` and the text calls go through [`FeEnv`]; `memset`, `strcpy` and `strlen` (library functions
+//! the app hosts) are done here.
+
+use crate::fe3dstate::FeEnv;
+use crate::pf::Mem;
+
+pub const VT: u32 = 0x3a4598;
+pub const MEMCARD_VT: u32 = 0x3a47f0;
+/// The last `sceMc*` result and the info words `sceMcGetInfo` fills
+pub const RESULT: u32 = 0x345f54;
+pub const INFO_TYPE: u32 = 0x345f4c;
+pub const INFO_FREE: u32 = 0x345f50;
+pub const INFO_FORMAT: u32 = 0x345f58;
+/// The path patterns: "%s/%s" style (0x3a42a0) and the directory's (0x3a42a8)
+pub const PATH_FMT: u32 = 0x3a42a0;
+pub const DIR_FMT: u32 = 0x3a42a8;
+
+pub const PROCESS: u32 = 0x23e0d0;
+pub const MC_GET_DIR: u32 = 0x2f1d88;
+pub const MC_FORMAT: u32 = 0x2f20b8;
+pub const MC_GET_INFO: u32 = 0x2f1c00;
+pub const MC_SYNC: u32 = 0x2f1ac8;
+pub const SPRINTF: u32 = 0x2fca28;
+pub const LOC_STRING: u32 = 0x2c5160;
+pub const WSTR_COPY: u32 = 0x17cc80;
+pub const WSTR_FORMAT: u32 = 0x17ce38;
+pub const WSTR_TO_ASCII: u32 = 0x17ccf8;
+pub const EA_FREE: u32 = 0x2ccfc0;
+pub const MEM_DELETE: u32 = 0x114f80;
+pub const APP: u32 = 0x337c58;
+
+fn port(c: u32, i: u32) -> u32 {
+    c.wrapping_add(i.wrapping_mul(0x14))
+}
+fn file(c: u32, i: u32) -> u32 {
+    c.wrapping_add(i.wrapping_mul(0x70))
+}
+fn memset(m: &mut Mem, at: u32, n: u32) {
+    for k in 0..n {
+        m.w8(at + k, 0);
+    }
+}
+fn strcpy(m: &mut Mem, dst: u32, src: u32) {
+    let mut k = 0;
+    loop {
+        let b = m.r8(src + k);
+        m.w8(dst + k, b);
+        if b == 0 {
+            break;
+        }
+        k += 1;
+    }
+}
+fn strlen(m: &Mem, s: u32) -> u32 {
+    (0..).find(|&k| m.r8(s + k) == 0).unwrap()
+}
+fn process(m: &mut Mem, e: &mut dyn FeEnv, c: u32, state: u32) {
+    e.call(m, PROCESS, &[c, state]);
+}
+/// A virtual of the driver: the adjust halfword at `off` of its table, the function at `off + 4`
+fn vcall(m: &mut Mem, e: &mut dyn FeEnv, c: u32, off: u32, args: &[u32]) -> u32 {
+    let vt = m.r32(c);
+    let me = c.wrapping_add(m.r16(vt + off) as i16 as u32);
+    let mut a = vec![me];
+    a.extend_from_slice(args);
+    e.call(m, m.r32(vt + off + 4), &a)
+}
+fn loc(m: &mut Mem, e: &mut dyn FeEnv, id: u32) -> u32 {
+    let l = m.r32(m.r32(APP) + 0x50);
+    e.call(m, LOC_STRING, &[l, id])
+}
+/// The directory and path of the picked file: its name to +0xb1, then `sprintf(+0xf1, PATH_FMT, +0xb1, +0xb1)`
+fn path_of_name(m: &mut Mem, e: &mut dyn FeEnv, c: u32, name: u32) {
+    strcpy(m, c + 0xb1, name);
+    e.call(m, SPRINTF, &[c + 0xf1, PATH_FMT, c + 0xb1, c + 0xb1]);
+}
+
+/// `cPS2MemCard::cPS2MemCard` 0x23d908(c): the table, then [`reset`]; `c`
+pub fn construct(m: &mut Mem, c: u32) -> u32 {
+    m.w32(c, VT);
+    reset(m, c);
+    c
+}
+
+/// `cPS2MemCard::vf1` 0x23d998(c): every field to its start: +0xc 0x16, the port 0, the shared result and info
+/// words 0, the flags 0, +0x38 / +0x18 / +0x1c -1, the files' count 4, the strings, both ports' words, the files,
+/// the directory and the name cleared
+pub fn reset(m: &mut Mem, c: u32) {
+    m.w32(c + 0xc, 0x16);
+    m.w32(c + 0x10, 0);
+    m.w32(INFO_TYPE, 0);
+    m.w32(RESULT, 0);
+    m.w32(INFO_FREE, 0);
+    for at in [4, 0x3c, 0x4c, 0x20, 0x24, 0x2c, 0x30, 0x34, 0x40, 0x44] {
+        m.w32(c + at, 0);
+    }
+    m.w32(c + 0x38, u32::MAX);
+    m.w32(c + 0x14, 4);
+    m.w32(c + 0x18, u32::MAX);
+    m.w32(c + 0x1c, u32::MAX);
+    for at in [0xb1, 0xf1, 0x71, 0x131] {
+        memset(m, c + at, 0x40);
+    }
+    for i in 0..2 {
+        for at in [0x174, 0x178, 0x17c, 0x180, 0x184] {
+            m.w32(port(c, i) + at, 0);
+        }
+    }
+    memset(m, c + 0x380, 0x40);
+    memset(m, c + 0x19c, 0x1c0);
+    memset(m, c + 0x3c0, 0x100);
+    memset(m, c + 0x4c0, 0x20);
+}
+
+/// `cPS2MemCard::~cPS2MemCard` 0x23d940(c, how): the table back, the card closed ([`close`]), its buffer (+0x30)
+/// freed if any, then `cMemCard::~cMemCard` 0x2400f8 (its table 0x3a47f0; deleted when `how` has bit 0)
+pub fn destruct(m: &mut Mem, e: &mut dyn FeEnv, c: u32, how: u32) {
+    m.w32(c, VT);
+    close(m, e, c);
+    let buf = m.r32(c + 0x30);
+    if buf != 0 {
+        e.call(m, EA_FREE, &[buf]);
+    }
+    memcard_destruct(m, e, c, how);
+}
+
+/// `cMemCard::~cMemCard` 0x2400f8(c, how)
+pub fn memcard_destruct(m: &mut Mem, e: &mut dyn FeEnv, c: u32, how: u32) {
+    m.w32(c, MEMCARD_VT);
+    if how & 1 != 0 {
+        e.call(m, MEM_DELETE, &[c]);
+    }
+}
+
+/// `cPS2MemCard::vf5` 0x23db10(c, name): the game's directory name to +0x131, state 5
+pub fn set_dir(m: &mut Mem, e: &mut dyn FeEnv, c: u32, name: u32) {
+    strcpy(m, c + 0x131, name);
+    process(m, e, c, 5);
+}
+
+/// `MemCard_ReadDir` 0x23db40(c): the directory (+0x3c0) cleared and read (`sceMcGetDir(port, 0, +0x131, 0, 4,
+/// +0x3c0)`), the result kept; state 1 on an error, else 6
+pub fn read_dir(m: &mut Mem, e: &mut dyn FeEnv, c: u32) {
+    memset(m, c + 0x3c0, 0x100);
+    let r = e.call(m, MC_GET_DIR, &[m.r32(c + 0x10), 0, c + 0x131, 0, 4, c + 0x3c0]);
+    m.w32(RESULT, r);
+    process(m, e, c, if (r as i32) < 0 { 1 } else { 6 });
+}
+
+/// `cPS2MemCard::vf12` 0x23dbc8(c): how many of the files (+0x14, read again each time) have a name
+pub fn named_files(m: &mut Mem, c: u32) -> u32 {
+    let mut n = 0;
+    let mut i = 0;
+    if (m.r32(c + 0x14) as i32) > 0 {
+        loop {
+            let l = strlen(m, file(c, i) + 0x1a8);
+            i += 1;
+            if l != 0 {
+                n += 1;
+            }
+            if (i as i32) >= (m.r32(c + 0x14) as i32) {
+                break;
+            }
+        }
+    }
+    n
+}
+
+/// `cPS2MemCard::vf61` 0x23dc40(c, i): file `i` picked, state 0x22
+pub fn pick_22(m: &mut Mem, e: &mut dyn FeEnv, c: u32, i: u32) {
+    m.w32(c + 0x1c, i);
+    process(m, e, c, 0x22);
+}
+
+/// 0x23dc50(c) (no function in the index): the picked file's path built and its entry read (`sceMcGetDir(port, 0,
+/// +0xf1, 0, 1, +0x380)`); state 1 on an error, else 0x23
+pub fn stat_picked(m: &mut Mem, e: &mut dyn FeEnv, c: u32) {
+    let name = file(c, m.r32(c + 0x1c)) + 0x1a8;
+    path_of_name(m, e, c, name);
+    let r = e.call(m, MC_GET_DIR, &[m.r32(c + 0x10), 0, c + 0xf1, 0, 1, c + 0x380]);
+    m.w32(RESULT, r);
+    process(m, e, c, if (r as i32) < 0 { 1 } else { 0x23 });
+}
+
+/// `cPS2MemCard::vf7` 0x23dd10(c): state 0x11
+pub fn state_11(m: &mut Mem, e: &mut dyn FeEnv, c: u32) {
+    process(m, e, c, 0x11);
+}
+
+/// 0x23dd18(c) (no function in the index): `sceMcFormat(port, 0)`; state 1 on an error, else 0x12
+pub fn format(m: &mut Mem, e: &mut dyn FeEnv, c: u32) {
+    let r = e.call(m, MC_FORMAT, &[m.r32(c + 0x10), 0]);
+    m.w32(RESULT, r);
+    process(m, e, c, if (r as i32) < 0 { 1 } else { 0x12 });
+}
+
+/// `cPS2MemCard::vf9` 0x23dd70(c, i): file `i` picked, state 0x13
+pub fn pick_13(m: &mut Mem, e: &mut dyn FeEnv, c: u32, i: u32) {
+    m.w32(c + 0x1c, i);
+    process(m, e, c, 0x13);
+}
+
+/// `cPS2MemCard::vf14` 0x23dd80(c): the directory entry's word +0x10 (+0x390)
+pub fn entry_word(m: &Mem, c: u32) -> u32 {
+    m.r32(c + 0x390)
+}
+
+/// `cPS2MemCard::vf15` 0x23dd88(c, v): +0x24 = v
+pub fn set_24(m: &mut Mem, c: u32, v: u32) {
+    m.w32(c + 0x24, v);
+}
+
+/// `MemCard_BuildSavePath` 0x23dd90(c): the picked file's path, state 0x36
+pub fn build_save_path(m: &mut Mem, e: &mut dyn FeEnv, c: u32) {
+    let name = file(c, m.r32(c + 0x1c)) + 0x1a8;
+    path_of_name(m, e, c, name);
+    process(m, e, c, 0x36);
+}
+
+/// `cPS2MemCard::vf4` 0x23ddf8(c, port): the port, state 3
+pub fn set_port(m: &mut Mem, e: &mut dyn FeEnv, c: u32, p: u32) {
+    m.w32(c + 0x10, p);
+    process(m, e, c, 3);
+}
+
+/// `cPS2MemCard::vf39` 0x23de08(c): the port's changed flag cleared, its result -1 made 0
+pub fn clear_changed(m: &mut Mem, c: u32) {
+    m.w32(port(c, m.r32(c + 0x10)) + 0x184, 0);
+    let at = port(c, m.r32(c + 0x10)) + 0x17c;
+    if m.r32(at) == u32::MAX {
+        m.w32(at, 0);
+    }
+}
+
+/// `cPS2MemCard::vf27` 0x23de48(c, name): the name to +0xb1, `sprintf(+0xf1, DIR_FMT, +0xb1)`, state 0x14
+pub fn open_dir(m: &mut Mem, e: &mut dyn FeEnv, c: u32, name: u32) {
+    strcpy(m, c + 0xb1, name);
+    e.call(m, SPRINTF, &[c + 0xf1, DIR_FMT, c + 0xb1]);
+    process(m, e, c, 0x14);
+}
+
+/// `cPS2MemCard::BeginSave` 0x23dea8(c, name, size, buf): the path, size +0x2c, buffer +0x20, state 0x15
+pub fn begin_save(m: &mut Mem, e: &mut dyn FeEnv, c: u32, name: u32, size: u32, buf: u32) {
+    path_of_name(m, e, c, name);
+    m.w32(c + 0x2c, size);
+    m.w32(c + 0x20, buf);
+    process(m, e, c, 0x15);
+}
+
+/// 0x23ecf0(c, i, dst) (no function in the index): file `i`'s name copied to `dst`
+pub fn copy_name(m: &mut Mem, c: u32, i: u32, dst: u32) {
+    strcpy(m, dst, file(c, i) + 0x1a8);
+}
+
+/// `cPS2MemCard::BeginSaveSlot` 0x23df20(c, i, size, buf): file `i`'s name (on the stack, `sp` the stack pointer
+/// on entry) handed to the driver's own vf at +0xf0 (`BeginSave`)
+pub fn begin_save_slot(m: &mut Mem, e: &mut dyn FeEnv, c: u32, i: u32, size: u32, buf: u32, sp: u32) {
+    let name = sp - 0x80;
+    copy_name(m, c, i, name);
+    vcall(m, e, c, 0xf0, &[name, size, buf]);
+}
+
+/// `cPS2MemCard::SaveMore` 0x23df80(c, size, buf): state 0x17
+pub fn save_more(m: &mut Mem, e: &mut dyn FeEnv, c: u32, size: u32, buf: u32) {
+    m.w32(c + 0x2c, size);
+    m.w32(c + 0x20, buf);
+    process(m, e, c, 0x17);
+}
+
+/// `cPS2MemCard::vf34` 0x23df98(c): the state is 0x34 (saving)
+pub fn saving(m: &Mem, c: u32) -> u32 {
+    (m.r32(c + 4) == 0x34) as u32
+}
+
+/// `cPS2MemCard::vf36` 0x23dfa8(c): +0x44 = 1
+pub fn flag_44(m: &mut Mem, c: u32) {
+    m.w32(c + 0x44, 1);
+}
+
+/// `cPS2MemCard::EndSave` 0x23dfb8(c): state 0x18
+pub fn end_save(m: &mut Mem, e: &mut dyn FeEnv, c: u32) {
+    process(m, e, c, 0x18);
+}
+
+/// 0x23dfc0(c, name, size, buf) (no function in the index; the load's `BeginSave`): state 0x1b
+pub fn begin_load(m: &mut Mem, e: &mut dyn FeEnv, c: u32, name: u32, size: u32, buf: u32) {
+    path_of_name(m, e, c, name);
+    m.w32(c + 0x2c, size);
+    m.w32(c + 0x20, buf);
+    process(m, e, c, 0x1b);
+}
+
+/// `cPS2MemCard::BeginLoadSlot` 0x23e038(c, i, size, buf): file `i`'s name (on the stack) to [`begin_load`]
+pub fn begin_load_slot(m: &mut Mem, e: &mut dyn FeEnv, c: u32, i: u32, size: u32, buf: u32, sp: u32) {
+    let name = sp - 0x80;
+    copy_name(m, c, i, name);
+    begin_load(m, e, c, name, size, buf);
+}
+
+/// `cPS2MemCard::LoadMore` 0x23e090(c, size, buf): state 0x1d
+pub fn load_more(m: &mut Mem, e: &mut dyn FeEnv, c: u32, size: u32, buf: u32) {
+    m.w32(c + 0x2c, size);
+    m.w32(c + 0x20, buf);
+    process(m, e, c, 0x1d);
+}
+
+/// `cPS2MemCard::vf24` 0x23e0a8(c): the state is 0x35 (loading)
+pub fn loading(m: &Mem, c: u32) -> u32 {
+    (m.r32(c + 4) == 0x35) as u32
+}
+
+/// `cPS2MemCard::vf26` 0x23e0b8(c): +0x40 = 1
+pub fn flag_40(m: &mut Mem, c: u32) {
+    m.w32(c + 0x40, 1);
+}
+
+/// `cPS2MemCard::EndLoad` 0x23e0c8(c): state 0x1e
+pub fn end_load(m: &mut Mem, e: &mut dyn FeEnv, c: u32) {
+    process(m, e, c, 0x1e);
+}
+
+/// `MemCard_StartGetInfo` 0x23e928(c): the info words and +0x20 cleared, `sceMcGetInfo(port, 0, type, free,
+/// format)` started; +0x3c whether it was (answer 0)
+pub fn start_get_info(m: &mut Mem, e: &mut dyn FeEnv, c: u32) {
+    m.w32(INFO_TYPE, 0);
+    m.w32(c + 0x20, 0);
+    m.w32(INFO_FORMAT, 0);
+    m.w32(INFO_FREE, 0);
+    let r = e.call(m, MC_GET_INFO, &[m.r32(c + 0x10), 0, INFO_TYPE, INFO_FREE, INFO_FORMAT]);
+    m.w32(c + 0x3c, (r == 0) as u32);
+}
+
+/// `cPS2MemCard::vf10` 0x23e988(c): busy (a state, or the info pending)
+pub fn busy(m: &Mem, c: u32) -> u32 {
+    (m.r32(c + 4) != 0 || m.r32(c + 0x3c) != 0) as u32
+}
+
+/// `cPS2MemCard::vf8` 0x23e9b0(c): the current port's result is one of -1, -3, -8..-10, -10001, -10002
+pub fn result_is_card_error(m: &Mem, c: u32) -> u32 {
+    let s = m.r32(port(c, m.r32(c + 0x10)) + 0x17c) as i32;
+    let yes = if s < -7 {
+        if s < -10 {
+            (-10002..=-10001).contains(&s)
+        } else {
+            true
+        }
+    } else {
+        s == -3 || s == -1
+    };
+    yes as u32
+}
+
+/// `MemCard_GetSlotError` 0x23ea18(c, i): port `i`'s result when it is an error the game names (≤ 0 above -8, or
+/// -10001 / -10002), else -10
+pub fn slot_error(m: &Mem, c: u32, i: u32) -> u32 {
+    let s = m.r32(port(c, i) + 0x17c) as i32;
+    let keep = if s < -7 { (-10002..=-10001).contains(&s) } else { s <= 0 };
+    if keep {
+        s as u32
+    } else {
+        -10i32 as u32
+    }
+}
+
+/// `cPS2MemCard::vf60` 0x23ea78(c): the current port has an error
+pub fn has_error(m: &Mem, c: u32) -> u32 {
+    (slot_error(m, c, m.r32(c + 0x10)) != 0) as u32
+}
+
+/// `MemCard_ClearCurrentSlotStatus` 0x23ea98(c): the current port's +0x174 and status cleared
+pub fn clear_current_status(m: &mut Mem, c: u32) {
+    m.w32(port(c, m.r32(c + 0x10)) + 0x174, 0);
+    m.w32(port(c, m.r32(c + 0x10)) + 0x178, 0);
+}
+
+/// `MemCard_ResetState` 0x23eac0(c): +0x4c, the entry, the files and the directory cleared, then the name
+/// ([`clear_name`])
+pub fn reset_state(m: &mut Mem, c: u32) {
+    m.w32(c + 0x4c, 0);
+    memset(m, c + 0x380, 0x40);
+    memset(m, c + 0x19c, 0x1c0);
+    memset(m, c + 0x3c0, 0x100);
+    clear_name(m, c);
+}
+
+/// `MemCard_ClearName` 0x23eb18(c): the entry at +0x380 cleared
+pub fn clear_name(m: &mut Mem, c: u32) {
+    memset(m, c + 0x380, 0x40);
+}
+
+/// `cPS2MemCard::vf40` 0x23eb28(c, i): port `i`'s result is -10002
+pub fn no_card(m: &Mem, c: u32, i: u32) -> u32 {
+    (m.r32(port(c, i) + 0x17c) as i32 == -10002) as u32
+}
+
+/// `MemCard_GetSlotStatus` 0x23eb48(c, i): port `i`'s status
+pub fn slot_status(m: &Mem, c: u32, i: u32) -> u32 {
+    m.r32(port(c, i) + 0x178)
+}
+
+/// `cPS2MemCard::vf16` 0x23eb60(c): the current port's status
+pub fn current_status(m: &Mem, c: u32) -> u32 {
+    slot_status(m, c, m.r32(c + 0x10))
+}
+
+/// `cPS2MemCard::vf44` 0x23eb80(c, i): port `i`'s result is -7, -10001 or 0..-5
+pub fn usable(m: &Mem, c: u32, i: u32) -> u32 {
+    let s = m.r32(port(c, i) + 0x17c) as i32;
+    (s == -7 || s == -10001 || (-5..=0).contains(&s)) as u32
+}
+
+/// `cPS2MemCard::vf47` 0x23ebd8(c, i): port `i` is formatted (+0x180)
+pub fn formatted(m: &Mem, c: u32, i: u32) -> u32 {
+    (m.r32(port(c, i) + 0x180) != 0) as u32
+}
+
+/// 0x23ebf0(c, i) (no function in the index): port `i` changed (+0x184)
+pub fn changed(m: &Mem, c: u32, i: u32) -> u32 {
+    (m.r32(port(c, i) + 0x184) != 0) as u32
+}
+
+/// 0x23ec08(c, i, out) (no function in the index): port `i`'s line: unformatted or result -2 the string 0x1d0,
+/// result 0 the string 0x138 with the status (negative as 0), else an empty string
+pub fn slot_text(m: &mut Mem, e: &mut dyn FeEnv, c: u32, i: u32, out: u32) {
+    let p = port(c, i);
+    let unformatted = m.r32(p + 0x180) == 0;
+    let s = m.r32(p + 0x17c) as i32;
+    if unformatted || s == -2 {
+        let t = loc(m, e, 0x1d0);
+        e.call(m, WSTR_COPY, &[out, t]);
+    } else if s == 0 {
+        let n = slot_status(m, c, i) as i32;
+        let n = if n > -1 { n } else { 0 };
+        let t = loc(m, e, 0x138);
+        e.call(m, WSTR_FORMAT, &[out, t, n as u32]);
+    } else {
+        m.w16(out, 0);
+    }
+}
+
+/// `cPS2MemCard::vf37` 0x23ed08(c, ?): `WStr_ToAscii(c + 0x50, ..)` (the rest of the arguments passed on)
+pub fn vf37(m: &mut Mem, e: &mut dyn FeEnv, c: u32, a1: u32, a2: u32) -> u32 {
+    e.call(m, WSTR_TO_ASCII, &[c + 0x50, a1, a2])
+}
+
+/// `cPS2MemCard::vf56` 0x23ed18(c, i): file `i` has a name
+pub fn has_name(m: &Mem, c: u32, i: u32) -> u32 {
+    (strlen(m, file(c, i) + 0x1a8) != 0) as u32
+}
+
+/// `MemCard_FlagSlot` 0x23ed48(c, i), `MemCard_MarkSlotDirty` 0x23ed60(c, i): file `i`'s +0x19c / +0x1a0 = 1
+pub fn flag_file(m: &mut Mem, c: u32, i: u32, at: u32) {
+    m.w32(file(c, i) + at, 1);
+}
+
+/// `cPS2MemCard::vf54` 0x23ed78(c, i): file `i` has either flag
+pub fn file_flagged(m: &Mem, c: u32, i: u32) -> u32 {
+    let f = file(c, i);
+    (m.r32(f + 0x1a0) != 0 || m.r32(f + 0x19c) != 0) as u32
+}
+
+/// `cPS2MemCard::vf55` 0x23edb0(c, i): file `i`'s +0x1a4 set
+pub fn file_1a4(m: &Mem, c: u32, i: u32) -> u32 {
+    (m.r32(file(c, i) + 0x1a4) != 0) as u32
+}
+
+/// `cPS2MemCard::vf11` 0x23fda8(c): a pending info waited for (`sceMcSync(0, 0, &result)`: -1 marks the port
+/// changed); then the port 0, port 0's words cleared and [`reset_state`]
+pub fn close(m: &mut Mem, e: &mut dyn FeEnv, c: u32) {
+    if m.r32(c + 0x3c) != 0 {
+        m.w32(RESULT, 0);
+        e.call(m, MC_SYNC, &[0, 0, RESULT]);
+        if m.r32(RESULT) == u32::MAX {
+            m.w32(port(c, m.r32(c + 0x10)) + 0x184, 1);
+        }
+    }
+    m.w32(c + 0x3c, 0);
+    m.w32(c + 0x10, 0);
+    for at in [0x174, 0x178, 0x17c, 0x180] {
+        m.w32(c + at, 0);
+    }
+    reset_state(m, c);
+}
+
+/// `MemCard_IsErrorCode` 0x23fe38(_, r): -9999 ≤ r ≤ -10
+pub fn is_error_code(r: u32) -> u32 {
+    (r.wrapping_add(0x270f) < 0x2706) as u32
+}
+
+/// `cPS2MemCard::vf59` 0x23fe48(c, n, out): for n 0 or 1 the string 0xeb1 copied to `out`
+pub fn vf59(m: &mut Mem, e: &mut dyn FeEnv, _c: u32, n: u32, out: u32) {
+    if (n as i32) < 2 && (n as i32) >= 0 {
+        let t = loc(m, e, 0xeb1);
+        e.call(m, WSTR_COPY, &[out, t]);
+    }
+}
+
+/// `cPS2MemCard::vf32` 0x23fea8(c, name, keep): unless `keep`, the name to +0x4c0
+pub fn set_name(m: &mut Mem, c: u32, name: u32, keep: u32) {
+    if keep == 0 {
+        strcpy(m, c + 0x4c0, name);
+    }
+}
+
+/// `cPS2MemCard::vf18` 0x23ff18(c, bytes): the card blocks a save of `bytes` takes: KB rounded up, + 0x83
+pub fn blocks_for(bytes: u32) -> u32 {
+    let n = bytes as i32;
+    let v = n.wrapping_add(0x3ff);
+    let a = if -1 < v { v } else { n.wrapping_add(0x7fe) };
+    ((a >> 10) + 0x83) as u32
+}
+
+/// The virtual forwards on the current port (c, then +0x10): vf51 0x23fed8 → vf at +0x198, vf43 0x23ff70 → +0x158,
+/// vf46 0x240010 → +0x180, vf45 0x240040 → +0x168, vf41 0x240070 → +0x148; vf19 0x23ff38 passes +0x24 to +0x98
+pub fn forward(m: &mut Mem, e: &mut dyn FeEnv, c: u32, off: u32, field: u32) -> u32 {
+    let v = m.r32(c + field);
+    vcall(m, e, c, off, &[v])
+}
+
+/// The constant and field answers: vf48 0x23fec0 / vf49 0x23fec8 / vf50 0x23fed0 1, vf20 0x23ff08 0x4000, vf17
+/// 0x23ff10 and vf21 0x23ffa0 -1, vf42 0x23ff68 0, vf58 0x23ffd0 2; vf57 0x23ffd8 the files' count, vf3 0x2400a0
+/// the port, 0x23ffa8 the state; vf6 0x23db08, vf28 0x23de98, vf30 0x23dea0, vf38 0x23ed10 nothing
+pub fn constant(m: &Mem, c: u32, func: u32) -> Option<u32> {
+    Some(match func {
+        0x23fec0 | 0x23fec8 | 0x23fed0 => 1,
+        0x23ff08 => 0x4000,
+        0x23ff10 | 0x23ffa0 => u32::MAX,
+        0x23ff68 => 0,
+        0x23ffd0 => 2,
+        0x23ffd8 => m.r32(c + 0x14),
+        0x2400a0 => m.r32(c + 0x10),
+        0x23ffa8 => m.r32(c + 4),
+        _ => return None,
+    })
+}
+
+/// `MemCard_GetCurrentSlotError` 0x23ffb0(c), `cPS2MemCard::vf52` 0x23fff0(c): the current port's error, changed
+pub fn current_error(m: &Mem, c: u32) -> u32 {
+    slot_error(m, c, m.r32(c + 0x10))
+}
+pub fn current_changed(m: &Mem, c: u32) -> u32 {
+    changed(m, c, m.r32(c + 0x10))
+}

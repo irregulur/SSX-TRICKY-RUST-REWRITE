@@ -942,3 +942,17 @@ by what each does, not by any name in the binary. Globals: 0x35caec picture_stru
   with 0xb at 0x4040a0; answers 1 on success. 0x35aea4 is 1 while it runs, which keeps the handler from calling the
   callback. The two names were swapped: 0x2e87c8 has the SDK function's signature and behaviour (both in
   `ghidra/renamed.txt`).
+
+## The PS2 memory card driver, part 1 (row E12f1, proven)
+
+`tricky_game::memcard`: `cPS2MemCard` (table 0x3a4598; base `cMemCard` 0x3a47f0) on the game's bytes, 80
+functions checked in the runner (`tests/memcard.rs`, 12,000 cases; 24 of 25 mutants, the one left equivalent).
+The starters only set fields and hand `MemCard_Process` 0x23e0d0 a state: 3 port set, 5 directory named, 6
+directory read, 0x11, 0x12 formatted, 0x13 / 0x22 file picked, 0x14 directory opened, 0x15 save begun, 0x17 save
+more, 0x18 save ended, 0x1b load begun, 0x1d load more, 0x1e load ended, 0x23 entry read, 0x36 save path; 1 after
+any `sceMc*` error (the result kept in 0x345f54). Layout in the module's doc. The ports' results the game names:
+-1, -3, -8..-10 and -10001/-10002 (vf8); `MemCard_GetSlotError` keeps ≤ 0 above -8 and -10001/-10002, else -10.
+A save of n bytes takes `ceil(n/1024) + 0x83` blocks (vf18). Five starters and helpers have no function in the
+index (0x23dc50 entry read, 0x23dd18 `sceMcFormat`, 0x23dfc0 load begin, 0x23ebf0 port changed, 0x23ec08 the
+port's line, 0x23ecf0 a file's name copied); ported and checked with the rest. Not yet: `MemCard_Process`, vf2
+0x23edc8, vf13 0x23fb60, vf53 0x23ffe0, `MemCard_CheckRoomForFiles` 0x23fcb8, the SJIS converters (row E12f2).

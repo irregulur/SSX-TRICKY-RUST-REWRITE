@@ -1,0 +1,378 @@
+//! `tricky_game::memcard` (board row E12f1) against the original in the function runner (TRICKY_ELF; skipped
+//! without it). Each case builds a driver in an arena (random words, NUL-ended strings in its string fields and
+//! file names, port results from the values the game tests for), runs one of the row's functions on both sides
+//! from the same stack pointer, and compares the calls, the answers and the memory (the stack aside). The `sceMc*`
+//! calls, `MemCard_Process`, `sprintf`, the text calls, the frees and the driver's own virtuals are stand-ins that
+//! log their arguments (and the strings they are handed) and answer from the case's seed; `sceMcSync` writes its
+//! answer to the result word. `memset`, `strcpy` and `strlen` are the game's own.
+
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
+
+use r5900::Runner;
+use tricky_game::fe3dstate::FeEnv;
+use tricky_game::memcard as mc;
+use tricky_game::pf::Mem;
+
+struct Rng(u64);
+impl Rng {
+    fn next(&mut self) -> u32 {
+        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        (z ^ (z >> 31)) as u32
+    }
+    fn below(&mut self, n: u32) -> u32 {
+        self.next() % n
+    }
+    fn pick<T: Copy>(&mut self, v: &[T]) -> T {
+        v[self.below(v.len() as u32) as usize]
+    }
+}
+
+const APPDATA: (u32, u32) = (0x337000, 0x1000);
+const GLOBALS: (u32, u32) = (0x345000, 0x1000);
+const RODATA: (u32, u32) = (0x3a4000, 0x1000);
+const ARENA: u32 = 0x0100_0000;
+const SIZE: u32 = 0x1000;
+const STACK: (u32, u32) = (0x01fe_0000, 0x1_0000);
+const TOP: u32 = 0x01ff_0000;
+const C: u32 = ARENA + 0x100;
+const VT: u32 = ARENA + 0x800;
+const APPOBJ: u32 = ARENA + 0xc00;
+const STRS: u32 = ARENA + 0xd00;
+const OUT: u32 = ARENA + 0xe00;
+fn vf(off: u32) -> u32 {
+    0x01f0_0000 + off
+}
+const VOFFS: [u32; 7] = [0x98, 0xf0, 0x148, 0x158, 0x168, 0x180, 0x198];
+const RESULTS: [i32; 17] = [0, -1, -2, -3, -5, -6, -7, -8, -10, -11, -9999, -10000, -10001, -10002, -10003, 1, 5];
+
+const FUNCS: [u32; 67] = [
+    0x23d908, 0x23d940, 0x23d998, 0x23db08, 0x23db10, 0x23db40, 0x23dbc8, 0x23dc40, 0x23dc50, 0x23dd10, 0x23dd18,
+    0x23dd70, 0x23dd80, 0x23dd88, 0x23dd90, 0x23ddf8, 0x23de08, 0x23de48, 0x23de98, 0x23dea0, 0x23dea8, 0x23df20,
+    0x23df80, 0x23df98, 0x23dfa8, 0x23dfb8, 0x23dfc0, 0x23e038, 0x23e090, 0x23e0a8, 0x23e0b8, 0x23e0c8, 0x23e928,
+    0x23e988, 0x23e9b0, 0x23ea18, 0x23ea78, 0x23ea98, 0x23eac0, 0x23eb18, 0x23eb28, 0x23eb48, 0x23eb60, 0x23eb80,
+    0x23ebd8, 0x23ebf0, 0x23ec08, 0x23ecf0, 0x23ed08, 0x23ed10, 0x23ed18, 0x23ed48, 0x23ed60, 0x23ed78, 0x23edb0,
+    0x23fda8, 0x23fe38, 0x23fe48, 0x23fea8, 0x23ff18, 0x23fed8, 0x23ff38, 0x23ff70, 0x240010, 0x240040, 0x240070,
+    0x2400f8,
+];
+/// The constant and field answers (`memcard::constant`)
+const CONSTS: [u32; 11] =
+    [0x23fec0, 0x23fec8, 0x23fed0, 0x23ff08, 0x23ff10, 0x23ffa0, 0x23ff68, 0x23ffd0, 0x23ffd8, 0x2400a0, 0x23ffa8];
+/// Answers that read the current port
+const CURRENT: [u32; 2] = [0x23ffb0, 0x23fff0];
+
+#[derive(Clone, Debug, PartialEq)]
+struct Call(u32, Vec<u32>);
+
+trait Io {
+    fn r8(&mut self, a: u32) -> u8;
+    fn w32(&mut self, a: u32, v: u32);
+}
+impl Io for Mem {
+    fn r8(&mut self, a: u32) -> u8 {
+        Mem::r8(self, a)
+    }
+    fn w32(&mut self, a: u32, v: u32) {
+        Mem::w32(self, a, v)
+    }
+}
+impl Io for r5900::Mem {
+    fn r8(&mut self, a: u32) -> u8 {
+        let mut b = [0u8];
+        self.read(a, &mut b).unwrap();
+        b[0]
+    }
+    fn w32(&mut self, a: u32, v: u32) {
+        self.write(a, &v.to_le_bytes()).unwrap()
+    }
+}
+
+struct Answers {
+    seed: Cell<u64>,
+    n: Cell<u64>,
+}
+impl Answers {
+    fn next(&self) -> u32 {
+        self.n.set(self.n.get() + 1);
+        Rng(self.seed.get() ^ self.n.get().wrapping_mul(0x1234_5678_9abc_def1)).next()
+    }
+}
+
+fn arity(func: u32, w: &[u32]) -> usize {
+    match func {
+        mc::MC_GET_DIR => 6,
+        mc::MC_GET_INFO => 5,
+        mc::SPRINTF if w[1] == mc::DIR_FMT => 3,
+        mc::SPRINTF => 4,
+        mc::MC_SYNC | mc::WSTR_FORMAT | mc::WSTR_TO_ASCII => 3,
+        mc::PROCESS | mc::MC_FORMAT | mc::LOC_STRING | mc::WSTR_COPY => 2,
+        f if f == vf(0xf0) => 4,
+        f if f & 0xfff0_0000 == 0x01f0_0000 => 2,
+        _ => 1,
+    }
+}
+
+fn standin(io: &mut dyn Io, func: u32, w: &[u32], ans: &Answers) -> (u32, Call) {
+    let mut log = w[..arity(func, w)].to_vec();
+    // the strings handed over
+    let s = match func {
+        mc::SPRINTF => Some(w[2]),
+        f if f == vf(0xf0) => Some(w[1]),
+        _ => None,
+    };
+    if let Some(s) = s {
+        for k in 0..0x80 {
+            let c = io.r8(s + k);
+            log.push(c as u32);
+            if c == 0 {
+                break;
+            }
+        }
+    }
+    let r = ans.next();
+    let v = match func {
+        mc::MC_GET_DIR | mc::MC_FORMAT => [0, 1, (-1i32) as u32, (-4i32) as u32][(r % 4) as usize],
+        mc::MC_GET_INFO => [0, 0, 1, (-1i32) as u32][(r % 4) as usize],
+        mc::MC_SYNC => {
+            io.w32(w[2], [0, u32::MAX, u32::MAX, 5][(r % 4) as usize]);
+            r
+        }
+        _ => r,
+    };
+    (v, Call(func, log))
+}
+
+struct Env<'a> {
+    log: Vec<Call>,
+    ans: &'a Answers,
+}
+impl FeEnv for Env<'_> {
+    fn call(&mut self, m: &mut Mem, func: u32, args: &[u32]) -> u32 {
+        let mut w = args.to_vec();
+        w.resize(8, 0);
+        let (v, c) = standin(m, func, &w, self.ans);
+        self.log.push(c);
+        v
+    }
+}
+
+fn put_str(m: &mut Mem, at: u32, n: u32, r: u32) {
+    for k in 0..n {
+        m.w8(at + k, b'A' + ((r >> (k % 24)) as u8 + k as u8) % 26);
+    }
+    m.w8(at + n, 0);
+}
+
+#[test]
+fn memory_card_driver_matches_the_original() {
+    let Some(mut r) = Runner::from_env() else { return };
+    for f in FUNCS.iter().chain(&CONSTS).chain(&CURRENT) {
+        r.allow(*f);
+    }
+    for f in [0x2cc808u32, 0x2fd14c, 0x2fd260] {
+        r.allow(f);
+    }
+    let mut stubs = vec![
+        mc::PROCESS, mc::MC_GET_DIR, mc::MC_FORMAT, mc::MC_GET_INFO, mc::MC_SYNC, mc::SPRINTF, mc::LOC_STRING,
+        mc::WSTR_COPY, mc::WSTR_FORMAT, mc::WSTR_TO_ASCII, mc::EA_FREE, mc::MEM_DELETE,
+    ];
+    stubs.extend(VOFFS.map(vf));
+    let log: Rc<RefCell<Vec<Call>>> = Rc::default();
+    let ans = Rc::new(Answers { seed: Cell::new(0), n: Cell::new(0) });
+    for func in stubs {
+        let (l, a) = (log.clone(), ans.clone());
+        r.stub(func, move |c, mem| {
+            let w: Vec<u32> = (4..12).map(|k| c.gpr(k) as u32).collect();
+            let (v, call) = standin(mem, func, &w, &a);
+            l.borrow_mut().push(call);
+            c.set_gpr(2, v as i32 as i64 as u64);
+        });
+    }
+    let read = |r: &mut Runner, (at, n): (u32, u32)| {
+        let mut b = vec![0u8; n as usize];
+        r.mem.read(at, &mut b).unwrap();
+        b
+    };
+    let (appdata, globals, rodata) = (read(&mut r, APPDATA), read(&mut r, GLOBALS), read(&mut r, RODATA));
+    let mut g = Rng(0x3c_a4d0_0000_0001);
+    let all: Vec<u32> = FUNCS.iter().chain(&CONSTS).chain(&CURRENT).copied().collect();
+    let mut processed = 0usize;
+    for case in 0..all.len() as u32 * 150 {
+        let func = all[(case % all.len() as u32) as usize];
+        let mut m = Mem {
+            regions: vec![
+                (APPDATA.0, appdata.clone()),
+                (GLOBALS.0, globals.clone()),
+                (RODATA.0, rodata.clone()),
+                (ARENA, vec![0; SIZE as usize]),
+                (STACK.0, vec![0; STACK.1 as usize]),
+            ],
+        };
+        for k in 0..SIZE / 4 {
+            m.w32(ARENA + 4 * k, g.next());
+        }
+        m.w32(mc::APP, APPOBJ);
+        m.w32(mc::RESULT, g.pick(&[0, u32::MAX, 3]));
+        m.w32(C, VT);
+        for off in VOFFS {
+            m.w16(VT + off, g.pick(&[0u16, 0, 8]));
+            m.w32(VT + off + 4, vf(off));
+        }
+        m.w32(C + 4, g.pick(&[0, 0x34, 0x35, 7]));
+        m.w32(C + 0x10, g.below(2));
+        m.w32(C + 0x14, g.pick(&[4, 4, 0, 2, u32::MAX]));
+        m.w32(C + 0x1c, g.below(4));
+        for at in [0x3c, 0x30, 0x40, 0x44, 0x24] {
+            let v = g.next();
+            m.w32(C + at, g.pick(&[0, 1, v]));
+        }
+        for i in 0..2 {
+            let p = C + 0x14 * i;
+            m.w32(p + 0x17c, g.pick(&RESULTS) as u32);
+            let st = g.next();
+            m.w32(p + 0x178, g.pick(&[0, 3, (-2i32) as u32, st]));
+            for at in [0x180, 0x184] {
+                m.w32(p + at, g.pick(&[0, 1]));
+            }
+        }
+        for at in [0x71u32, 0xb1, 0xf1, 0x131, 0x4c0] {
+            let (n, v) = (g.below(30), g.next());
+            put_str(&mut m, C + at, n, v);
+        }
+        for i in 0..4 {
+            let (n, v) = (g.pick(&[0, 0, 1, 5, 20]), g.next());
+            put_str(&mut m, C + 0x70 * i + 0x1a8, n, v);
+            for at in [0x19c, 0x1a0, 0x1a4] {
+                m.w32(C + 0x70 * i + at, g.pick(&[0, 0, 1]));
+            }
+        }
+        for i in 0..8 {
+            let (n, v) = (g.below(25), g.next());
+            put_str(&mut m, STRS + 0x20 * i, n, v);
+        }
+        let name = STRS + 0x20 * g.below(8);
+        let (a1, a2, a3) = match func {
+            0x23db10 | 0x23de48 | 0x23dea8 | 0x23dfc0 => (name, g.next(), g.next()),
+            0x23fea8 => (name, g.pick(&[0, 0, 1]), 0),
+            0x23df20 | 0x23e038 => (g.below(4), g.next(), g.next()),
+            0x23ecf0 => (g.below(4), OUT, 0),
+            0x23ec08 => (g.below(2), OUT, 0),
+            0x23fe48 => (g.pick(&[0, 1, 2, u32::MAX]), OUT, 0),
+            0x23fe38 => (g.pick(&RESULTS) as u32, 0, 0),
+            0x23ff18 => (g.pick(&[0, 1, 0x3ff, 0x400, 0x401, 0x12345, u32::MAX, 0x8000_0000, 0xffff_fc00]), 0, 0),
+            0x23d940 | 0x2400f8 => (g.below(4), 0, 0),
+            0x23dc40 | 0x23dd70 => (g.below(4), 0, 0),
+            0x23ddf8 => (g.below(2), 0, 0),
+            0x23ea18 | 0x23eb28 | 0x23eb48 | 0x23eb80 | 0x23ebd8 | 0x23ebf0 => (g.below(2), 0, 0),
+            0x23ed18 | 0x23ed48 | 0x23ed60 | 0x23ed78 | 0x23edb0 => (g.below(4), 0, 0),
+            _ => (g.next(), g.next(), g.next()),
+        };
+        let seed = g.next() as u64 | (g.next() as u64) << 32;
+        ans.seed.set(seed);
+        ans.n.set(0);
+        let before = m.regions.clone();
+        let mut env = Env { log: vec![], ans: &ans };
+        let none = 0x5eed_5eed;
+        let (mm, e) = (&mut m, &mut env);
+        let ours = match func {
+            0x23d908 => mc::construct(mm, C),
+            0x23d940 => { mc::destruct(mm, e, C, a1); none }
+            0x23d998 => { mc::reset(mm, C); none }
+            0x23db08 | 0x23de98 | 0x23dea0 | 0x23ed10 => none,
+            0x23db10 => { mc::set_dir(mm, e, C, a1); none }
+            0x23db40 => { mc::read_dir(mm, e, C); none }
+            0x23dbc8 => mc::named_files(mm, C),
+            0x23dc40 => { mc::pick_22(mm, e, C, a1); none }
+            0x23dc50 => { mc::stat_picked(mm, e, C); none }
+            0x23dd10 => { mc::state_11(mm, e, C); none }
+            0x23dd18 => { mc::format(mm, e, C); none }
+            0x23dd70 => { mc::pick_13(mm, e, C, a1); none }
+            0x23dd80 => mc::entry_word(mm, C),
+            0x23dd88 => { mc::set_24(mm, C, a1); none }
+            0x23dd90 => { mc::build_save_path(mm, e, C); none }
+            0x23ddf8 => { mc::set_port(mm, e, C, a1); none }
+            0x23de08 => { mc::clear_changed(mm, C); none }
+            0x23de48 => { mc::open_dir(mm, e, C, a1); none }
+            0x23dea8 => { mc::begin_save(mm, e, C, a1, a2, a3); none }
+            0x23df20 => { mc::begin_save_slot(mm, e, C, a1, a2, a3, TOP); none }
+            0x23df80 => { mc::save_more(mm, e, C, a1, a2); none }
+            0x23df98 => mc::saving(mm, C),
+            0x23dfa8 => { mc::flag_44(mm, C); none }
+            0x23dfb8 => { mc::end_save(mm, e, C); none }
+            0x23dfc0 => { mc::begin_load(mm, e, C, a1, a2, a3); none }
+            0x23e038 => { mc::begin_load_slot(mm, e, C, a1, a2, a3, TOP); none }
+            0x23e090 => { mc::load_more(mm, e, C, a1, a2); none }
+            0x23e0a8 => mc::loading(mm, C),
+            0x23e0b8 => { mc::flag_40(mm, C); none }
+            0x23e0c8 => { mc::end_load(mm, e, C); none }
+            0x23e928 => { mc::start_get_info(mm, e, C); none }
+            0x23e988 => mc::busy(mm, C),
+            0x23e9b0 => mc::result_is_card_error(mm, C),
+            0x23ea18 => mc::slot_error(mm, C, a1),
+            0x23ea78 => mc::has_error(mm, C),
+            0x23ea98 => { mc::clear_current_status(mm, C); none }
+            0x23eac0 => { mc::reset_state(mm, C); none }
+            0x23eb18 => { mc::clear_name(mm, C); none }
+            0x23eb28 => mc::no_card(mm, C, a1),
+            0x23eb48 => mc::slot_status(mm, C, a1),
+            0x23eb60 => mc::current_status(mm, C),
+            0x23eb80 => mc::usable(mm, C, a1),
+            0x23ebd8 => mc::formatted(mm, C, a1),
+            0x23ebf0 => mc::changed(mm, C, a1),
+            0x23ec08 => { mc::slot_text(mm, e, C, a1, a2); none }
+            0x23ecf0 => { mc::copy_name(mm, C, a1, a2); none }
+            0x23ed08 => mc::vf37(mm, e, C, a1, a2),
+            0x23ed18 => mc::has_name(mm, C, a1),
+            0x23ed48 => { mc::flag_file(mm, C, a1, 0x19c); none }
+            0x23ed60 => { mc::flag_file(mm, C, a1, 0x1a0); none }
+            0x23ed78 => mc::file_flagged(mm, C, a1),
+            0x23edb0 => mc::file_1a4(mm, C, a1),
+            0x23fda8 => { mc::close(mm, e, C); none }
+            0x23fe38 => mc::is_error_code(a1),
+            0x23fe48 => { mc::vf59(mm, e, C, a1, a2); none }
+            0x23fea8 => { mc::set_name(mm, C, a1, a2); none }
+            0x23ff18 => mc::blocks_for(a1),
+            0x23fed8 => mc::forward(mm, e, C, 0x198, 0x10),
+            0x23ff38 => mc::forward(mm, e, C, 0x98, 0x24),
+            0x23ff70 => mc::forward(mm, e, C, 0x158, 0x10),
+            0x240010 => mc::forward(mm, e, C, 0x180, 0x10),
+            0x240040 => mc::forward(mm, e, C, 0x168, 0x10),
+            0x240070 => mc::forward(mm, e, C, 0x148, 0x10),
+            0x2400f8 => { mc::memcard_destruct(mm, e, C, a1); none }
+            0x23ffb0 => mc::current_error(mm, C),
+            0x23fff0 => mc::current_changed(mm, C),
+            f => mc::constant(mm, C, f).unwrap(),
+        };
+        processed += env.log.iter().filter(|c| c.0 == mc::PROCESS).count();
+        ans.n.set(0);
+        log.borrow_mut().clear();
+        for (at, b) in &before {
+            r.mem.write(*at, b).unwrap();
+        }
+        for (k, v) in [C, a1, a2, a3].iter().enumerate() {
+            r.cpu.set_gpr(4 + k, *v as i32 as i64 as u64);
+        }
+        r.call(func).unwrap_or_else(|e| panic!("case {case} {func:#x}: {e}"));
+        if ours != none {
+            assert_eq!(r.cpu.gpr(2) as u32, ours, "case {case} {func:#x}: the answer");
+        }
+        assert_eq!(*log.borrow(), env.log, "case {case} {func:#x}: the calls");
+        for (at, b) in &m.regions {
+            if *at == STACK.0 {
+                continue;
+            }
+            let mut th = vec![0u8; b.len()];
+            r.mem.read(*at, &mut th).unwrap();
+            if &th != b {
+                let i = th.iter().zip(b).position(|(x, y)| x != y).unwrap() & !3;
+                let w = |v: &[u8]| u32::from_le_bytes(v[i..i + 4].try_into().unwrap());
+                panic!("case {case} {func:#x}: memory at {:#x}: theirs {:#x} ours {:#x}", at + i as u32, w(&th), w(b));
+            }
+        }
+    }
+    println!("{processed} states handed on");
+    assert!(processed > 2000);
+}
