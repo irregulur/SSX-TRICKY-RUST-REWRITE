@@ -132,7 +132,7 @@ state change). In the tutorial:
 ## Checked against the original (row C11b3)
 
 `tests/lesson.rs` runs the real `cLessonMan::vf1` and handlers in the function runner with the outside stubbed and
-logged, against `lesson.rs` on a scripted `Env` (200,000 random steps). It found one difference, now fixed: the Wait
+logged, against `lesson.rs` on a scripted `Env` (200,000 random steps). (The functions it runs for real, its allow list, are marked checked in the function index since 2026-11-24.) It found one difference, now fixed: the Wait
 menu's refresh (`FUN_0014daa8`) at the page and trick levels does not clear the string list, only sets the first
 string (the action level clears all seven), so the strings left from an earlier menu stay. Also read there: the
 Practice Enter writes 0 to byte +0x5a70 of the game's focus rider (gApp+0x730 → +0xa4), and `Replay_Clear` runs only

@@ -923,14 +923,14 @@ address,size,name,system,status
 0x14aaa0,2684,LessonMan_Init,tutorial,checked
 0x14b520,136,cLessonMan::~cLessonMan,tutorial,not started
 0x14b5a8,140,LessonMan_Reset,tutorial,ported
-0x14b638,300,LessonMan_EndAttempt,tutorial,ported
-0x14b768,96,Lesson_SetupRider,tutorial,ported
+0x14b638,300,LessonMan_EndAttempt,tutorial,checked
+0x14b768,96,Lesson_SetupRider,tutorial,checked
 0x14b7c8,224,LessonMan_PreviewLoadPad,tutorial,ported
 0x14b8a8,172,LessonMan_AdvanceAndRestorePad,tutorial,ported
 0x14b958,92,LessonMan_RestorePad,tutorial,ported
-0x14b9b8,240,cLessonMan::vf1_14b9b8,tutorial,ported
-0x14baa8,92,LessonMan_SetState,tutorial,ported
-0x14bb08,220,LessonMan_SwitchState,tutorial,ported
+0x14b9b8,240,cLessonMan::vf1_14b9b8,tutorial,checked
+0x14baa8,92,LessonMan_SetState,tutorial,checked
+0x14bb08,220,LessonMan_SwitchState,tutorial,checked
 0x14bbe8,428,cLessonMan::vf2_14bbe8,tutorial,not started
 0x14bd98,764,LessonOverlay_DrawButtons,frontend,not started
 0x14c098,528,LessonOverlay_DrawPage,frontend,not started
@@ -943,39 +943,39 @@ address,size,name,system,status
 0x14d138,484,LessonOverlay_DrawTipPage,frontend,not started
 0x14d320,700,LessonOverlay_DrawInstructions,frontend,not started
 0x14d5e0,256,Lesson_DrawMenu,tutorial,not started
-0x14d6e0,240,Lesson_HandleMenuInput,tutorial,ported
+0x14d6e0,240,Lesson_HandleMenuInput,tutorial,checked
 0x14d7d0,200,Lesson_ResetScene,tutorial,ported
 0x14d898,140,Lesson_RestartRider,tutorial,ported
 0x14d928,8,Lesson_OnBoarderEvent,tutorial,ported
 0x14d930,24,Lesson_SetAttemptDone,tutorial,ported
-0x14d948,124,Lesson_SetupTrickMenu,tutorial,not started
-0x14d9c8,108,Lesson_SetupMenu3A,tutorial,not started
-0x14da38,108,Lesson_SetupMenu3B,tutorial,not started
-0x14daa8,244,Lesson_SetupPrompt,tutorial,ported
-0x14dba0,8,cLessonInitHandler::Enter,game,not started
-0x14dba8,116,cLessonIntroHandler::Enter,game,not started
-0x14dc20,12,cLessonIntroHandler::Update,game,not started
-0x14dc30,8,cLessonStartHandler::Enter,game,not started
-0x14dc38,76,cLessonStartHandler::Update,game,not started
-0x14dc88,56,cLessonWaitHandler::Enter,game,not started
-0x14dcc0,1144,cLessonWaitHandler::Update,game,ported
-0x14e138,312,cLessonPreviewHandler::Enter,game,ported
-0x14e270,60,cLessonPreviewHandler::Update,game,ported
-0x14e2b0,44,cLessonPreviewHandler::Exit,game,not started
-0x14e2e0,164,cLessonPreviewEndHandler::Enter,game,not started
-0x14e388,460,cLessonPreviewEndHandler::Update,game,not started
-0x14e558,304,cLessonPerformHandler::Enter,game,not started
-0x14e688,32,cLessonPerformHandler::Update,game,not started
-0x14e6a8,36,cLessonPerformHandler::Exit,game,ported
+0x14d948,124,Lesson_SetupTrickMenu,tutorial,checked
+0x14d9c8,108,Lesson_SetupMenu3A,tutorial,checked
+0x14da38,108,Lesson_SetupMenu3B,tutorial,checked
+0x14daa8,244,Lesson_SetupPrompt,tutorial,checked
+0x14dba0,8,cLessonInitHandler::Enter,game,checked
+0x14dba8,116,cLessonIntroHandler::Enter,game,checked
+0x14dc20,12,cLessonIntroHandler::Update,game,checked
+0x14dc30,8,cLessonStartHandler::Enter,game,checked
+0x14dc38,76,cLessonStartHandler::Update,game,checked
+0x14dc88,56,cLessonWaitHandler::Enter,game,checked
+0x14dcc0,1144,cLessonWaitHandler::Update,game,checked
+0x14e138,312,cLessonPreviewHandler::Enter,game,checked
+0x14e270,60,cLessonPreviewHandler::Update,game,checked
+0x14e2b0,44,cLessonPreviewHandler::Exit,game,checked
+0x14e2e0,164,cLessonPreviewEndHandler::Enter,game,checked
+0x14e388,460,cLessonPreviewEndHandler::Update,game,checked
+0x14e558,304,cLessonPerformHandler::Enter,game,checked
+0x14e688,32,cLessonPerformHandler::Update,game,checked
+0x14e6a8,36,cLessonPerformHandler::Exit,game,checked
 0x14e6d0,240,cLessonPracticeHandler::Enter,game,checked
-0x14e7c0,108,cLessonPracticeHandler::Update,game,not started
-0x14e830,8,cLessonPracticeHandler::Exit,game,not started
-0x14e838,196,cLessonPracticeEndHandler::Enter,game,not started
-0x14e900,288,cLessonPracticeEndHandler::Update,game,not started
-0x14ea20,164,cLessonEndHandler::Enter,game,ported
-0x14eac8,288,cLessonEndHandler::Update,game,not started
-0x14ebe8,8,cLessonExitHandler::Enter,game,not started
-0x14ebf0,84,cLessonExitHandler::Update,game,not started
+0x14e7c0,108,cLessonPracticeHandler::Update,game,checked
+0x14e830,8,cLessonPracticeHandler::Exit,game,checked
+0x14e838,196,cLessonPracticeEndHandler::Enter,game,checked
+0x14e900,288,cLessonPracticeEndHandler::Update,game,checked
+0x14ea20,164,cLessonEndHandler::Enter,game,checked
+0x14eac8,288,cLessonEndHandler::Update,game,checked
+0x14ebe8,8,cLessonExitHandler::Enter,game,checked
+0x14ebf0,84,cLessonExitHandler::Update,game,checked
 0x14ec48,24,cRestartLessonHandler::Enter,game,checked
 0x14ec60,60,cRestartLessonHandler::Update,game,checked
 0x14eca0,12,cLoadLessonHandler::Enter,game,checked
@@ -999,9 +999,9 @@ address,size,name,system,status
 0x14f200,80,cLessonWaitHandler::__tf,runtime,host
 0x14f250,80,cLessonStartHandler::__tf,runtime,host
 0x14f2a0,80,cLessonIntroHandler::__tf,runtime,host
-0x14f2f0,8,cLessonInitHandler::Update,game,not started
+0x14f2f0,8,cLessonInitHandler::Update,game,checked
 0x14f2f8,80,cLessonInitHandler::__tf,runtime,host
-0x14f348,8,cLessonExitHandler::Exit,game,not started
+0x14f348,8,cLessonExitHandler::Exit,game,checked
 0x14f350,64,cLessonStateHandler::__tf,runtime,host
 0x14f390,28,TextBox_Destruct,render,ported
 0x14f3b0,80,cEndLessonHandler::__tf,runtime,host

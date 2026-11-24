@@ -1806,3 +1806,4 @@ matches the original.
 - 2026-11-24 irregulur/neon: E8t done (replaced `grab_markers` and `uber_done` with real `.afl` clip markers via `ClipMarkerBank` / `AnimHost` + `animids::resolve_clip_name`, including uber fourth-marker gates and `0xffff` never-clearing handling).
 - 2026-11-24 irregulur/neon: split E1b2r into E1b2r1 (ELF game-data loader for `RosterCtx`, `build_race_riders` `n=0` check, and `Career::prepare_race` / `setup_riders_for_mode` wired into the app) and E1b2r2 (`lesson_path_var` for C11e and `worldsound.rs` draws for G10); updated G11e Needs to E1b2r1.
 - 2026-11-24 irregulur/lynx: G4k6 done.
+- 2026-11-24 irregulur/lynx: fixed facts: the 36 lesson-manager functions C11b3's test runs for real marked checked in the function index.
