@@ -104,7 +104,6 @@ matches the original.
 | X1 | No stand-ins left: `grep -rn STANDIN tricky-rs` is empty | any | F8 | | [est] |
 | X2 | Function index at 100% ported (every function either ported or marked not needed, with a reason, e.g. PS2 hardware glue) | any | F1 | | [est] |
 | X3 | Function index at 100% checked | any | F4, X2 | | [est] |
-| X2b | The four 284-byte static initializers that write more of the header's vectors (`StaticInit_PostAI` 0x114948, `StaticInit_Boarder` 0x11f4e8, `StaticInit_Lesson` 0x14edb0, `StaticInit_HUD` 0x1a6998), next to X2a's `tricky_game::statics`, checked the same way | any | - | | Gap of X2a |
 | X4 | Full playthrough of World Circuit, race and show-off, every course, gold everywhere, on our code | any | C1–C16 | | [est] |
 | X5 | 100% completion: every rider maxed, every trick book chapter, every unlock | any | X4 | | [est] |
 | X6 | Runs from the player's own disc only: no SSX-Library, no Python export step, no vgmstream | any | E2–E5, G10 | | [est] |
@@ -122,6 +121,7 @@ matches the original.
 
 | ID | Task | Section | Who | Date | Commit |
 |---|---|---|---|---|---|
+| X2b | The four 284-byte static initializers (`StaticInit_PostAI` 0x114948, `_Boarder` 0x11f4e8, `_Lesson` 0x14edb0, `_HUD` 0x1a6998): two layouts of six word-groups before the header's vectors, `statics::init_wide`, checked in `tests/statics.rs` (3 of 3 mutants) | P4 | irregulur/lynx | 2026-11-24 | 923160c |
 | X2a | The 40 static initializers that only write a header's three constant vectors (`StaticInit_PrewindControl` 0x105b10 .. `StaticInit_Spline` 0x251b20): `tricky_game::statics` (`HEADER_INITS`, `init_header_vectors`), checked in the runner (`tests/statics.rs`, 3 of 3 mutants) | P4 | irregulur/lynx | 2026-11-24 | 2382a69 |
 | G11e | Wired the app's pre- and post-race scenes onto G11b..d (`RaceScene` `0x32edc0`, `PreRace` `0x112b88`/`0x112d10`/`0x113468`, `EndRace` `0x113e10`/`0x1141e0`, `CamScript_StartScene` `0x176850`, `CamAnimation_InitScoped` `0x16d9d0`, `RaceScene_PlayCastClip` `0x169be8`): added `Cml::{scene_actors, anim_keys}` (`tricky-rs/data/src/intro.rs`), `AnimHost::{first_marker_frame, ensure_scene_files_loaded}` (`0x15fb08`/`0x169948` in `animhost.rs`), and `tricky_game::scenehost::SceneHost`; wired `RosterRes.scenes` into `CareerRes::prepare_race` (`src/ui.rs`), `ride` (preloading `RaceScene_GetAnimList` `.afl` files and entering `EndRace` at finish), and `chase_camera` (`src/main.rs`), replacing `intro::plan_post` and `chase_camera`'s `STG_COM`/`GAT_6COM` draws when `TRICKY_DISC` is present; verified 28 `tricky-data`, 55 `tricky-game` lib (incl. real-disc Garibaldi CML heat-0, final-heat rival+win, skip, and show-off loss tests), `tests/{animhost,prerace,scene}`, and 21 `tricky-rs` bin tests (`port-notes/race.md`); **needs a play test** | P2 | irregulur/neon | 2026-11-24 | 902e528 |
 | X3b | The 13 functions X3a held back for a `STANDIN:` naming them (0x1166f0, 0x11e660, 0x125088, 0x125a00, 0x125cb8, 0x126250, 0x126540, 0x169378, 0x16a9d8, 0x20fc60, 0x2162f0, 0x2361b0, 0x25aff8): every stand-in is in the app's or the rider's wiring (a caller that does not run the port yet), not in the port, which its runner test passes; marked checked | P4 | irregulur/lynx | 2026-11-24 | 20f5e32 |
@@ -1821,3 +1821,4 @@ matches the original.
 - 2026-11-24 irregulur/lynx: added X2a (split of X2).
 - 2026-11-24 irregulur/neon: G11e done (`Cml::{scene_actors, anim_keys}`, `AnimHost::{first_marker_frame, ensure_scene_files_loaded}`, `tricky_game::scenehost::SceneHost`, wired `RaceScene`/`PreRace`/`EndRace` into `ui.rs` & `main.rs`, replacing `intro::plan_post` and `chase_camera`'s `STG`/`GAT` draws when `TRICKY_DISC` is present; verified against real Garibaldi CML + `SLUS_203.26`; needs a play test).
 - 2026-11-24 irregulur/lynx: X2a done; added X2b (gap of X2a).
+- 2026-11-24 irregulur/lynx: X2b done.
