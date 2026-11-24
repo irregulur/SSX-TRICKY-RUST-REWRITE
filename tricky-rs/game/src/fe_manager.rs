@@ -1,7 +1,7 @@
 //! The front end's manager (board row G9b2d1) on the game's bytes: `cFE3D`'s per-frame update (vf5) and draw (vf6),
 //! its player count and its small helpers, every call out through [`FeEnv`]; checked in the function runner
 //! (`tests/fe_manager.rs`). Its constructors, destructor and vf4 (row G9b2d2a) are here too, checked in
-//! `tests/fe_manager_setup.rs`; vf1, the 19 objects' set-up, is row G9b2d2b.
+//! `tests/fe_manager_setup.rs`; vf1, the 19 objects' set-up (row G9b2d2b), in `tests/fe_manager_init.rs`.
 //!
 //! The manager (gApp+0x734): +4 the players (a signed byte), +5 a byte, +6 the state (0 the menus, 1 leaving for the
 //! game, 2 left), +8 a word, +0x60 a vector, +0x74 / +0x78 the two players, +0x7c the players' picks (two bytes
@@ -739,4 +739,430 @@ pub fn fe_start(m: &mut Mem, e: &mut dyn FeEnv, fe: u32) {
         e.call(m, STACK_PUSH, &[fe + 0xa8, first]);
     }
     m.w32(fe + 8, 1);
+}
+
+/// The calls of the 19 objects' set-up (`cFE3D` vf1 0x263b30, board row G9b2d2b): the block pool's set-up
+/// (`BlockMan_Init` 0x23d160 on 0x345e48 with 4 and 0x3a8d78), the world lists' (`BxList_Init` 0x17d2f0 on 0x337c60
+/// with 0xe), a player's pad word (`FE3D_SetPadDeviceWord8` 0x26cf28), the animations' archive
+/// (`AnimData_OpenBig` 0x158ea0 on 0x3211a8), the lens effects (`LensFX_Create` 0x1ea408), the video manager
+/// (`cVideoStreamMan::cVideoStreamMan` 0x1ffd80) and its streams (`VideoPlayer_AddStream` 0x1ffe70), the fonts
+/// (`Font_ParseSfn` 0x19c858), the front end's archive (`BigArchive_Init` / `_Open` / `_Close` / `_Delete` 0x23bb70 /
+/// 0x23bc28 / 0x23bcc0 / 0x23bb98) and the course's render data from it (`Course_LoadRenderData` 0x25edf0 on
+/// 0x346488), the start script (`World_RunScript` 0x13bad8), the fog (`cFogObjMan::cFogObjMan` 0x1c9b20), the
+/// sprites (`SpriteSet_InitFrontEndRects` 0x1f1580, `HUD_LoadIconPack` 0x1f9970, `HUD_CreateDummyTextures` 0x1f9f38),
+/// the riders' archives (`cMemoryBigFile::cMemoryBigFile` 0x23c9d0, `cAsyncBigFile::cAsyncBigFile` 0x23bd10,
+/// `AsyncBdrLoad_Init` / `_SetMode` / `_SetManagers` 0x201b50 / 0x201788 / 0x201c10), the career's profiles
+/// (`Career_CountProfiles` 0x164288, `Career_GetPlayerSlot` 0x164318, `Career_GetPlayerProfile` 0x164330), the
+/// characters (`FE3DCharacter_Init` 0x265ed8, `FE3DCharSel_RestoreChoice` 0x267b18), the camera
+/// (`cFE3DCameraCombined::cFE3DCameraCombined` 0x26b3f8), the drawn list's add (`List_PushBack` 0x2ac140), a group's
+/// list (`List_Init` 0x2abfb0) and add (`FE3D_AddWidget` 0x2abc68), the name hash (`Name_Hash` 0x240ed8), the models
+/// (`FE3DGeometry_BindInstance` 0x269a70, `FE3DGeometry_GetPos` 0x269ad0, `cFE3DGeometry::~cFE3DGeometry` 0x26cc40,
+/// `FE3DNode_RefreshModel` 0x269be8), the 3D scene (`cFE3DSound::cFE3DSound` 0x2702e0), the fade in
+/// (`FE3DTransition_Start` 0x1ff648) and the title screen (`cFE3DStateTitle::cFE3DStateTitle` 0x293390)
+pub mod init {
+    pub const BLOCKS_INIT: u32 = 0x23d160;
+    pub const BLOCKS: u32 = 0x345e48;
+    pub const BLOCKS_NAME: u32 = 0x3a8d78;
+    pub const LISTS_INIT: u32 = 0x17d2f0;
+    pub const PAD_WORD: u32 = 0x26cf28;
+    pub const ANIM_OPEN: u32 = 0x158ea0;
+    pub const ANIM_DATA: u32 = 0x3211a8;
+    pub const LENS_FX: u32 = 0x1ea408;
+    pub const VIDEO_CTOR: u32 = 0x1ffd80;
+    pub const VIDEO_ADD: u32 = 0x1ffe70;
+    pub const FONT_PARSE: u32 = 0x19c858;
+    pub const BIG_INIT: u32 = 0x23bb70;
+    pub const BIG_OPEN: u32 = 0x23bc28;
+    pub const BIG_CLOSE: u32 = 0x23bcc0;
+    pub const BIG_DELETE: u32 = 0x23bb98;
+    pub const COURSE_LOAD: u32 = 0x25edf0;
+    pub const RUN_SCRIPT: u32 = 0x13bad8;
+    pub const FOG_CTOR: u32 = 0x1c9b20;
+    pub const SPRITE_RECTS: u32 = 0x1f1580;
+    pub const ICON_PACK: u32 = 0x1f9970;
+    pub const DUMMY_TEXTURES: u32 = 0x1f9f38;
+    pub const MEMBIG_CTOR: u32 = 0x23c9d0;
+    pub const ASYNCBIG_CTOR: u32 = 0x23bd10;
+    pub const BDR_INIT: u32 = 0x201b50;
+    pub const BDR_MODE: u32 = 0x201788;
+    pub const BDR_MANAGERS: u32 = 0x201c10;
+    pub const COUNT_PROFILES: u32 = 0x164288;
+    pub const PLAYER_SLOT: u32 = 0x164318;
+    pub const PLAYER_PROFILE: u32 = 0x164330;
+    pub const CHAR_INIT: u32 = 0x265ed8;
+    pub const CHAR_RESTORE: u32 = 0x267b18;
+    pub const CAMERA_CTOR: u32 = 0x26b3f8;
+    pub const PUSH_BACK: u32 = 0x2ac140;
+    pub const LIST_INIT: u32 = 0x2abfb0;
+    pub const ADD_WIDGET: u32 = 0x2abc68;
+    pub const NAME_HASH: u32 = 0x240ed8;
+    pub const BIND: u32 = 0x269a70;
+    pub const GET_POS: u32 = 0x269ad0;
+    pub const GEOM_DTOR: u32 = 0x26cc40;
+    pub const REFRESH: u32 = 0x269be8;
+    pub const SOUND_CTOR: u32 = 0x2702e0;
+    pub const TRANSITION: u32 = 0x1ff648;
+    pub const TITLE_CTOR: u32 = 0x293390;
+    /// The heap's word set to 0x10 for the set-up and put back after (0x3bb978)
+    pub const HEAP_MODE: u32 = 0x3bb978;
+    /// The tables: `cFE3DThing` (the base every object starts with), `cFE3DGroup`, `cFE3DAnimRotate`,
+    /// `cFE3DGeometry`, `cFE3DMovieGeometry`
+    pub const THING_VT: u32 = 0x3b5a00;
+    pub const GROUP_VT: u32 = 0x3b58d0;
+    pub const ANIMROT_VT: u32 = 0x3ab910;
+    pub const GEOM_VT: u32 = 0x3abbc8;
+    pub const MOVIE_VT: u32 = 0x3abae0;
+    /// The model names (pointers): the 12 Mac and Marty screen models from 0x3470c8 (the 13th, 0x3470f8, Marty's),
+    /// the 12 platforms from 0x347100, the 10 video screens from 0x347130, the 10 medals from 0x347158
+    pub const MAC_NAMES: u32 = 0x3470c8;
+    pub const MARTY_NAME: u32 = 0x3470f8;
+    pub const PLATFORM_NAMES: u32 = 0x347100;
+    pub const SCREEN_NAMES: u32 = 0x347130;
+    pub const MEDAL_NAMES: u32 = 0x347158;
+    /// The scene's flip byte (0x3471f8; also [`super::alternate`]'s)
+    pub const SCENE_FLIP: u32 = 0x3471f8;
+    /// The names: the pool, the players ("fe3dinput"), the video manager, the two fonts, the archive's ("f3trkbig")
+    /// and its path, the start script, the fog's, the four riders' archives' and their three paths, the characters'
+    /// ("f3char"), the camera's, a group's ("f3grp"), the characters' group ("char grp"), the turner's ("f3anrot"),
+    /// "char", the screen models' ("f3MacMartyScrn"), the medals' and platforms' ("f3medal"), the video screens'
+    /// ("f3venmv"), the scene's ("fe3dsound"), the title's ("f3stttl")
+    pub const PLAYER_NAME: u32 = 0x3a8db8;
+    pub const VIDEO_NAME: u32 = 0x3a8df8;
+    pub const FONT_TITLE: u32 = 0x3a8e08;
+    pub const FONT_MENU: u32 = 0x3a8e20;
+    pub const BIG_NAME: u32 = 0x3a8e48;
+    pub const BIG_PATH: u32 = 0x3a8e58;
+    pub const START_SCRIPT: u32 = 0x3a8e80;
+    pub const FOG_NAME: u32 = 0x3a8ea0;
+    pub const MEMBIG_MDL_NAME: u32 = 0x3a8ee0;
+    pub const MEMBIG_BRD_NAME: u32 = 0x3a8ef0;
+    pub const ASYNCBIG_NAME: u32 = 0x3a8f00;
+    pub const BDR_NAME: u32 = 0x3a8f10;
+    pub const TEX_PATH: u32 = 0x3a8f20;
+    pub const BRD_PATH: u32 = 0x3a8f38;
+    pub const MDL_PATH: u32 = 0x3a8f50;
+    pub const CHAR_NAME: u32 = 0x3a8f78;
+    pub const CAMERA_NAME: u32 = 0x3a8f90;
+    pub const GROUP_NAME: u32 = 0x3a8fa8;
+    pub const CHARS_GROUP: u32 = 0x3a8fb0;
+    pub const ANIMROT_NAME: u32 = 0x3a8fc0;
+    pub const CHAR_WORD: u32 = 0x3a8fc8;
+    pub const SCREEN_MODEL_NAME: u32 = 0x3a8fe0;
+    pub const MEDAL_NAME: u32 = 0x3a8ff0;
+    pub const MOVIE_NAME: u32 = 0x3a8ff8;
+    pub const SOUND_NAME: u32 = 0x3a9010;
+    pub const TITLE_NAME: u32 = 0x3a9030;
+}
+
+/// The constructor every front-end object starts with (`cFE3DThing`, written out inline by the compiler): +0 -1, +4
+/// and +8 the object itself (an empty list), its table, +0x14 and +0x28 1, +0x60..+0x6c 1.0 (the scale), +0x8c 1.0,
+/// the rest of +0x10..+0x98 cleared (+0x34..+0x3c, +0x78, +0x7c left)
+fn thing_init(m: &mut Mem, o: u32) {
+    let one = 1.0f32.to_bits();
+    m.w32(o + 0x40, 0);
+    m.w32(o, 0xffff_ffff);
+    m.w32(o + 4, o);
+    m.w32(o + 8, o);
+    m.w32(o + 0xc, init::THING_VT);
+    m.w32(o + 0x10, 0);
+    m.w32(o + 0x14, 1);
+    for at in [0x18u32, 0x1c, 0x20, 0x24] {
+        m.w32(o + at, 0);
+    }
+    m.w32(o + 0x28, 1);
+    m.w32(o + 0x2c, 0);
+    m.w32(o + 0x30, 0);
+    for at in (0x44u32..0x60).step_by(4) {
+        m.w32(o + at, 0);
+    }
+    for at in (0x60u32..0x70).step_by(4) {
+        m.w32(o + at, one);
+    }
+    m.w32(o + 0x70, 0);
+    m.w32(o + 0x74, 0);
+    for at in [0x80u32, 0x84, 0x88] {
+        m.w32(o + at, 0);
+    }
+    m.w32(o + 0x8c, one);
+    for at in [0x90u32, 0x94, 0x98] {
+        m.w32(o + at, 0);
+    }
+}
+
+/// A `cFE3DGeometry` (inline): the base, its table, +0xa0 cleared
+fn geometry_init(m: &mut Mem, o: u32) {
+    thing_init(m, o);
+    m.w32(o + 0xc, init::GEOM_VT);
+    m.w32(o + 0xa0, 0);
+}
+
+/// A `cFE3DGroup` (0xd0 bytes, inline): the base, its table, its list (+0xa0), its name's hash (+0x74) and its
+/// virtual +0x20 with 1
+fn group_init(m: &mut Mem, e: &mut dyn FeEnv, o: u32, name: u32) {
+    thing_init(m, o);
+    m.w32(o + 0xc, init::GROUP_VT);
+    e.call(m, init::LIST_INIT, &[o + 0xa0]);
+    let h = e.call(m, init::NAME_HASH, &[name]);
+    m.w32(o + 0x74, h);
+    vcall(m, e, o, 0x20, &[1]);
+}
+
+/// A model (`cFE3DGeometry`, 0xb0 bytes, allocated under `tag`) named by the pointer at `names` + 4 `k`: its name's
+/// hash, bound to its instance, its virtual +0x28 with 0, refreshed by `how` (f12 0.0) and added to the drawn list
+fn model(m: &mut Mem, e: &mut dyn FeEnv, fe: u32, tag: u32, name: u32, how: u32) {
+    let o = alloc(m, e, tag, 0xb0, 0);
+    geometry_init(m, o);
+    let h = e.call(m, init::NAME_HASH, &[name]);
+    m.w32(o + 0x74, h);
+    e.call(m, init::BIND, &[o, name]);
+    vcall(m, e, o, 0x28, &[0]);
+    e.call(m, init::REFRESH, &[o, how, 0]);
+    e.call(m, init::PUSH_BACK, &[fe + 0x80, o]);
+}
+
+/// `abs.s`
+fn fabs(v: F) -> F {
+    F(f32::from_bits(v.0.to_bits() & 0x7fff_ffff))
+}
+
+/// `cFE3D` vf1 0x263b30(fe), the 19 objects' set-up (`buf` 0xd0 bytes of scratch for the stack's vector and its two
+/// passing models): the heap's word 0x3bb978 0x10 for the while; the app's front end (+0x734) this one; the block
+/// pool and the world lists set up; the two players (0x50 bytes: +0x40 its number, +0x38 / +0x3c 1, not picked, pad
+/// word 0) at +0x74 / +0x78; the animations' archive opened, the renderer's +0x138 with 0, the effects loader, the lens
+/// effects, the video manager (+0x124) with two streams 0x80 × 0x80; the title and menu fonts parsed and scaled
+/// (+0x18 / +0x1c: 1.4 / 1.3 and 1.8 / 1.4); the front end's archive (+0x1c) opened for the course's render data,
+/// closed and deleted; the start script run; the fog, the sprites and the icons; the riders' archives (+0xc, +0x10
+/// two memory, +0x14 an async one, +0x18 their loader in mode 1) opened on the three paths. The career's profiles give
+/// each seated player's character (its +0x44 the profile, the pick byte +0x7d + 2k its place); with none, the fifth
+/// character in the order seated alone. The 12 characters (+0x20.., 0x170 bytes, from the order) made and restored;
+/// the camera (+0x50) made and drawn; the characters' group with its turner and 12 groups, each holding its
+/// character (+0xb8 its number), the platform model's ground distance (√(x² + y²) of its position) kept at +0x60;
+/// the 12 screen models (refreshed 2), Marty's screen refreshed 4 on the stack, the 12 platforms (2), the 10 video
+/// screens (+0xfc..) and the 10 medals (4) drawn. Without a 3D scene (+0xa4) the scene's flip byte toggled and one
+/// made (`cFE3DSound`, its +0x118). By the career's +0x3260: 16 a fade in, then with 1, 2, 4, 8 or 16 the title
+/// screen made (0x3471fc); the first screen's +0x60. The app's step (+8) goes 3 to 10 on the way
+pub fn fe_init(m: &mut Mem, e: &mut dyn FeEnv, fe: u32, buf: u32) {
+    use init::*;
+    let one = F(1.0);
+    let heap_mode = m.r32(HEAP_MODE);
+    m.w32(HEAP_MODE, 0x10);
+    let app = m.r32(GAPP);
+    m.w32(app + 0x734, fe);
+    e.call(m, BLOCKS_INIT, &[BLOCKS, 4, BLOCKS_NAME]);
+    e.call(m, LISTS_INIT, &[SOUND_BANK, 0xe]);
+    for k in 0..2u32 {
+        let p = alloc(m, e, PLAYER_NAME, 0x50, 0);
+        m.w32(p + 0x40, k);
+        m.w32(p, 0);
+        m.w8(p + 0x34, 0);
+        m.w32(p + 0x38, 1);
+        m.w32(p + 0x3c, 1);
+        m.w32(p + 0x48, 0);
+        m.w32(p + 0x4c, 0);
+        player_reset(m, p);
+        m.w32(fe + 0x74 + 4 * k, p);
+        e.call(m, PAD_WORD, &[p, 0]);
+    }
+    e.call(m, ANIM_OPEN, &[ANIM_DATA, 0, 1, 0, 0]);
+    let app = m.r32(GAPP);
+    m.w32(app + 8, 3);
+    renderer_call(m, e, 0x138, &[0]);
+    let app = m.r32(GAPP);
+    crate::app::create_effects_loader(m, e, app);
+    e.call(m, LENS_FX, &[1, 0]);
+    let v = alloc(m, e, VIDEO_NAME, 0x28, 0);
+    let v = e.call(m, VIDEO_CTOR, &[v, 2]);
+    m.w32(fe + 0x124, v);
+    e.call(m, VIDEO_ADD, &[v, 0x80, 0x80]);
+    let v = m.r32(fe + 0x124);
+    e.call(m, VIDEO_ADD, &[v, 0x80, 0x80]);
+    let font = m.r32(m.r32(GAPP) + 0x5c);
+    e.call(m, FONT_PARSE, &[font, FONT_TITLE, 0]);
+    let app = m.r32(GAPP);
+    let (f5c, f60) = (m.r32(app + 0x5c), m.r32(app + 0x60));
+    m.w32(f5c + 0x1c, 0x3fa6_6666);
+    m.w32(f5c + 0x18, 0x3fb3_3333);
+    e.call(m, FONT_PARSE, &[f60, FONT_MENU, 0]);
+    let app = m.r32(GAPP);
+    let f60 = m.r32(app + 0x60);
+    m.w32(app + 8, 4);
+    m.w32(f60 + 0x1c, 0x3fb3_3333);
+    m.w32(f60 + 0x18, 0x3fe6_6666);
+    let b = alloc(m, e, BIG_NAME, 0x8c, 0x10);
+    let b = e.call(m, BIG_INIT, &[b]);
+    m.w32(fe + 0x1c, b);
+    e.call(m, BIG_OPEN, &[b, BIG_PATH, 0x10]);
+    e.call(m, COURSE_LOAD, &[COURSE, 0xffff_ffff]);
+    let b = m.r32(fe + 0x1c);
+    e.call(m, BIG_CLOSE, &[b]);
+    let b = m.r32(fe + 0x1c);
+    if b != 0 {
+        e.call(m, BIG_DELETE, &[b, 3]);
+    }
+    m.w32(fe + 0x1c, 0);
+    e.call(m, RUN_SCRIPT, &[START_SCRIPT]);
+    let app = m.r32(GAPP);
+    m.w32(app + 8, 5);
+    let f = alloc(m, e, FOG_NAME, 0x110, 0);
+    e.call(m, FOG_CTOR, &[f, 4]);
+    for (call, args) in [(SPRITE_RECTS, &[][..]), (ICON_PACK, &[0x2c9, 0][..]), (DUMMY_TEXTURES, &[][..])] {
+        let sprites = m.r32(m.r32(GAPP) + 0x728);
+        let mut a = vec![sprites];
+        a.extend_from_slice(args);
+        e.call(m, call, &a);
+    }
+    let o = alloc(m, e, MEMBIG_MDL_NAME, 0x18, 0x10);
+    let o = e.call(m, MEMBIG_CTOR, &[o]);
+    m.w32(fe + 0xc, o);
+    let o = alloc(m, e, MEMBIG_BRD_NAME, 0x18, 0);
+    let o = e.call(m, MEMBIG_CTOR, &[o]);
+    m.w32(fe + 0x10, o);
+    let o = alloc(m, e, ASYNCBIG_NAME, 0x14, 0);
+    let o = e.call(m, ASYNCBIG_CTOR, &[o]);
+    m.w32(fe + 0x14, o);
+    let o = alloc(m, e, BDR_NAME, 0x3d4, 0);
+    let o = e.call(m, BDR_INIT, &[o]);
+    m.w32(fe + 0x18, o);
+    e.call(m, BDR_MODE, &[o, 1]);
+    let a = [m.r32(fe + 0x18), m.r32(fe + 0xc), m.r32(fe + 0x10), m.r32(fe + 0x14)];
+    e.call(m, BDR_MANAGERS, &a);
+    for (at, path, align) in [(0x14u32, TEX_PATH, 0u32), (0x10, BRD_PATH, 0), (0xc, MDL_PATH, 0x10)] {
+        let o = m.r32(fe + at);
+        vcall_at(m, e, o, 0x10, 0x10, &[path, align]);
+    }
+    let app = m.r32(GAPP);
+    m.w32(app + 8, 6);
+    let mut k = 0u32;
+    while (k as i32) < e.call(m, COUNT_PROFILES, &[CAREER]) as i32 {
+        let slot = e.call(m, PLAYER_SLOT, &[CAREER, k]);
+        if slot != 0 {
+            let who = m.r8(slot) as i8 as i32;
+            if who >= 0 {
+                let p = m.r32(fe + 0x74 + 4 * who as u32);
+                m.w8(p + 0x44, k as u8);
+                let who = m.r8(slot) as i8 as i32 as u32;
+                let c = e.call(m, PLAYER_PROFILE, &[CAREER, who]);
+                let place = place_of(m, c as u8 as i8 as i32 as u32);
+                m.w8(fe + 0x7c + 2 * k + 1, place as u8);
+            }
+        }
+        k += 1;
+    }
+    if e.call(m, COUNT_PROFILES, &[CAREER]) == 0 {
+        let c = order(m, 4);
+        e.call(m, crate::fe_charselect::SEEN, &[CAREER, 0, 0, c]);
+        set_players(m, e, fe, 1);
+    }
+    for k in 0..12u32 {
+        let o = alloc(m, e, CHAR_NAME, 0x170, 0);
+        let c = order(m, k);
+        let ch = e.call(m, CHAR_INIT, &[o, c]);
+        m.w32(fe + 0x20 + 4 * k, ch);
+        e.call(m, CHAR_RESTORE, &[ch, 0]);
+    }
+    let app = m.r32(GAPP);
+    m.w32(app + 8, 7);
+    let o = alloc(m, e, CAMERA_NAME, 0x190, 0);
+    let cam = e.call(m, CAMERA_CTOR, &[o]);
+    m.w32(fe + 0x50, cam);
+    e.call(m, PUSH_BACK, &[fe + 0x80, cam]);
+    let chars = alloc(m, e, GROUP_NAME, 0xd0, 0);
+    group_init(m, e, chars, CHARS_GROUP);
+    e.call(m, PUSH_BACK, &[fe + 0x80, chars]);
+    let rot = alloc(m, e, ANIMROT_NAME, 0xd0, 0);
+    thing_init(m, rot);
+    for at in [0xa0u32, 0xa4, 0xa8, 0xac] {
+        m.w32(rot + at, 0);
+    }
+    m.w32(rot + 0xc, ANIMROT_VT);
+    let h = e.call(m, NAME_HASH, &[CHAR_WORD]);
+    m.w32(rot + 0x74, h);
+    for at in (0xb0u32..0xc8).step_by(4) {
+        m.w32(rot + at, 0);
+    }
+    e.call(m, ADD_WIDGET, &[chars, rot]);
+    let (pos, temp) = (buf, buf + 0x20);
+    for k in 0..12u32 {
+        let g = alloc(m, e, GROUP_NAME, 0xd0, 0);
+        group_init(m, e, g, CHAR_WORD);
+        e.call(m, ADD_WIDGET, &[chars, g]);
+        // (a platform model on the stack, for its position)
+        geometry_init(m, temp);
+        let name = m.r32(PLATFORM_NAMES);
+        e.call(m, BIND, &[temp, name]);
+        e.call(m, GET_POS, &[temp, pos]);
+        e.call(m, GEOM_DTOR, &[temp, 2]);
+        let (x, y) = (fabs(F(f32::from_bits(m.r32(pos)))), fabs(F(f32::from_bits(m.r32(pos + 4)))));
+        let d = (x * x + y * y).sqrt();
+        let z = m.r32(pos + 8);
+        m.w32(fe + 0x60, d.0.to_bits());
+        m.w32(fe + 0x64, 0);
+        m.w32(fe + 0x68, z);
+        m.w32(fe + 0x6c, one.0.to_bits());
+        let ch = m.r32(fe + 0x20 + 4 * k);
+        m.w32(ch + 0xb8, k);
+        e.call(m, ADD_WIDGET, &[g, ch]);
+    }
+    let app = m.r32(GAPP);
+    m.w32(app + 8, 8);
+    for k in 0..12u32 {
+        let name = m.r32(MAC_NAMES + 4 * k);
+        model(m, e, fe, SCREEN_MODEL_NAME, name, 2);
+    }
+    // (Marty's screen, on the stack: refreshed and gone)
+    let marty = buf;
+    geometry_init(m, marty);
+    let name = m.r32(MARTY_NAME);
+    e.call(m, BIND, &[marty, name]);
+    e.call(m, REFRESH, &[marty, 4, 0]);
+    m.w32(marty + 0x14, 0);
+    e.call(m, GEOM_DTOR, &[marty, 2]);
+    for k in 0..12u32 {
+        let name = m.r32(PLATFORM_NAMES + 4 * k);
+        model(m, e, fe, MEDAL_NAME, name, 2);
+    }
+    for k in 0..10u32 {
+        let o = alloc(m, e, MOVIE_NAME, 0xc0, 0);
+        thing_init(m, o);
+        m.w32(fe + 0xfc + 4 * k, o);
+        let name = m.r32(SCREEN_NAMES + 4 * k);
+        m.w32(o + 0xa0, 0);
+        m.w32(o + 0xb0, 0xffff_ffff);
+        m.w32(o + 0xc, MOVIE_VT);
+        e.call(m, BIND, &[o, name]);
+        let o = m.r32(fe + 0xfc + 4 * k);
+        e.call(m, PUSH_BACK, &[fe + 0x80, o]);
+    }
+    for k in 0..10u32 {
+        let name = m.r32(MEDAL_NAMES + 4 * k);
+        model(m, e, fe, MEDAL_NAME, name, 4);
+    }
+    if m.r32(fe + 0xa4) == 0 {
+        m.w8(SCENE_FLIP, m.r8(SCENE_FLIP) ^ 1);
+        let o = alloc(m, e, SOUND_NAME, 8, 0);
+        let flip = m.r8(SCENE_FLIP) as i8 as i32 as u32;
+        let s = e.call(m, SOUND_CTOR, &[o, flip]);
+        m.w32(fe + 0xa4, s);
+        vcall_at(m, e, s, 0, 0x118, &[]);
+    }
+    let app = m.r32(GAPP);
+    m.w32(app + 8, 9);
+    let mode = m.r32(CAREER + 0x3260);
+    if mode == 16 {
+        for k in 0..3 {
+            m.w32(buf + 4 * k, 0);
+        }
+        let fades = m.r32(m.r32(GAPP) + 0x72c);
+        e.call(m, TRANSITION, &[fades, buf, 3, 0, one.0.to_bits(), 0.5f32.to_bits()]);
+    }
+    if matches!(mode, 1 | 2 | 4 | 8 | 16) {
+        let o = alloc(m, e, TITLE_NAME, 0x5c, 0);
+        let t = e.call(m, TITLE_CTOR, &[o]);
+        m.w32(setup::FIRST, t);
+    }
+    let first = m.r32(setup::FIRST);
+    vcall(m, e, first, 0x60, &[]);
+    m.w32(HEAP_MODE, heap_mode);
+    let app = m.r32(GAPP);
+    m.w32(app + 8, 10);
 }

@@ -2828,6 +2828,53 @@ Of the 48 mutants, 46 are caught. The two survivors are equivalent: the player c
 `set_players` does again, and the sticky bit of the unsigned conversion. Two were first missed while every place
 shared one table.
 
+## G9b2d2b: the front end manager's vf1, the 19 objects' set-up (`fe_manager.rs` `fe_init`, `tests/fe_manager_init.rs`)
+
+Read from the disassembly of 0x263b30 (5,288 bytes); the decompiler's view of it is wrong in two places, noted below.
+All proven.
+
+- **Around it.** The heap's word 0x3bb978 is set to 0x10 and put back at the end. The app's step (gApp+8) goes 3, 4,
+  .., 10 on the way. The app's front end (+0x734) is this manager from the first instruction.
+- **The order.** The block pool (`BlockMan_Init` on 0x345e48, 4, 0x3a8d78) and the world lists (`BxList_Init`
+  0x337c60, 0xe); the two players ("fe3dinput", 0x50 bytes: +0x40 its number, +0 and +0x48 / +0x4c cleared, byte
+  +0x34 0, +0x38 / +0x3c 1, then `FE3DPlayer_ClearPick` and a pad word of 0) at +0x74 / +0x78; the animations'
+  archive (`AnimData_OpenBig` 0x3211a8, 0, 1, 0, 0); the renderer's +0x138 with 0; the effects loader (the ported
+  `App_CreateEffectsLoader`); `LensFX_Create(1, 0)`; the video manager (+0x124) and its two 0x80 × 0x80 streams; the
+  two fonts (title.sfn on gApp+0x5c scaled +0x18 1.4 / +0x1c 1.3, menu.sfn on gApp+0x60 1.8 / 1.4); the front end's
+  archive (data/models/ssxfe.big, +0x1c) opened for `Course_LoadRenderData(0x346488, -1)`, closed, deleted when there
+  is one, +0x1c cleared; the start script "FEStartScript"; the fog (0x110 bytes, 4); the sprites, the icon pack
+  0x2c9 and the dummy textures on gApp+0x728; the riders' archives: two memory ones (+0xc models, +0x10 boards) and
+  an async one (+0x14 textures), their loader (+0x18, mode 1) given all three, each opened through its table at
+  +0x10 (+0x10 / +0x14) on its path (only the models' with 0x10).
+- **The career's profiles.** For each profile (the count asked again each time round) whose slot names a player
+  (a byte, not negative): that player's +0x44 the profile's number, and the pick byte +0x7d + 2k (k the profile's
+  number, not the player's) its character's place in the order. With no profiles, the fifth character in the order
+  is given to player 0 (`Career_AssignPlayerRider(career, 0, 0, c)`) and the players set to 1.
+- **The objects.** All of them start with `cFE3DThing`'s constructor written out inline (`thing_init`). The 12
+  characters (0x170 bytes, +0x20..) from the order, restored. The camera (+0x50) added to the drawn list (+0x80).
+  The characters' group ("char grp"), drawn, with a turner (`cFE3DAnimRotate`, its hash "char") and 12 groups
+  ("char"), each holding its character (the character's +0xb8 its number). For each of the 12 a platform model
+  (`mdl_Cplatform_01`, the pointer at 0x347100) is made on the stack, bound, asked its position and destroyed: the
+  manager's +0x60 becomes (√(|x|² + |y|²), 0, z, 1) of that position (the same model each time). Then the 12 screen
+  models (names from 0x3470c8, "f3MacMartyScrn"), one more on the stack (0x3470f8, Marty's: refreshed 4, its +0x14
+  cleared, destroyed), the 12 platforms (0x347100.., "f3medal"), the 10 video screens (`cFE3DMovieGeometry`, 0xc0
+  bytes, +0xfc.., no name hash, +0xb0 -1, not refreshed) and the 10 medals (0x347158..). A model is hashed, bound,
+  its +0x28 called with 0, refreshed (2 for the screens and platforms, 4 for the medals) and drawn.
+- **`FE3DNode_RefreshModel`** is called (the model, how, f12 0.0), not (0, the model, how) as the decompiler shows.
+- **The scene.** Without one (+0xa4) the flip byte 0x3471f8 is toggled and a `cFE3DSound` made with it (signed),
+  its +0x118 called (its table at +0).
+- **The first screen.** By the career's +0x3260 (a jump table at 0x3a9050 for 1..16; the decompiler shows the word
+  as `DAT_0032e5f0`, its address): 16 starts a fade in (gApp+0x72c, a zero colour on the stack, 3; f12 0.0, f13 1.0,
+  f14 0.5), then 1, 2, 4, 8 and 16 make the title screen ("f3stttl", 0x5c bytes) the first screen (0x3471fc); every
+  value then calls the first screen's +0x60 (whatever was there before, for the others).
+
+The test runs 3,000 cases. The player count, the order, a character's place, a player's reset and the effects loader
+run for real. The constructors answer their object (the archive, the loader, the video manager, the camera and the
+fog 0 at times) and write stand-in tables at its +0, +0xc and +0x10; the game's own tables for the groups, the
+turner and the models are loaded, their +0x20 and +0x28 stood in for. The platform's position is a random vector,
+written by the stand-in at the address it is given. Every allocated object is compared, so the inline constructors
+are checked word by word.
+
 ## Names from F1c batch 35 (proven unless marked)
 
 - Card overlays and the card's virtuals (`cPS2MemCard` vtable 0x3a4598): vf15 0x23dd88 sets card +0x24, vf24 /

@@ -4821,7 +4821,7 @@ address,size,name,system,status
 0x263670,224,FE3D_SetNumPlayers,frontend,checked
 0x263750,76,cFE3D::vf2_263750,frontend,checked
 0x2637a0,908,cFE3D::vf4_2637a0,frontend,checked
-0x263b30,5288,cFE3D::vf1_263b30,frontend,not started
+0x263b30,5288,cFE3D::vf1_263b30,frontend,checked
 0x264fd8,960,cFE3D::vf6_264fd8,frontend,checked
 0x265398,956,cFE3D::vf5_265398,frontend,checked
 0x265758,44,FE3DCharacter_NextAltIndex,frontend,checked
