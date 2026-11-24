@@ -227,6 +227,24 @@ puts the table back, destroys the loader, +0x110, +0xfc (each with 2) and ends i
 argument. The table's vf2 is the node's empty 0x17df00 and vf3..vf6 the node's `return 0` (0x17def8, 0x17def0,
 0x17dee8, 0x17dee0).
 
+Row G4k3 (proven from the disassembly, same test, 12 of 13 mutants; the survivor, `/ 2` as `>> 1`, is equivalent
+for the six riders a race has):
+
+- **vf15 0x1114d0, the restart.** As vf16's start but entered by a restart (+0xdc 1, +0xe0 0), no riders touched,
+  and its +0x78 with 0, 0.
+- **vf14 0x111108(ai, reload, quick), the race reset.** The game's overlays hidden (`Overlay_HideAll` on game
+  +0x38); +0x4f8, +0x18, +0x14, +0x20, +0x60, +0x1c, +0x64, +0x68 cleared, +0x4fc -1. With `reload`: every roster
+  rider's skin reset (`Boarder_ResetSkin` 1); with `quick` +0x4fc -2, +0x4f8 1 and the riders loaded at once
+  (`BdrLoad_LoadRider` 1) only when the race was entered neither way; without it each rider's load is requested
+  (`BdrLoad_DefaultRequest` on a stack word, then `BdrLoad_RequestRider` with 1 if the race was entered either way,
+  else 0, and that word). Then `Rand_SeedGame` with the career's effects seed; for each of the race's riders (+0x88,
+  not the roster count) its +0xa0, the restart point on the main path and path `k + (6 − riders) / 2`
+  (`AIPathSet_GetPath` on 0x337fb8: the riders centred on the six start paths), its +0x48 and its camera focused on
+  it. +0xe4..+0xf8 cleared. In the tutorial (`Game_IsTutorial`) the tutorial's animations (`AnimData_OpenBig` 2, 1, 0,
+  0) only on a reload that is not quick, then mode 6; otherwise `EAMem_ValidateAll`, on a reload the animations
+  reset, the race scene set up from the roster and its animations opened (1, `quick` ^ 1, the list and the count it
+  wrote on the stack), then mode 1. Last `Race_ResetRiderRenders`.
+
 ## Rank catch-up: the unchecked list walk
 
 Proven on the PS2: `Race_UpdatePlacingsAndRubberBand` 0x115100 runs every 6 ticks (`race+0x18 % 6`), over

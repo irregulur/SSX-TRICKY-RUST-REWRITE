@@ -1,7 +1,8 @@
 //! The race object's (`cAI`) object glue (board row G4k) on the game's bytes: its reset (vf10 0x1108f0), the riders
 //! made (vf11 0x110bf8), torn down (vf13 0x110fa0) and set out at the start of a race (vf16 0x111560). Allocation,
 //! the career's race roster and virtual calls: every call out goes through [`FeEnv`]. Checked in the function runner
-//! (`tests/aiobj.rs`). Row G4k2 adds its constructor 0x114c00, destructor 0x114d30 and the node's default virtuals.
+//! (`tests/aiobj.rs`). Row G4k2 adds its constructor 0x114c00, destructor 0x114d30 and the node's default virtuals,
+//! G4k3 the race reset (vf14 0x111108) and the restart (vf15 0x1114d0).
 //!
 //! The race object: +8 its table (the race's own virtuals), +0x1c / +0x20 / +0x60 / +0x68 words, +0x64 an object
 //! (its table at +0), +0x6c..+0x78 the four inputs (`cInput`, 0x274 bytes), +0x7c the players, +0x80 the computer
@@ -300,4 +301,129 @@ pub fn destruct(m: &mut Mem, e: &mut dyn FeEnv, ai: u32, how: u32) {
 /// vf2 0x17df00 does nothing
 pub fn default_virtual(_slot: u32) -> u32 {
     0
+}
+
+/// The calls of the race reset: `Overlay_HideAll` 0x1a7758, `Boarder_ResetSkin` 0x116a18, `BdrLoad_LoadRider` 0x2010c8,
+/// `BdrLoad_DefaultRequest` 0x201a98, `BdrLoad_RequestRider` 0x201790, `Rand_SeedGame` 0x23d4c8,
+/// `AIPathSet_GetMainPath` 0x197ef0 / `_GetPath` 0x197ef8 on the course's paths 0x337fb8, `Boarder_SetRestartPoint`
+/// 0x118068, `Boarder_GetCamera` 0x11ca88, `Camera_SetFocusRider` 0x173c50, `Game_IsTutorial` 0x1148d0,
+/// `EAMem_ValidateAll` 0x2cdfd8, `AnimData_OpenBig` 0x158ea0, `RaceScene_SetupFromPicks` 0x169698 and
+/// `RaceScene_GetAnimList` 0x169948 on the race scene 0x32edc0, `Race_ResetRiderRenders` 0x1128b8
+pub const HIDE_OVERLAYS: u32 = 0x1a7758;
+pub const RESET_SKIN: u32 = 0x116a18;
+pub const LOAD_RIDER: u32 = 0x2010c8;
+pub const DEFAULT_REQUEST: u32 = 0x201a98;
+pub const REQUEST_RIDER: u32 = 0x201790;
+pub const SEED_GAME: u32 = 0x23d4c8;
+pub const AI_PATHS: u32 = 0x337fb8;
+pub const MAIN_PATH: u32 = 0x197ef0;
+pub const GET_PATH: u32 = 0x197ef8;
+pub const RESTART_POINT: u32 = 0x118068;
+pub const GET_CAMERA: u32 = 0x11ca88;
+pub const FOCUS_RIDER: u32 = 0x173c50;
+pub const IS_TUTORIAL: u32 = 0x1148d0;
+pub const VALIDATE_ALL: u32 = 0x2cdfd8;
+pub const OPEN_BIG: u32 = 0x158ea0;
+pub const SCENE: u32 = 0x32edc0;
+pub const SCENE_SETUP: u32 = 0x169698;
+pub const SCENE_ANIMS: u32 = 0x169948;
+pub const RESET_RENDERS: u32 = 0x1128b8;
+
+/// `cAI` vf14 0x111108(ai, reload, quick), the race reset: the game's overlays hidden; +0x4f8, +0x18, +0x14, +0x20,
+/// +0x60, +0x1c, +0x64, +0x68 cleared and +0x4fc -1. With `reload`: each roster rider's skin reset (1); then with
+/// `quick` +0x4fc -2, +0x4f8 1 and, on a race entered fresh by neither way (+0xe0 and +0xdc 0), each rider loaded at
+/// once (1); without `quick` each rider's load requested (a default request, then 1 if the race was entered either
+/// way, else 0, and the request's first word). The game's stream seeded from the career's effects seed; each of the
+/// race's riders (+0x88) told its +0xa0, given its restart point (the main path and path `k + (6 − riders) / 2`), told
+/// its +0x48, and its camera (if any) focused on it. +0xe4..+0xf8 cleared. In the tutorial: with `reload` and not
+/// `quick` the tutorial's animations opened (2, 1, 0, 0), then mode 6; else the heap checked, with `reload` the
+/// animations reset, the race scene set up from the roster and its animations opened (1, `quick` ^ 1, the list and its
+/// count), then mode 1. Last the riders' renders reset. `scratch`: 8 bytes for the game's stack words (the request,
+/// the list's count)
+pub fn race_reset(m: &mut Mem, e: &mut dyn FeEnv, ai: u32, reload: u32, quick: u32, scratch: u32) {
+    let game = m.r32(m.r32(GAPP) + 0x730);
+    e.call(m, HIDE_OVERLAYS, &[m.r32(game + 0x38)]);
+    m.w32(ai + 0x4f8, 0);
+    m.w32(ai + 0x18, 0);
+    m.w32(ai + 0x4fc, 0xffff_ffff);
+    for at in [0x14u32, 0x20, 0x60, 0x1c, 0x64, 0x68] {
+        m.w32(ai + at, 0);
+    }
+    let entered = |m: &Mem| m.r32(ai + 0xe0) != 0 || m.r32(ai + 0xdc) != 0;
+    if reload != 0 {
+        let mut k = 0u32;
+        while (k as i32) < count(m) {
+            e.call(m, RESET_SKIN, &[m.r32(ai + 0xc4 + 4 * k), 1]);
+            k += 1;
+        }
+        if quick != 0 {
+            m.w32(ai + 0x4fc, 0xffff_fffe);
+            m.w32(ai + 0x4f8, 1);
+            if !entered(m) {
+                let mut k = 0u32;
+                while (k as i32) < count(m) {
+                    e.call(m, LOAD_RIDER, &[ai + 0x124, m.r32(ai + 0xc4 + 4 * k), 1]);
+                    k += 1;
+                }
+            }
+        } else {
+            let mut k = 0u32;
+            while (k as i32) < count(m) {
+                e.call(m, DEFAULT_REQUEST, &[scratch]);
+                let how = entered(m) as u32;
+                e.call(m, REQUEST_RIDER, &[ai + 0x124, m.r32(ai + 0xc4 + 4 * k), how, m.r32(scratch)]);
+                k += 1;
+            }
+        }
+    }
+    e.call(m, SEED_GAME, &[m.r32(FX_SEED)]);
+    let main = e.call(m, MAIN_PATH, &[AI_PATHS]);
+    let half = (6 - m.r32(ai + 0x88) as i32) / 2;
+    let mut k = 0u32;
+    while (k as i32) < m.r32(ai + 0x88) as i32 {
+        let b = m.r32(ai + 0xc4 + 4 * k);
+        vcall_at(m, e, b, 0, 0xa0, &[]);
+        let path = e.call(m, GET_PATH, &[AI_PATHS, (k as i32 + half) as u32]);
+        e.call(m, RESTART_POINT, &[m.r32(ai + 0xc4 + 4 * k), main, path]);
+        let b = m.r32(ai + 0xc4 + 4 * k);
+        vcall_at(m, e, b, 0, 0x48, &[]);
+        let cam = e.call(m, GET_CAMERA, &[m.r32(ai + 0xc4 + 4 * k)]);
+        if cam != 0 {
+            e.call(m, FOCUS_RIDER, &[cam, m.r32(ai + 0xc4 + 4 * k)]);
+        }
+        k += 1;
+    }
+    for k in (0..6u32).rev() {
+        m.w32(ai + 0xe4 + 4 * k, 0);
+    }
+    let mode = if e.call(m, IS_TUTORIAL, &[ai]) != 0 {
+        if reload != 0 && quick == 0 {
+            e.call(m, OPEN_BIG, &[ANIM_DATA, 2, 1, 0, 0]);
+        }
+        6
+    } else {
+        e.call(m, VALIDATE_ALL, &[]);
+        if reload != 0 {
+            e.call(m, ANIM_RESET, &[ANIM_DATA]);
+            e.call(m, SCENE_SETUP, &[SCENE, ROSTER_COUNT]);
+            let list = e.call(m, SCENE_ANIMS, &[SCENE, scratch + 4]);
+            e.call(m, OPEN_BIG, &[ANIM_DATA, 1, quick ^ 1, list, m.r32(scratch + 4)]);
+        }
+        1
+    };
+    vcall_at(m, e, ai, 8, 0x50, &[mode]);
+    e.call(m, RESET_RENDERS, &[ai]);
+}
+
+/// `cAI` vf15 0x1114d0(ai), the restart: the world lists' kinds 3, 0xd and 4 emptied, the career's effects seed from
+/// `Rand_Fx`, entered by a restart (+0xdc 1, +0xe0 0), then its table's +0x78 with 0, 0
+pub fn restart(m: &mut Mem, e: &mut dyn FeEnv, ai: u32) {
+    for kind in [3u32, 0xd, 4] {
+        e.call(m, LIST_DELETE_ALL, &[LISTS, kind]);
+    }
+    let seed = e.call(m, RAND_FX, &[]);
+    m.w32(FX_SEED, seed);
+    m.w32(ai + 0xdc, 1);
+    m.w32(ai + 0xe0, 0);
+    vcall_at(m, e, ai, 8, 0x78, &[0, 0]);
 }

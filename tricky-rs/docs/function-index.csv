@@ -145,8 +145,8 @@ address,size,name,system,status
 0x110bf8,812,cAI::vf11_110bf8,ai,checked
 0x110f28,120,Race_IsPlayerPad,race,checked
 0x110fa0,356,cAI::vf13_110fa0,ai,checked
-0x111108,964,cAI::vf14_111108,ai,ported
-0x1114d0,144,cAI::vf15_1114d0,ai,ported
+0x111108,964,cAI::vf14_111108,ai,checked
+0x1114d0,144,cAI::vf15_1114d0,ai,checked
 0x111560,424,cAI::vf16_111560,ai,checked
 0x111708,44,cAI::vf18_111708,ai,checked
 0x111738,180,cAI::vf19_111738,ai,checked
