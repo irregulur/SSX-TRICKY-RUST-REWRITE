@@ -105,6 +105,7 @@ matches the original.
 | X1 | No stand-ins left: `grep -rn STANDIN tricky-rs` is empty | any | F8 | | [est] |
 | X2 | Function index at 100% ported (every function either ported or marked not needed, with a reason, e.g. PS2 hardware glue) | any | F1 | | [est] |
 | X3 | Function index at 100% checked | any | F4, X2 | | [est] |
+| X2a | The 40 static initializers (`StaticInit_*`, 124 bytes each, 0x105b10..0x251b20) that only write one header's three constant vectors at their own place, ported as one function with their places and checked in the runner | any | - | irregulur/lynx (2026-11-24) | Split of X2 |
 | X4 | Full playthrough of World Circuit, race and show-off, every course, gold everywhere, on our code | any | C1–C16 | | [est] |
 | X5 | 100% completion: every rider maxed, every trick book chapter, every unlock | any | X4 | | [est] |
 | X6 | Runs from the player's own disc only: no SSX-Library, no Python export step, no vgmstream | any | E2–E5, G10 | | [est] |
@@ -1816,3 +1817,4 @@ matches the original.
 - 2026-11-24 irregulur/lynx: X3a done; added X3b, X3c (gaps of X3a).
 - 2026-11-24 irregulur/lynx: X3c done.
 - 2026-11-24 irregulur/lynx: X3b done.
+- 2026-11-24 irregulur/lynx: added X2a (split of X2).
