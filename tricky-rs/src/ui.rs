@@ -43,6 +43,28 @@ fn save_path() -> std::path::PathBuf {
 /// Circuit medals, points and boards.
 #[derive(Resource)]
 pub struct CareerRes(pub tricky_game::career::Career);
+
+/// Loaded `SLUS_203.26` roster/scene tables and live `PreRaceSel` / `CircuitHeats` state for
+/// `Career_PrepareRace` (`0x163980`) -> `Career_SetupRidersForMode` (`0x165558`) (row E1b2r1).
+#[derive(Resource, Default)]
+pub struct RosterRes {
+    pub data: Option<tricky_game::roster::RosterData>,
+    pub sel: tricky_game::roster::PreRaceSel,
+    pub heats: tricky_game::roster::CircuitHeats,
+    /// Exact 16 stat bytes written by `Career_SetupPlayerRider` (`0x16a9d8`) for the active run.
+    pub player_stat_bytes: Option<[u8; 16]>,
+    /// Starting gate index (`0..6`) assigned to the human player by `Career_PrepareRace`.
+    pub player_gate: usize,
+    /// The two race seeds (`+0x2b04`, `+0x2b00`) written by `Career_PrepareRace` (`0x163980`).
+    pub race_seeds: Option<(u32, u32)>,
+}
+
+impl RosterRes {
+    /// Load all roster and scene-selection tables from the disc's `/SLUS_203.26` ELF bytes.
+    pub fn from_elf(elf: &[u8]) -> Self {
+        Self { data: tricky_game::roster::RosterData::from_elf(elf), ..Self::default() }
+    }
+}
 fn career_path() -> std::path::PathBuf {
     std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())).unwrap_or_default().join("tricky-career.sav")
 }
@@ -300,6 +322,69 @@ impl CareerRes {
         }
         true
     }
+    /// Run `Career_PrepareRace` (`0x163980`) via `Career_SetupRidersForMode` (`0x165558`) on the career block
+    /// using `SLUS_203.26` tables in `roster` (row E1b2r1). Fills `+0x27dc` / `0x27e0 + 0x84*s` (rider lineup,
+    /// boards, outfits, stat bytes, rival pair attitudes), `+0x2b18` scene look records (`Career_FinalizeRoster`),
+    /// `+0x2b04`/`+0x2b00` race seeds, and `roster.sel` (`PreRaceSel`) / `roster.heats` (`CircuitHeats`).
+    /// Returns `None` when no `SLUS_203.26` ELF data was loaded (`TRICKY_DISC` absent).
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_race(
+        &mut self,
+        roster: &mut RosterRes,
+        event: Event,
+        round: usize,
+        course_key: &str,
+        player_name: &str,
+        outfit: usize,
+        board: usize,
+        master: bool,
+        rand_fx: &mut dyn FnMut() -> u32,
+    ) -> Option<Vec<tricky_game::roster::RaceRiderRow>> {
+        let Some(data) = roster.data.as_ref() else {
+            roster.player_stat_bytes = None;
+            roster.race_seeds = None;
+            return None;
+        };
+        let ch = Self::character(player_name);
+        self.ensure_player(ch);
+        if self.0.r32(0x320c + 0x10) == 0 {
+            self.0.rider_setup_init(tricky_game::career::CAREER_BASE + 0x30fc);
+        }
+        let prof = self.0.ptr(0x3110);
+        self.0.w32(prof + 0xc, outfit.min(6) as u32);
+        self.0.w32(prof + 0x10, board.min(11) as u32);
+        let course = Self::course(course_key).unwrap_or(0);
+        self.0.w32(0x2af8, course);
+        self.0.w32(0x2afc, Self::mode(event));
+        self.0.w32(0x320c + 0x14, round.min(2) as u32);
+        self.0.w32(0x27dc, if event == Event::Race { HEAT as u32 } else { 1 });
+        self.0.clear_all_player_flags();
+        let env = tricky_game::roster::PlayerRiderEnv {
+            words: [0, 0],
+            character_cheat: 0,
+            mallora: false,
+            max_attrib: master,
+        };
+        let mut prep = tricky_game::roster::RosterPrepareEnv {
+            data,
+            sel: &mut roster.sel,
+            heats: &mut roster.heats,
+            env,
+            rel: &tricky_game::career::InitialRelations,
+            rand_fx,
+        };
+        self.0.prepare_race(&mut prep);
+        let rows = self.0.race_roster();
+        if let Some((gate, row)) = rows.iter().enumerate().find(|(_, r)| r.is_human()) {
+            roster.player_gate = gate;
+            roster.player_stat_bytes = Some(row.stat_bytes);
+        } else {
+            roster.player_gate = 0;
+            roster.player_stat_bytes = None;
+        }
+        roster.race_seeds = Some(self.0.race_seeds());
+        Some(rows)
+    }
 }
 
 #[cfg(test)]
@@ -349,6 +434,49 @@ mod tests {
         assert_eq!(c.medal(Event::ShowOff, "gari"), Some(0));
         assert_eq!(c.best("gari").1, gold);
         assert!(!c.record_run(Event::Race, 2, "nowhere", "elise", &[("Elise".into(), Some(1.0), true)], 0));
+    }
+
+    #[test]
+    fn prepare_race_fills_career_roster_and_selection_from_disc() {
+        let Ok(disc_path) = std::env::var("TRICKY_DISC") else { return };
+        let mut disc = tricky_data::disc::Disc::open(&disc_path).expect("open TRICKY_DISC");
+        let elf = disc.read_path("/SLUS_203.26").expect("read ELF").expect("/SLUS_203.26 present");
+        let mut roster = RosterRes::from_elf(&elf);
+        assert!(roster.data.is_some());
+        let mut c = fresh();
+        let mut streams = tricky_game::rand::Streams::default();
+        streams.seed_fx(0x1234_5678);
+
+        // World Circuit Race heat 0: 6 riders, 1 human (Mac = 3) in gate 1..=4, 5 distinct AI characters
+        let rows = c.prepare_race(&mut roster, Event::Race, 0, "gari", "mac", 1, 2, false, &mut || streams.fx()).expect("race rows");
+        assert_eq!(rows.len(), 6);
+        assert_eq!(c.0.r32(0x27dc), 6);
+        let humans: Vec<_> = rows.iter().enumerate().filter(|(_, r)| r.is_human()).collect();
+        assert_eq!(humans.len(), 1);
+        assert_eq!(humans[0].1.character, 3);
+        assert_eq!(humans[0].1.board_index(), 2);
+        assert_eq!(humans[0].1.outfit_index(), 1);
+        assert!((1..=4).contains(&roster.player_gate));
+        assert_eq!(roster.player_stat_bytes, Some(humans[0].1.stat_bytes));
+        let mut chars: Vec<u32> = rows.iter().map(|r| r.character).collect();
+        chars.sort();
+        chars.dedup();
+        assert_eq!(chars.len(), 6, "all 6 race riders must be distinct");
+        assert!(roster.race_seeds.is_some());
+        assert_eq!(roster.sel.rider, 3);
+
+        // Heat 1 keeps valid 6-rider lineup using heats initialized in heat 0
+        let rows1 = c.prepare_race(&mut roster, Event::Race, 1, "gari", "mac", 1, 2, false, &mut || streams.fx()).expect("heat 1 rows");
+        assert_eq!(rows1.len(), 6);
+        assert_eq!(rows1.iter().filter(|r| r.is_human()).count(), 1);
+
+        // Show-off and FreeRide: 1 solo human rider
+        let so = c.prepare_race(&mut roster, Event::ShowOff, 0, "gari", "elise", 0, 0, false, &mut || streams.fx()).expect("showoff rows");
+        assert_eq!(so.len(), 1);
+        assert!(so[0].is_human() && so[0].character == 7);
+        let fr = c.prepare_race(&mut roster, Event::FreeRide, 0, "gari", "eddie", 0, 1, true, &mut || streams.fx()).expect("freeride rows");
+        assert_eq!(fr.len(), 1);
+        assert!(fr[0].is_human() && fr[0].character == 0 && fr[0].board_index() == 1);
     }
 }
 

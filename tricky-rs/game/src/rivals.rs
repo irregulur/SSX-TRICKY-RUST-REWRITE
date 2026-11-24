@@ -63,7 +63,7 @@ impl Grudge {
         Self::with_attitude(me, player, ATTITUDE[me.min(11)][player.min(11)] as i8)
     }
 
-    fn with_attitude(me: usize, player: usize, attitude: i8) -> Self {
+    pub fn with_attitude(me: usize, player: usize, attitude: i8) -> Self {
         let (m, p) = (me.min(11), player.min(11));
         let rec = PairBytes {
             attitude,

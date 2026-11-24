@@ -941,3 +941,194 @@ impl crate::career::Career {
         self.finalize_roster(ctx.sel, ctx.sel_tables, rand_fx);
     }
 }
+
+/// Virtual-address-to-file-offset delta for `SLUS_203.26` (one load segment: file offset `0x1000` -> `0x00100000`).
+const ELF_LOAD_DELTA: u32 = 0xff000;
+
+/// Owned game data tables read directly from `SLUS_203.26` for `Career_PrepareRace` (`0x163980`) and
+/// `Career_SetupRidersForMode` (`0x165558`) (row E1b2r1):
+/// - `entries`: `gRider_Table` at `0x331ea8` (`12 * 0x38` bytes)
+/// - `names`: the 12 NUL-terminated rider name strings pointed to by `entry+4`
+/// - `board_points`: board points/bonus table at `0x332150` (`12 * 0xf0 + 0x20` bytes)
+/// - `rows`: the seven 12-byte selection tables (`0x37b390`, `0x37b400`, `0x37ba40`, `0x37c1b8`, `0x37c4b0`,
+///   `0x37cd60`, `0x37c720`)
+/// - `scene_a`: `PreRaceSel_BuildSceneIndex` `0x168360` (`fxrand::scene_table_a`) built from `0x37ab50` (`0x70a`),
+///   `0x37b260` (`0x78`), and `0x37b2d8` (`0x28`)
+/// - `scene_b`: `0x32f468` (`901 * 12 = 0x2a3c` bytes)
+/// - `scene_c`: `0x37cd70` (`500 * 8 = 0xfa0` bytes)
+/// - `tables`: `StaticTables` initialized by `Career_InitStaticTables` (`0x169e38`)
+#[derive(Clone, Debug)]
+pub struct RosterData {
+    pub entries: Vec<u8>,
+    pub names: Vec<Vec<u8>>,
+    pub board_points: Vec<u8>,
+    pub rows: [Vec<u8>; 7],
+    pub scene_a: Vec<u8>,
+    pub scene_b: Vec<u8>,
+    pub scene_c: Vec<u8>,
+    pub tables: crate::career::StaticTables,
+}
+
+impl RosterData {
+    /// Read all roster and scene-selection tables from the raw `SLUS_203.26` ELF bytes.
+    pub fn from_elf(elf: &[u8]) -> Option<Self> {
+        let slice = |va: u32, len: usize| -> Option<&[u8]> {
+            let off = va.checked_sub(ELF_LOAD_DELTA)? as usize;
+            elf.get(off..off.checked_add(len)?)
+        };
+        let entries = slice(0x331ea8, 12 * 0x38)?.to_vec();
+        let mut names = Vec::with_capacity(12);
+        for i in 0..12 {
+            let ptr = u32::from_le_bytes(entries[i * 0x38 + 4..i * 0x38 + 8].try_into().ok()?);
+            let off = ptr.checked_sub(ELF_LOAD_DELTA)? as usize;
+            let tail = elf.get(off..)?;
+            let nul = tail.iter().position(|&b| b == 0)?;
+            names.push(tail[..=nul].to_vec());
+        }
+        let board_points = slice(0x332150, 12 * 0xf0 + 0x20)?.to_vec();
+        let rows = [
+            slice(0x37b390, 9 * 12)?.to_vec(),
+            slice(0x37b400, 0x85 * 12)?.to_vec(),
+            slice(0x37ba40, 0x9f * 12)?.to_vec(),
+            slice(0x37c1b8, 0x3f * 12)?.to_vec(),
+            slice(0x37c4b0, 0x34 * 12)?.to_vec(),
+            slice(0x37cd60, 12)?.to_vec(),
+            slice(0x37c720, 0x85 * 12)?.to_vec(),
+        ];
+        let ids = slice(0x37ab50, 0x70a)?;
+        let srows = slice(0x37b260, 0x78)?;
+        let counts = slice(0x37b2d8, 0x28)?;
+        let scene_a = crate::fxrand::scene_table_a(ids, srows, counts);
+        let scene_b = slice(0x32f468, 901 * 12)?.to_vec();
+        let scene_c = slice(0x37cd70, 500 * 8)?.to_vec();
+        let mut tables = crate::career::StaticTables::default();
+        tables.init(&mut crate::cheats::Cheats::default());
+        Some(RosterData { entries, names, board_points, rows, scene_a, scene_b, scene_c, tables })
+    }
+
+    /// Borrow the selection and look tables in the layout [`RosterCtx`] expects.
+    pub fn roster_tables(&self) -> RosterTables<'_> {
+        RosterTables {
+            rows: [&self.rows[0], &self.rows[1], &self.rows[2], &self.rows[3], &self.rows[4], &self.rows[5], &self.rows[6]],
+            scene: crate::fxrand::SceneTables { a: &self.scene_a, b: &self.scene_b, c: &self.scene_c },
+        }
+    }
+
+    /// Borrow a [`RosterCtx`] backed by this data.
+    pub fn ctx<'a>(
+        &'a self,
+        sel: &'a mut PreRaceSel,
+        sel_tables: &'a RosterTables<'a>,
+        env: PlayerRiderEnv,
+        rel: &'a dyn crate::career::RelSource,
+    ) -> RosterCtx<'a> {
+        RosterCtx {
+            sel,
+            entries: &self.entries,
+            names: &self.names,
+            board_points: &self.board_points,
+            tables: &self.tables,
+            sel_tables,
+            env,
+            rel,
+        }
+    }
+}
+
+/// `PrepareEnv` implementation driving `Career::prepare_race` (`0x163980`) through `Career::setup_riders_for_mode`
+/// (`0x165558`) using [`RosterData`], [`PreRaceSel`], [`CircuitHeats`], and the game's `Rand_Fx` stream (row E1b2r1).
+pub struct RosterPrepareEnv<'a, F: FnMut() -> u32> {
+    pub data: &'a RosterData,
+    pub sel: &'a mut PreRaceSel,
+    pub heats: &'a mut CircuitHeats,
+    pub env: PlayerRiderEnv,
+    pub rel: &'a dyn crate::career::RelSource,
+    pub rand_fx: F,
+}
+
+impl<F: FnMut() -> u32> crate::career::PrepareEnv for RosterPrepareEnv<'_, F> {
+    fn setup_riders_for_mode(&mut self, career: &mut crate::career::Career) {
+        let sel_tables = self.data.roster_tables();
+        let mut ctx = self.data.ctx(self.sel, &sel_tables, self.env, self.rel);
+        career.setup_riders_for_mode(&mut ctx, self.heats, &mut self.rand_fx);
+    }
+
+    fn rand_fx(&mut self) -> u32 {
+        (self.rand_fx)()
+    }
+}
+
+/// One decoded 0x84-byte race rider row from the career block (`+0x27e0 + 0x84 * i`, written by
+/// `Career_SetupPlayerRider` `0x16a9d8` / `Career_SetupAIRider` `0x16ae68` and `Rivals_InitPairs` `0x167ea0`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RaceRiderRow {
+    pub slot_id: u32,
+    pub name: String,
+    pub stat_bytes: [u8; 16],
+    /// Per-opponent relation tuple `(attitude, cap, tolerance, relation)` at `+0x20 + 4 * j` (`0..6`).
+    pub relations: [(u8, u8, u8, u8); 6],
+    pub character: u32,
+    pub model_character: u32,
+    pub board_kind: u32,
+    pub board_word: u32,
+    pub outfit_word: u32,
+    /// Human player index (`0..3`), or `-1` for an AI rider.
+    pub player: i8,
+    pub level: u32,
+}
+
+impl RaceRiderRow {
+    pub fn is_human(&self) -> bool {
+        self.player >= 0
+    }
+
+    /// Board index (`0..12`) decoded from `board_word` (`Career_GetBoardWord`: `12 * character + board`; cheat boards
+    /// `0x90`/`0x91` fall back to `0`).
+    pub fn board_index(&self) -> usize {
+        if self.board_word < 144 { (self.board_word % 12) as usize } else { 0 }
+    }
+
+    /// Outfit index (`0..7`) decoded from `outfit_word` (`Career_GetOutfitWord0`: `7 * character + outfit`; cheat
+    /// outfits `0x54`/`0x55` fall back to `0`).
+    pub fn outfit_index(&self) -> usize {
+        if self.outfit_word < 84 { (self.outfit_word % 7) as usize } else { 0 }
+    }
+}
+
+impl crate::career::Career {
+    /// Decode the race roster rows (`+0x27dc` count, `0x27e0 + 0x84 * i`) written by `Career_PrepareRace` `0x163980`.
+    pub fn race_roster(&self) -> Vec<RaceRiderRow> {
+        let n = (self.r32(0x27dc) as i32).clamp(0, 6) as usize;
+        let mut out = Vec::with_capacity(n);
+        for i in 0..n {
+            let o = 0x27e0 + 0x84 * i;
+            let raw_name = &self.bytes[o + 4..o + 0xe];
+            let nul = raw_name.iter().position(|&b| b == 0).unwrap_or(raw_name.len());
+            let name = String::from_utf8_lossy(&raw_name[..nul]).into_owned();
+            let stat_bytes: [u8; 16] = self.bytes[o + 0xe..o + 0x1e].try_into().unwrap();
+            let relations = std::array::from_fn(|j| {
+                let a = o + 0x20 + 4 * j;
+                (self.bytes[a], self.bytes[a + 1], self.bytes[a + 2], self.bytes[a + 3])
+            });
+            out.push(RaceRiderRow {
+                slot_id: self.r32(o),
+                name,
+                stat_bytes,
+                relations,
+                character: self.r32(o + 0x38),
+                model_character: self.r32(o + 0x3c),
+                board_kind: self.r32(o + 0x44),
+                board_word: self.r32(o + 0x48),
+                outfit_word: self.r32(o + 0x4c),
+                player: self.bytes[o + 0x65] as i8,
+                level: self.r32(o + 0x74),
+            });
+        }
+        out
+    }
+
+    /// The two race seeds written at the end of `Career_PrepareRace` `0x163980` (`+0x2b04`, `+0x2b00`).
+    pub fn race_seeds(&self) -> (u32, u32) {
+        (self.r32(0x2b04), self.r32(0x2b00))
+    }
+}

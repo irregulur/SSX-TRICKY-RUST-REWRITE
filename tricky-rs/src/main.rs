@@ -122,7 +122,14 @@ struct Props(Vec<Prop>);
 struct PropVisual(usize);
 
 /// Computer-controlled opponents.
-struct Opponent { rider: Rider, driver: AiDriver, character: usize, /// its grudge against the player (made once the characters are known)
+struct Opponent { rider: Rider, driver: AiDriver, character: usize,
+    /// board index (0..12), from `Career_SetupAIRider` (`0x16ae68`, row E1b2r1)
+    board: usize,
+    /// exact 16 stat bytes from `Career_SetupAIRider` (`0x16ae68`, row E1b2r1) when prepared from `SLUS_203.26`
+    stat_bytes: Option<[u8; 16]>,
+    /// starting attitude byte against the player from `Rivals_InitPairs` (`0x167ea0`) / `Rivals_InitPairsCircuit`
+    init_attitude: Option<u8>,
+    /// its grudge against the player (made once the characters are known)
     grudge: Option<rivals::Grudge>, taunt_wait: f32,
     /// the ported computer rider driving it on the snow (row G4e3)
     port: rider::PortAi,
@@ -131,6 +138,7 @@ struct Opponent { rider: Rider, driver: AiDriver, character: usize, /// its grud
 #[derive(Resource, Default)]
 struct Opponents(Vec<Opponent>);
 
+// STANDIN: fallback opponent lineup when `TRICKY_DISC` is absent (no `/SLUS_203.26` for `Career_PrepareRace`)
 fn make_opponents(start: Vec3, yaw: f32, player_char: usize, n_chars: usize, count: usize, round: usize) -> Opponents {
     if n_chars == 0 { return Opponents::default(); }
     let side = Vec3::new(-yaw.cos(), 0.0, yaw.sin());
@@ -143,9 +151,53 @@ fn make_opponents(start: Vec3, yaw: f32, player_char: usize, n_chars: usize, cou
             rider: { let mut r = Rider::new(start + side * lane * 1.5 + Vec3::Y * 0.5, yaw); r.ai = true; r.slot = i as u32 + 1; r },
             driver: AiDriver::new(lane * 1.5, skill),
             character: (player_char + 1 + i * if n_chars > 6 { 2 } else { 1 }) % n_chars,
+            board: 0, stat_bytes: None, init_attitude: None,
             grudge: None, taunt_wait: 1.0, port: Default::default(), draw: DrawLerp::default(),
         }
     }).collect())
+}
+
+/// Prepare the career race roster (`Career_PrepareRace` `0x163980` -> `Career_SetupRidersForMode` `0x165558`,
+/// row E1b2r1) and build `Opponents` from the non-human rows in gate order; falls back to `make_opponents`
+/// when `SLUS_203.26` tables were not loaded.
+fn prepare_lineup(
+    start: Vec3, yaw: f32, lib: &CharLib, game: &ui::Game, list: &LevelList,
+    career: &mut ui::CareerRes, roster: &mut ui::RosterRes,
+) -> Opponents {
+    let me = lib.chars.get(lib.player).map(|c| c.name.as_str()).unwrap_or("mac");
+    let outfit = game.flow.choices.outfit[0] as usize;
+    let Some(rows) = career.prepare_race(
+        roster, game.event, game.round, &ui::track_key(list), me, outfit, game.board, game.master,
+        &mut tricky_game::rand::rand_fx,
+    ) else {
+        let mut out = make_opponents(start, yaw, lib.player, lib.chars.len(), game.opponents(), game.round);
+        if game.master {
+            for o in &mut out.0 { o.board = 11; }
+        }
+        return out;
+    };
+    let player_gate = roster.player_gate;
+    let side = Vec3::new(-yaw.cos(), 0.0, yaw.sin());
+    let mut out = Vec::new();
+    for (gate, row) in rows.iter().enumerate() {
+        if row.is_human() { continue; }
+        let ai_idx = out.len();
+        let lane = gate as f32 - player_gate as f32;
+        let skill = ([0.84f32, 0.76, 0.68, 0.60, 0.52, 0.5][ai_idx % 6] + game.round as f32 * 0.08).min(0.98);
+        let rname = tricky_game::rivals::NAMES.get(row.character as usize).copied().unwrap_or("");
+        let character = lib.chars.iter().position(|c| c.name.eq_ignore_ascii_case(rname))
+            .unwrap_or_else(|| if lib.chars.is_empty() { row.character as usize } else { row.character as usize % lib.chars.len() });
+        out.push(Opponent {
+            rider: { let mut r = Rider::new(start + side * lane * 1.5 + Vec3::Y * 0.5, yaw); r.ai = true; r.slot = ai_idx as u32 + 1; r },
+            driver: AiDriver::new(lane * 1.5, skill),
+            character,
+            board: row.board_index(),
+            stat_bytes: Some(row.stat_bytes),
+            init_attitude: Some(row.relations[player_gate.min(5)].0),
+            grudge: None, taunt_wait: 1.0, port: Default::default(), draw: DrawLerp::default(),
+        });
+    }
+    Opponents(out)
 }
 
 /// Going after the player (`AIComputer_AttackTarget`): ahead of us, steer for a spot 3 m along
@@ -446,7 +498,7 @@ fn main() {
     if std::env::var("TRICKY_GATETEST").is_ok() {
         // line six riders up as a race does and see who gets away
         let mut field = make_opponents(loaded.start, loaded.yaw, 0, 12, 5, 0);
-        field.0.push(Opponent { rider: Rider::new(loaded.start + Vec3::Y * 0.5, loaded.yaw), driver: AiDriver::new(0.0, 0.9), character: 0, grudge: None, taunt_wait: 1.0, port: Default::default(), draw: DrawLerp::default() });
+        field.0.push(Opponent { rider: Rider::new(loaded.start + Vec3::Y * 0.5, loaded.yaw), driver: AiDriver::new(0.0, 0.9), character: 0, board: 0, stat_bytes: None, init_attitude: None, grudge: None, taunt_wait: 1.0, port: Default::default(), draw: DrawLerp::default() });
         println!("start {:.1?} yaw {:.2} line[0] {:.1?} line[1] {:.1?}", loaded.start, loaded.yaw, loaded.line[0], loaded.line[1]);
         let from: Vec<Vec3> = field.0.iter().map(|o| o.rider.pos).collect();
         let (mut t, dt) = (0.0f32, 1.0 / 120.0);
@@ -513,6 +565,7 @@ fn main() {
     .init_resource::<editor::Editor>()
     .init_resource::<editor::Reload>()
     .insert_resource(career)
+    .init_resource::<ui::RosterRes>()
     .insert_resource(levels)
     .insert_resource(padhost::PadHost::load())
     .init_resource::<book::Book>()
@@ -694,7 +747,7 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    game: Res<ui::Game>,
+    (game, list, mut career, mut roster): (Res<ui::Game>, Res<LevelList>, ResMut<ui::CareerRes>, ResMut<ui::RosterRes>),
 ) {
     let level = &level.0;
     // Game space is Z-up; rotate it into Bevy's Y-up and scale it down.
@@ -722,7 +775,10 @@ fn setup(
     // the real characters, if they have been extracted next to the levels
     let lib = load_chars(&level.dir, &mut images, &mut materials);
     let have_chars = !lib.chars.is_empty();
-    commands.insert_resource(make_opponents(rider.0.spawn.0 - Vec3::Y * 0.5, rider.0.spawn.1, lib.player, lib.chars.len(), ui::HEAT - 1, 0));
+    if let Some((elf, _)) = &lib.disc_elf {
+        *roster = ui::RosterRes::from_elf(elf);
+    }
+    commands.insert_resource(prepare_lineup(rider.0.spawn.0 - Vec3::Y * 0.5, rider.0.spawn.1, &lib, &game, &list, &mut career, &mut roster));
     commands.insert_resource(book::Book::load(&lib.dir));
     commands.insert_resource(lib);
     // otherwise a placeholder rider: a board with a body on it
@@ -1734,7 +1790,8 @@ fn gate_window(level: &Level, i: usize) -> Option<(f32, (f32, f32))> {
 fn ride(
     tick: Res<GameTick>, keys: Res<ButtonInput<KeyCode>>, pads: Query<(Entity, &Gamepad)>,
     world: Res<World>, rails: Res<RailsRes>, mut rider: ResMut<RiderRes>, mut race: ResMut<RaceRes>,
-    mut opponents: ResMut<Opponents>, lib: Res<CharLib>, mut props: ResMut<Props>, mut game: ResMut<ui::Game>, list: Res<LevelList>,
+    mut opponents: ResMut<Opponents>, lib: Res<CharLib>, mut props: ResMut<Props>,
+    (mut game, list, mut career, mut roster): (ResMut<ui::Game>, Res<LevelList>, ResMut<ui::CareerRes>, ResMut<ui::RosterRes>),
     mut ride_local: Local<(f32, Option<rider::AiDriver>, bool)>, wa: Option<ResMut<worldanim::WorldAnim>>,
     mut pad_host: ResMut<padhost::PadHost>, mut rumble_out: EventWriter<bevy::input::gamepad::GamepadRumbleRequest>,
 ) {
@@ -1798,7 +1855,7 @@ fn ride(
         r.pad_rumble.set_large(0.0, -1);
         tricky_game::inputring::reset_devices(&mut pad_host.input.pads);
         race.0.restart();
-        *opponents = make_opponents(at.0 - Vec3::Y * 0.5, at.1, lib.player, lib.chars.len(), game.opponents(), game.round);
+        *opponents = prepare_lineup(at.0 - Vec3::Y * 0.5, at.1, &lib, &game, &list, &mut career, &mut roster);
         for p in props.0.iter_mut() { p.reset(); }
         // the level's scripted state too: glass whole, counters full, doors shut, animations as woken
         if let Some(mut wa) = wa { wa.restart = true; }
@@ -1852,9 +1909,11 @@ fn ride(
         Some(levels) => rider::Stats::of_levels(mine, levels, &trickdata::BOARDS[row_of(mine)][game.board.min(11)]),
         None => rider::Stats::of(mine, game.training(), &trickdata::BOARDS[row_of(mine)][game.board.min(11)]),
     };
-    // the stat bytes as `Career_SetupPlayerRider` 0x16a9d8 makes them: the base bytes moved toward 100 by the
-    // career's group levels, a fifth the board's (master: the caps, as the max-attributes cheat)
-    if let Some(levels) = game.levels {
+    // the stat bytes as `Career_SetupPlayerRider` 0x16a9d8 makes them: directly from `Career_PrepareRace`
+    // when loaded from `SLUS_203.26` (row E1b2r1), else recomputed from the career's group levels.
+    if let Some(bytes) = roster.player_stat_bytes {
+        r.stats.bytes = bytes;
+    } else if let Some(levels) = game.levels {
         let i = row_of(mine);
         r.stats.bytes = tricky_game::stats::player_bytes(&tricky_game::stats::BASE[i], &tricky_game::stats::CAPS[i], trickdata::BOARDS[i][game.board.min(11)].bonus, levels, game.master);
     }
@@ -1862,15 +1921,17 @@ fn ride(
     for o in opponents.0.iter_mut() {
         let d = data_of(o.character);
         o.rider.data = d;
-        // rivals ride their first board as rookies and the best one as masters
-        // their fractions from the rival value as their stat bytes (master: fully trained)
+        // their fractions from the rival value as their stat bytes (master: fully trained), on the board
+        // `Career_SetupAIRider` 0x16ae68 chose (`o.board`, row E1b2r1)
+        let ai_board = &trickdata::BOARDS[row_of(d)][o.board.min(11)];
         o.rider.stats = match game.rivals.filter(|_| !game.master) {
-            Some(rivals) => rider::Stats::of_rival(d, row_of(d), rivals[row_of(d)], &trickdata::BOARDS[row_of(d)][0]),
-            None => rider::Stats::of(d, game.training(), &trickdata::BOARDS[row_of(d)][if game.master { 11 } else { 0 }]),
+            Some(rivals) => rider::Stats::of_rival(d, row_of(d), rivals[row_of(d)], ai_board),
+            None => rider::Stats::of(d, game.training(), ai_board),
         };
-        // `Career_SetupAIRider` 0x16ae68's bytes: the base moved toward 100 by a quarter of how much the rider
-        // dislikes the player's character (no board; master: the caps)
-        if let Some(rivals) = game.rivals {
+        // `Career_SetupAIRider` 0x16ae68's bytes directly from `Career_PrepareRace`, else fallback
+        if let Some(bytes) = o.stat_bytes {
+            o.rider.stats.bytes = bytes;
+        } else if let Some(rivals) = game.rivals {
             let i = row_of(d);
             o.rider.stats.bytes = tricky_game::stats::ai_bytes(&tricky_game::stats::BASE[i], &tricky_game::stats::CAPS[i], Some(rivals[i]), game.master);
         }
@@ -2161,9 +2222,13 @@ fn ride(
         for (oi, o) in opponents.0.iter_mut().enumerate() {
             if o.grudge.is_none() {
                 let them = rivals::index(lib.chars.get(o.character).map_or("", |c| c.name.as_str()));
-                // a circuit carries the feeling over from heat to heat
+                // a circuit carries the feeling over from heat to heat; round 0 takes the attitude from
+                // `Rivals_InitPairs` / `Rivals_InitPairsCircuit` (`o.init_attitude`, row E1b2r1)
                 let last = if game.round > 0 { game.attitude.get(&them).copied() } else { None };
-                let mut g = rivals::Grudge::carried(them, me_idx, last);
+                let mut g = match (last, o.init_attitude) {
+                    (None, Some(att)) => rivals::Grudge::with_attitude(them, me_idx, att as i8),
+                    _ => rivals::Grudge::carried(them, me_idx, last),
+                };
                 // TRICKY_GRUDGE: everyone starts out after the player (for testing)
                 if std::env::var("TRICKY_GRUDGE").is_ok() { g.force_level(2); }
                 o.grudge = Some(g);
@@ -2412,7 +2477,7 @@ fn attach_rider_anims(lib: &CharLib, rider: &mut Rider, opponents: &mut Opponent
     let mut lineup: Vec<(usize, usize, bool, f32)> = Vec::with_capacity(1 + opponents.0.len());
     lineup.push((lib.player, game.board.min(11), true, rider.stats.scale));
     for o in &opponents.0 {
-        lineup.push((o.character, if game.master { 11 } else { 0 }, false, o.rider.stats.scale));
+        lineup.push((o.character, o.board.min(11), false, o.rider.stats.scale));
     }
     let roster: Vec<tricky_game::animhost::RosterEntry> = lineup.iter().filter_map(|&(ch_idx, brd, human, _)| {
         let entry = lib.chars.get(ch_idx)?;
@@ -2463,7 +2528,7 @@ fn sync_visuals(
     if lib.chars.is_empty() { return; }
     // (who, which rider, which of that rider's boards)
     let mut want: Vec<(Who, usize, usize)> = vec![(Who::Player, lib.player, game.board.min(11))];
-    want.extend(opponents.0.iter().enumerate().map(|(i, o)| (Who::Ai(i), o.character, if game.master { 11 } else { 0 })));
+    want.extend(opponents.0.iter().enumerate().map(|(i, o)| (Who::Ai(i), o.character, o.board.min(11))));
     let mut have: Vec<(Who, usize, usize)> = existing.iter().map(|(_, v)| (v.who, v.character, v.board)).collect();
     let key = |w: &(Who, usize, usize)| (match w.0 { Who::Player => 0, Who::Ai(i) => i + 1 }, w.1, w.2);
     want.sort_by_key(key);

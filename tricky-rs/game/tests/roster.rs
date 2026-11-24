@@ -843,3 +843,180 @@ fn scene_table_a_matches_the_original() {
     assert!(bad.is_empty(), "table differs at {bad:x?}");
     assert!(ours.iter().any(|&b| b != 0));
 }
+
+#[test]
+fn roster_data_from_elf_and_prepare_race_match_original() {
+    use tricky_game::career::{Career, InitialRelations, CAREER_BASE, CAREER_SIZE};
+    use tricky_game::rand::Streams;
+    use tricky_game::roster::{CircuitHeats, PlayerRiderEnv, PreRaceSel, RosterData, RosterPrepareEnv};
+    let Some(mut r) = Runner::from_env() else { return };
+    let elf = std::fs::read(std::env::var("TRICKY_ELF").unwrap()).expect("read TRICKY_ELF");
+    let data = RosterData::from_elf(&elf).expect("RosterData::from_elf");
+
+    // Verify names and scene_table_a against the original static initializer `PreRaceSel_BuildSceneIndex` 0x168360.
+    let expected_names = ["Eddie", "Kaori", "Luther", "Mac", "Moby", "Zoe", "JP", "Elise", "Psymon", "Seeiah", "Brodi", "Marisol"];
+    for (i, want) in expected_names.iter().enumerate() {
+        let got = std::str::from_utf8(&data.names[i][..data.names[i].len() - 1]).unwrap();
+        assert_eq!(got, *want, "rider {i} name");
+    }
+    r.float_rules = r5900::ps2float::Rules::parse("add=n,mul=n,div=n,cvt=n").unwrap();
+    r.stub(0x2fd14c, |c, m| {
+        let (d, s) = (c.gpr(4) as u32, c.gpr(5) as u32);
+        for k in 0.. {
+            let b = (m.read_u32((s + k) & !3) >> (8 * ((s + k) & 3))) as u8;
+            m.write_u8(d + k, b);
+            if b == 0 { break; }
+        }
+        c.set_gpr(2, d as u64);
+    });
+    r.stub(0x2ce114, |c, m| {
+        let (d, s, n) = (c.gpr(4) as u32, c.gpr(5) as u32, c.gpr(6) as u32);
+        for k in 0..n {
+            let b = (m.read_u32((s + k) & !3) >> (8 * ((s + k) & 3))) as u8;
+            m.write_u8(d + k, b);
+        }
+    });
+    // Run the game's real static table initializers: PreRaceSel_BuildSceneIndex, Career_InitStaticTables, RelTable_Init.
+    r.allow(0x1686a8);
+    r.cpu.set_gpr(4, 0x32ecf0);
+    r.call(0x168360).expect("PreRaceSel_BuildSceneIndex");
+    let rd = |r: &mut Runner, a: u32, n: usize| -> Vec<u8> { (0..n.div_ceil(4)).flat_map(|i| r.mem.read_u32(a + 4 * i as u32).to_le_bytes()).take(n).collect() };
+    assert_eq!(rd(&mut r, 0x3cc028, data.scene_a.len()), data.scene_a);
+
+    r.mem.write_u32(0x335258, 1);
+    r.call(0x169e38).expect("Career_InitStaticTables");
+    let rt = r.mem.alloc(12 * 12 * 16);
+    r.cpu.set_gpr(4, rt as u64);
+    r.allow(0x167208);
+    r.call(0x167208).expect("RelTable_Init");
+    r.mem.write_u32(0x3352b4, rt);
+
+    // Exercise Career_PrepareRace 0x163980 end-to-end across all game modes and circuit heats (0, 1, 2).
+    let mut g = Rng(0x5eed_cafe_1b2e_0001);
+    let modes = [0u32, 2, 3, 4, 5, 6, 7, 8, 9];
+    for (case, &mode) in modes.iter().cycle().take(180).enumerate() {
+        let mut ours = Career::default();
+        let mut init_streams = Streams::default();
+        init_streams.seed_fx(g.next());
+        ours.init_new_game(0, &mut init_streams, None);
+        for k in 0..4 {
+            ours.clear_player_slot(k);
+        }
+        let ch = (g.next() % 12) as i32;
+        ours.assign_player_rider(0, 0, ch, &tricky_game::cheats::Cheats::default());
+        let prof = ours.ptr(0x3110);
+        ours.w32(prof + 0xc, g.next() % 7);
+        ours.w32(prof + 0x10, g.next() % 12);
+        let courses = [0u32, 1, 2, 3, 4, 5, 7, 8, 9, 10, 11];
+        let course = if mode == 6 { 10 } else { courses[g.next() as usize % (courses.len() - 1)] };
+        ours.w32(0x2af8, course);
+        ours.w32(0x2afc, mode);
+        let heat = if mode == 4 { (case % 3) as u32 } else { 0 };
+        ours.w32(0x320c + 0x14, heat);
+        ours.w32(0x27dc, if mode == 2 || mode == 0 || mode == 4 || mode == 8 { 6 } else { 1 });
+        ours.w32(0x16b8, 1 + g.next() % 6);
+        let env = PlayerRiderEnv {
+            words: [0, 0],
+            character_cheat: 0,
+            mallora: g.next() % 5 == 0,
+            max_attrib: g.next() % 3 == 0,
+        };
+        let mut heats = CircuitHeats::default();
+        if mode == 4 && heat > 0 {
+            // Seed valid heat marks from heat 0 first so heat 1/2 have real marks.
+            let mut h0_sel = PreRaceSel::default();
+            let mut h0_rand = Streams::default();
+            h0_rand.seed_fx(g.next());
+            let mut h0_c = ours.clone();
+            h0_c.w32(0x320c + 0x14, 0);
+            let mut p = RosterPrepareEnv { data: &data, sel: &mut h0_sel, heats: &mut heats, env, rel: &InitialRelations, rand_fx: || h0_rand.fx() };
+            h0_c.prepare_race(&mut p);
+        }
+        let seed = g.next();
+        let mut attempts = 0;
+        loop {
+            for k in 0..CAREER_SIZE as u32 / 4 {
+                let v = u32::from_le_bytes(ours.bytes[4 * k as usize..4 * k as usize + 4].try_into().unwrap());
+                r.mem.write_u32(CAREER_BASE + 4 * k, v);
+            }
+            for (a, v) in [(0x3352a4u32, env.words[0]), (0x3352a8, env.words[1]), (0x3352b8, env.character_cheat), (0x3352b0, env.mallora as u32), (0x3352ac, env.max_attrib as u32)] {
+                r.mem.write_u32(a, v);
+            }
+            let init_sel = PreRaceSel::default();
+            for k in 0..5 { r.mem.write_u32(0x32ecf0 + 4 * k as u32, init_sel.co[k] as u32); }
+            for k in 0..15 {
+                r.mem.write_u32(0x32ecf0 + 0x14 + 4 * k as u32, init_sel.ids[k] as u32);
+                r.mem.write_u32(0x32ecf0 + 0x50 + 4 * k as u32, init_sel.firsts[k] as u32);
+                r.mem.write_u32(0x32ecf0 + 0x8c + 4 * k as u32, init_sel.picks[k] as u32);
+            }
+            r.mem.write_u32(0x32ecf0 + 0xc8, init_sel.rider as u32);
+            for i in 0..12 {
+                for w in 0..4 {
+                    r.mem.write_u32(0x335658 + 16 * i as u32 + 4 * w as u32, heats.rows[i][w]);
+                }
+            }
+            let mut rand = Streams::default();
+            rand.seed_fx(seed);
+            for (k, w) in rand.fx.s.iter().enumerate() {
+                r.mem.write_u32(0x345e58 + 4 * k as u32, *w);
+            }
+            r.cpu.set_gpr(4, CAREER_BASE as u64);
+            match r.call(0x163980) {
+                Ok(()) => break,
+                Err(r5900::Error::UnstubbedCall { target, .. }) if target >= 0x100000 && attempts < 60 => {
+                    attempts += 1;
+                    r.allow(target);
+                }
+                Err(e) => panic!("case {case} mode {mode}: {e}"),
+            }
+        }
+        let mut rand = Streams::default();
+        rand.seed_fx(seed);
+        let mut sel = PreRaceSel::default();
+        let mut our_heats = heats;
+        let mut prep = RosterPrepareEnv { data: &data, sel: &mut sel, heats: &mut our_heats, env, rel: &InitialRelations, rand_fx: || rand.fx() };
+        ours.prepare_race(&mut prep);
+
+        let diffs: Vec<String> = (0..CAREER_SIZE as u32)
+            .filter_map(|k| {
+                let got = (r.mem.read_u32((CAREER_BASE + k) & !3) >> (8 * ((CAREER_BASE + k) & 3))) as u8;
+                (got != ours.bytes[k as usize]).then(|| format!("{k:#x}: orig {got:#x}, ours {:#x}", ours.bytes[k as usize]))
+            })
+            .take(12)
+            .collect();
+        assert!(diffs.is_empty(), "case {case} mode {mode} heat {heat} course {course}: career differs: {diffs:?}");
+        for i in 0..12 {
+            for w in 0..4 {
+                assert_eq!(r.mem.read_u32(0x335658 + 16 * i as u32 + 4 * w as u32), our_heats.rows[i][w], "case {case}: heat mark {i}/{w}");
+            }
+        }
+        for (k, x) in rand.fx.s.iter().enumerate() {
+            assert_eq!(r.mem.read_u32(0x345e58 + 4 * k as u32), *x, "case {case}: stream {k}");
+        }
+        let roster = ours.race_roster();
+        assert_eq!(roster.len(), ours.r32(0x27dc) as usize);
+        for (i, row) in roster.iter().enumerate() {
+            assert_eq!(row.slot_id, i as u32);
+            assert!(row.character < 12);
+        }
+        let (s0, s1) = ours.race_seeds();
+        assert_eq!(s0, r.mem.read_u32(CAREER_BASE + 0x2b04));
+        assert_eq!(s1, r.mem.read_u32(CAREER_BASE + 0x2b00));
+    }
+
+    // Verify the n=0 no-human edge of build_race_riders does not panic in Rust (the original's byte 0x2be0
+    // difference comes from Career_FinalizeRoster calling PreRaceSel_MatchRowWithRoster 0x1688f0 with
+    // listcount = n - 1 = -1, which scans past aiStack_a0 on the PS2 stack).
+    let mut empty = Career::default();
+    for k in 0..4 { empty.clear_player_slot(k); }
+    empty.w32(0x27dc, 0);
+    empty.w32(0x2af8, 0);
+    empty.w32(0x2afc, 2);
+    let mut sel = PreRaceSel::default();
+    let sel_tables = data.roster_tables();
+    let mut rand = Streams::default();
+    rand.seed_fx(12345);
+    let mut ctx = data.ctx(&mut sel, &sel_tables, PlayerRiderEnv::default(), &InitialRelations);
+    empty.build_race_riders(&mut ctx, &mut || rand.fx());
+    assert_eq!(empty.race_roster().len(), 0);
+}

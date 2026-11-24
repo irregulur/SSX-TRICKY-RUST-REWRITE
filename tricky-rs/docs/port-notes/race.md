@@ -497,3 +497,36 @@ count 0x3353f8, the riders out 0x335664 + 0x10 · character). The heats' rider s
 - A rider or board past the table gives zero bonuses in the port (STANDIN); the game reads whatever follows the
   table.
 - Checked in the runner on 20,000 random careers, about 5,000 calls each. 8 of 8 mutants were caught.
+
+## ELF roster loader and `Career_PrepareRace` in the app (board row E1b2r1)
+
+- `RosterData::from_elf` (`tricky-rs/game/src/roster.rs`) reads every table required by `RosterCtx` and
+  `Career_PrepareRace` (`0x163980`) directly from the raw `SLUS_203.26` ELF bytes (`va - 0xff000`, matching
+  `Load: 0x1000 -> 0x00100000`):
+  - `gRider_Table` at `0x331ea8` (`12 * 0x38` bytes) and the 12 NUL-terminated rider names at `+4` (`0x37dd10..`)
+  - board points/bonus table at `0x332150` (`12 * 0xf0 + 0x20` bytes)
+  - seven 12-byte selection row tables (`0x37b390` × 9, `0x37b400` × 0x85, `0x37ba40` × 0x9f, `0x37c1b8` × 0x3f,
+    `0x37c4b0` × 0x34, `0x37cd60` × 1, `0x37c720` × 0x85)
+  - `scene_a` built via `fxrand::scene_table_a` (`PreRaceSel_BuildSceneIndex` `0x168360`, `0x3cc028`) from
+    `0x37ab50` (`0x70a`), `0x37b260` (`0x78`), and `0x37b2d8` (`0x28`)
+  - `scene_b` at `0x32f468` (`901 * 12 = 0x2a3c` bytes, immediately before `0x331ea8`) and `scene_c` at `0x37cd70`
+    (`500 * 8 = 0xfa0` bytes, immediately before the rider names at `0x37dd10`)
+  - `StaticTables` initialized by `Career_InitStaticTables` (`0x169e38`).
+- `RosterPrepareEnv` implements `career::PrepareEnv` driving `Career::prepare_race` (`0x163980`) ->
+  `Career::setup_riders_for_mode` (`0x165558`) on `Rand_Fx` (`tricky_game::rand::rand_fx`), and
+  `Career::race_roster()` / `Career::race_seeds()` decode `+0x27dc`, `0x27e0 + 0x84 * i`, and `+0x2b04`/`+0x2b00`.
+- Proven (`Career_BuildRaceRiders` `0x165cf0`, `Career_FinalizeRoster` `0x168b88`, `PreRaceSel_MatchRowWithRoster`
+  `0x1688f0`): the `n = 0` no-human byte `0x2be0` difference noted in E1b2q is an out-of-bounds PS2 stack overread
+  in `PreRaceSel_MatchRowWithRoster` (`listcount = n - 1 = -1` fails `iVar5 == -1` and scans past `aiStack_a0` on
+  the stack). Never reached in play; `build_race_riders` runs cleanly without panicking for `n = 0`.
+- Wired into `tricky-rs/src/ui.rs` (`RosterRes`, `CareerRes::prepare_race` calling `Career_ClearAllPlayerFlags`
+  `0x164928` and `Career_PrepareRace` `0x163980` with `FE_SetupRaceFromMenu` `0x2657a8` entry count) and
+  `tricky-rs/src/main.rs` (`setup` and `ride` restart via `prepare_lineup`), populating the career's race roster
+  (`+0x27dc` / `0x27e0`), `PreRaceSel`, `CircuitHeats`, gate lineup order, AI boards (`o.board`), exact player/AI
+  stat bytes, and round-0 `Rivals_InitPairs` starting attitudes; `make_opponents` remains only as a STANDIN
+  fallback when `TRICKY_DISC` is absent.
+- Verified: `roster_data_from_elf_and_prepare_race_match_original` in `tricky-rs/game/tests/roster.rs` matches
+  `Career_PrepareRace` `0x163980` bit-for-bit across all 9 modes (`0, 2, 3, 4 heats 0/1/2, 5, 6, 7, 8, 9`, 180
+  cases: all `0x3960` career bytes, `PreRaceSel`, `CircuitHeats`, `Rand_Fx` stream, `race_roster()`, and
+  `race_seeds()`); `ui::tests::prepare_race_fills_career_roster_and_selection_from_disc` verified against real
+  `TRICKY_DISC` (`/SLUS_203.26`).
