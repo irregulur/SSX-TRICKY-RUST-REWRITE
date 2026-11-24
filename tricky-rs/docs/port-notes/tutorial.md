@@ -157,7 +157,10 @@ The race side (row C11b4, `lesson::RaceLesson`, `race_lesson_modes_match_the_ori
 (`Race_CreateHandlers` 0x1125c8 makes the handler for a mode; `vf9` 0x1125a0 notes the mode the handlers last ran for
 and the handler before it; `vf1` 0x1126f0 runs `Exit`, `Enter`, `Update`). One quirk: LoadLesson's Update goes to mode 7
 with `Race_CreateHandlers` itself, not `vf9`, so nothing is noted and the next tick enters PreLesson with no `Exit`
-before it; RestartLesson's Update goes to 9 through `vf9`. 120,000 steps of random mode requests matched.
+before it; RestartLesson's Update goes to 9 through `vf9`. 120,000 steps of random mode requests matched. The lesson modes' handlers it runs for real (Load 0x14eca0 / 0x14ecb0 / 0x14f4b0, PreLesson 0x14ed30 /
+0x14ed38 / 0x14f458, Restart 0x14ec48 / 0x14ec60 / 0x14f400, Select 0x1150a8 / 0x115098 / 0x1150a0, End 0x14ed40 /
+0x14ed68) are marked checked in the function index (2026-11-23, irregulur/lynx); `vf1`, `vf9` and `Race_CreateHandlers`
+stay ported only: the test covers modes 6..10, not 1..5.
 
 ## Not read yet
 

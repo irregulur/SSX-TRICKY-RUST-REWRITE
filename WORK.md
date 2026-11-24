@@ -1795,3 +1795,4 @@ matches the original.
 - 2026-11-23 irregulur/lynx: G4k3 done.
 - 2026-11-23 irregulur/lynx: added G4k4 (gap of G4k).
 - 2026-11-23 irregulur/lynx: G4k4 done.
+- 2026-11-23 irregulur/lynx: fixed facts: the lesson modes' 14 handler functions run for real by C11b4's test marked checked in the function index.
