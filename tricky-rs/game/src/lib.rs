@@ -248,3 +248,4 @@ pub mod particlevu;
 pub mod broadphase;
 pub mod resultpages;
 pub mod loadscreen;
+pub mod statics;

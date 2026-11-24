@@ -16,3 +16,12 @@ Part of the port notes (index: [README.md](README.md)); units and wording as des
 - `Math_AngleDiff` 0x1741d0: d = a − b, n = floor(d·0.15915494 + 0.5) (truncate, then − 1 if above), d − n·6.2831855.
 - `Math_Hermite` 0x1704b0: cubic Hermite in the order ((2t³ − 3t²)p0 + p0) + (−2t³ + 3t²)p1 + ((t³ − 2t²) + t)m0 +
   (t³ − t²)m1.
+
+## The header's constant vectors (row X2a, proven)
+
+Forty static initializers (`StaticInit_*`, 124 bytes each, from `StaticInit_PrewindControl` 0x105b10 to
+`StaticInit_Spline` 0x251b20) do one thing: write a header's three constant vectors, x y z only, 0x10 apart, at the
+including file's own copy: (1, 0.966, 0), (1, 0.474, 0), (1, 0.0757, 0.002) (bits 0x3f76e979, 0x3ef2fec5,
+0x3d9b3d08, 0x3b03126f). `tricky_game::statics` keeps the forty places (`HEADER_INITS`) and writes them
+(`init_header_vectors`); `tests/statics.rs` runs each original on random memory around its place. The 284-byte ones
+(`StaticInit_PostAI`, `_Boarder`, `_Lesson`, `_HUD`) write more vectors and are not ported yet.

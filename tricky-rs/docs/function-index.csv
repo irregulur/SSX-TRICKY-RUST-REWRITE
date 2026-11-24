@@ -48,7 +48,7 @@ address,size,name,system,status
 0x105a60,112,PrewindState_SetWindTarget,boarder,checked
 0x105ad0,40,PrewindControl_SaveSnapshot,boarder,checked
 0x105af8,20,PrewindControl_LoadSnapshot,boarder,checked
-0x105b10,124,StaticInit_PrewindControl,boarder,not started
+0x105b10,124,StaticInit_PrewindControl,boarder,checked
 0x105b90,44,Vec4_ScaleCopy1,common,not started
 0x105bc0,160,SitAndWaitControl_Update,boarder,checked
 0x105c60,288,GetupFromSitControl_Update,boarder,checked
@@ -61,9 +61,9 @@ address,size,name,system,status
 0x106210,20,GateAnticipateControl_LoadSnapshot,boarder,checked
 0x106228,132,GateLaunchControl_Enter,boarder,checked
 0x1062b0,464,GateLaunchControl_Update,boarder,checked
-0x106480,124,StaticInit_GateLaunchControl,boarder,not started
+0x106480,124,StaticInit_GateLaunchControl,boarder,checked
 0x106500,60,LessonWaitControl_Enter,tutorial,ported
-0x106548,124,StaticInit_LessonWaitControl,tutorial,not started
+0x106548,124,StaticInit_LessonWaitControl,tutorial,checked
 0x1065c8,36,FinishLineControl_IsDone,boarder,checked
 0x1065f0,16,FinishLineControl_IsPhase4,boarder,checked
 0x106600,100,FinishLineControl_Enter,boarder,ported
@@ -103,7 +103,7 @@ address,size,name,system,status
 0x10aed8,40,GroundMotion_SaveSnapshot,boarder,checked
 0x10af00,20,GroundMotion_LoadSnapshot,boarder,checked
 0x10afb0,44,Vec4_ScaleCopy3,common,not started
-0x10afe8,124,StaticInit_GroundMotion2,boarder,not started
+0x10afe8,124,StaticInit_GroundMotion2,boarder,checked
 0x10b068,40,RailSlideMotion_Enter,boarder,ported
 0x10b090,60,RailSlideMotion_Exit,boarder,ported
 0x10b0d0,3984,RailSlideMotion_Update,boarder,checked
@@ -231,12 +231,12 @@ address,size,name,system,status
 0x116420,160,AIWorld_MarkCellActive,ai,checked
 0x1164c0,20,cAIWorld::SaveSnapshot,ai,checked
 0x1164d8,236,cAIWorld::vf8_1164d8,ai,checked
-0x1165c8,124,StaticInit_AIWorld,ai,not started
+0x1165c8,124,StaticInit_AIWorld,ai,checked
 0x116648,8,thunk_FUN_00115dc0,runtime,ported
 0x116650,20,cAIWorld::~cAIWorld,ai,not started
 0x1166a0,80,cAIWorld::__tf,runtime,host
 0x1166f0,184,Boarder_GatherWorldEmitters,boarder,checked
-0x1167a8,124,StaticInit_AIWorld2,ai,not started
+0x1167a8,124,StaticInit_AIWorld2,ai,checked
 0x116828,360,cBoarder::cBoarder,boarder,ported
 0x116990,132,cBoarder::~cBoarder,boarder,not started
 0x116a18,76,Boarder_ResetSkin,boarder,ported
@@ -449,7 +449,7 @@ address,size,name,system,status
 0x126540,520,Boarder_WallImpactCheck,boarder,checked
 0x126748,84,Boarder_UpdateBroadphase,boarder,ported
 0x1267a0,228,Boarder_Translate,boarder,ported
-0x126888,124,StaticInit_Boarder2,boarder,not started
+0x126888,124,StaticInit_Boarder2,boarder,checked
 0x126918,44,Vec4_ScaleCopy5,common,not started
 0x126948,380,Boarder_SetSteerTarget,boarder,checked
 0x126ac8,112,Boarder_SetSteerTargetUnscaled,boarder,checked
@@ -464,7 +464,7 @@ address,size,name,system,status
 0x127d08,372,Boarder_PlayWindUpMasked,boarder,ported
 0x127e80,720,Boarder_PlayDisappointed,boarder,ported
 0x128150,668,Boarder_PlayCelebrate,boarder,ported
-0x1283f0,124,StaticInit_Boarder3,boarder,not started
+0x1283f0,124,StaticInit_Boarder3,boarder,checked
 0x128470,112,Boarder_TakeOff,boarder,checked
 0x1284e0,1336,Jump_ApplyImpulse,boarder,checked
 0x128a18,208,Boarder_GetFallLine,boarder,checked
@@ -478,7 +478,7 @@ address,size,name,system,status
 0x12b340,1844,Air_IntegrateRK4,boarder,checked
 0x12ba78,1124,Landing_CheckAngles,boarder,checked
 0x12bee0,272,Takeoff_Setup,boarder,ported
-0x12bff0,124,StaticInit_Takeoff,boarder,not started
+0x12bff0,124,StaticInit_Takeoff,boarder,checked
 0x12c088,44,Vec4_ScaleCopy6,common,not started
 0x12c0e8,140,Fx_Splash_Init,boarder,not started
 0x12c178,20,Fx_Splash_Reset,boarder,not started
@@ -557,7 +557,7 @@ address,size,name,system,status
 0x137858,444,AIComputer_RideToJump,ai,ported
 0x137a18,932,AIComputer_RideAtRival,ai,ported
 0x137dc0,924,AIComputer_RideNearRider,ai,ported
-0x138160,124,StaticInit_AIComputer,ai,not started
+0x138160,124,StaticInit_AIComputer,ai,checked
 0x1381e0,44,Vec4_ScaleCopy7,common,not started
 0x138210,416,cComputer::cComputer,ai,not started
 0x1383b0,132,AIComputer_Reset,ai,checked
@@ -588,7 +588,7 @@ address,size,name,system,status
 0x13a2b0,424,AI_InitSkill,ai,checked
 0x13a460,84,cComputer::SaveSnapshot,ai,checked
 0x13a4b8,104,cComputer::LoadSnapshot,ai,checked
-0x13a520,124,StaticInit_Computer,ai,not started
+0x13a520,124,StaticInit_Computer,ai,checked
 0x13a5c8,92,cComputer::__tf,runtime,host
 0x13a628,304,cComputer::~cComputer,ai,not started
 0x13a7c8,116,cComputerState::__tf,runtime,host
@@ -660,7 +660,7 @@ address,size,name,system,status
 0x13d130,452,TriggerOp_SpawnEffect,world,checked
 0x13d2f8,224,cScriptNode::cScriptNode,world,checked
 0x13d3d8,220,cScriptNode::SaveSnapshot,world,checked
-0x13d4b8,124,StaticInit_ScriptNode,world,not started
+0x13d4b8,124,StaticInit_ScriptNode,world,checked
 0x13d538,144,TriggerScript_Spawn,world,ported
 0x13d5d0,92,cScriptNode::__tf,runtime,host
 0x13d630,80,cScriptNodeState::__tf,runtime,host
@@ -1247,7 +1247,7 @@ address,size,name,system,status
 0x1615a8,60,AnimCtl_EndActionPlay2DE,animation,checked
 0x1615e8,84,AnimCtl_EndActionToRide,animation,checked
 0x161640,92,AnimCtl_EndActionStop,animation,checked
-0x1616a0,124,StaticInit_AnimCtl,animation,not started
+0x1616a0,124,StaticInit_AnimCtl,animation,checked
 0x161730,48,Career_Construct,race,ported
 0x161760,64,Career_Destruct,race,not started
 0x1617a0,148,Career_InitNewGame,race,checked
@@ -1362,7 +1362,7 @@ address,size,name,system,status
 0x167ea0,392,Rivals_InitPairs,race,checked
 0x168028,344,Rivals_DecayAttitudes,race,ported
 0x168180,344,Rivals_DecayAttitudes2,race,ported
-0x1682e0,124,StaticInit_Rivals,race,not started
+0x1682e0,124,StaticInit_Rivals,race,checked
 0x168360,808,PreRaceSel_BuildSceneIndex,race,checked
 0x168688,28,PreRaceSel_Destruct,race,not started
 0x1686a8,116,PreRaceSel_Clear,race,ported
@@ -1428,13 +1428,13 @@ address,size,name,system,status
 0x16d1f8,52,Circuit_AddPointsToAll,race,checked
 0x16d230,204,Circuit_SetupRace,race,not started
 0x16d300,1548,Circuit_SetupEventRiders,race,ported
-0x16d910,124,StaticInit_Circuit,race,not started
+0x16d910,124,StaticInit_Circuit,race,checked
 0x16d990,60,CamAnimation::CamAnimation,camera,ported
 0x16d9d0,60,CamAnimation_InitScoped,camera,ported
 0x16da10,148,RaceScene_StartCastClip,race,ported
 0x16daa8,224,RaceScene_UpdateCastClip,race,checked
 0x16db88,88,CamScript_IsRiderAnimDone,camera,checked
-0x16dbe8,124,StaticInit_CamScript,camera,not started
+0x16dbe8,124,StaticInit_CamScript,camera,checked
 0x16dc68,80,CamAnimation::__tf,runtime,host
 0x16dcb8,8,CamAnimation::~CamAnimation,camera,ported
 0x16dcc0,36,cOfflineObject::~cOfflineObject,game,not started
@@ -1443,7 +1443,7 @@ address,size,name,system,status
 0x16dda8,16,CamCamera::GetView,camera,checked
 0x16ddb8,20,CamCamera::GetLens,camera,checked
 0x16ddd0,56,CamCamera_Update,camera,not started
-0x16de00,124,StaticInit_CamCamera,camera,not started
+0x16de00,124,StaticInit_CamCamera,camera,checked
 0x16de80,80,CamCamera::__tf,runtime,host
 0x16ded0,8,CamCamera::~CamCamera,camera,ported
 0x16df00,64,cOfflineObject::__tf,runtime,host
@@ -1460,9 +1460,9 @@ address,size,name,system,status
 0x16e4c0,84,Cml_LoadIfExists,camera,ported
 0x16e518,112,Cml_FindObject,camera,checked
 0x16e588,168,Cml_FindObjectInScope,camera,checked
-0x16e630,124,StaticInit_Cml,camera,not started
+0x16e630,124,StaticInit_Cml,camera,checked
 0x16e6b0,60,CamDirector::CamDirector,camera,ported
-0x16e6f0,124,StaticInit_CamDirector,camera,not started
+0x16e6f0,124,StaticInit_CamDirector,camera,checked
 0x16e770,80,CamDirector::__tf,runtime,host
 0x16e7c0,8,CamDirector::~CamDirector,camera,not started
 0x16e7f0,64,cOfflineObject::__tf,runtime,host
@@ -1472,7 +1472,7 @@ address,size,name,system,status
 0x16fe60,1340,Camera_CollideWorld,camera,checked
 0x1703a0,20,CamView_SetTarget,camera,checked
 0x1703b8,8,CamView_Update,camera,not started
-0x1703c0,124,StaticInit_Camera,camera,not started
+0x1703c0,124,StaticInit_Camera,camera,checked
 0x170440,44,Vec4_Scale,common,ported
 0x170470,60,CamPath::CamPath,camera,ported
 0x1704b0,96,Math_Hermite,common,checked
@@ -1480,7 +1480,7 @@ address,size,name,system,status
 0x170610,724,CamPath_SegmentPoint,camera,checked
 0x1708e8,960,CamPath_SegmentAngles,camera,checked
 0x170ca8,1620,CamPath_Eval,camera,checked
-0x171308,124,StaticInit_CamPath,camera,not started
+0x171308,124,StaticInit_CamPath,camera,checked
 0x171388,80,CamPath::__tf,runtime,host
 0x1713d8,8,CamPath::~CamPath,camera,not started
 0x171410,64,cOfflineObject::__tf,runtime,host
@@ -1492,14 +1492,14 @@ address,size,name,system,status
 0x171fe0,64,cOfflineObject::__tf,runtime,host
 0x1720c0,60,CamScene::CamScene,camera,ported
 0x172100,104,CamScene_GetActorPosition,camera,ported
-0x172168,124,StaticInit_CamScene,camera,not started
+0x172168,124,StaticInit_CamScene,camera,checked
 0x1721e8,80,CamScene::__tf,runtime,host
 0x172238,8,CamScene::~CamScene,camera,ported
 0x172268,64,cOfflineObject::__tf,runtime,host
 0x1722e8,3540,CamCamera_EvalLookAt,camera,checked
 0x1730c0,24,CamLens_SetHeight,camera,checked
 0x1730d8,8,CamLens_Update,camera,not started
-0x1730e0,124,StaticInit_CamCamera2,camera,not started
+0x1730e0,124,StaticInit_CamCamera2,camera,checked
 0x1731f8,116,Camera_ResetRiderTrack,camera,checked
 0x173270,1456,Camera_TrackRider,camera,checked
 0x173820,460,BxCamera_Init,camera,checked
@@ -1577,9 +1577,9 @@ address,size,name,system,status
 0x178fa0,80,CamAnimation::__tf,runtime,host
 0x179028,64,cOfflineObject::__tf,runtime,host
 0x179068,8,Cml_FreeHandle,camera,not started
-0x1790b8,124,StaticInit_OfflineObject2,game,not started
-0x179138,124,StaticInit_OfflineObject3,game,not started
-0x1791b8,124,StaticInit_OfflineObject4,game,not started
+0x1790b8,124,StaticInit_OfflineObject2,game,checked
+0x179138,124,StaticInit_OfflineObject3,game,checked
+0x1791b8,124,StaticInit_OfflineObject4,game,checked
 0x179238,1312,Input_InitDefaults,input,ported
 0x179758,40,Input_ComboHeld,input,ported
 0x179780,40,Input_AnyHeld,input,ported
@@ -2397,7 +2397,7 @@ address,size,name,system,status
 0x19e388,40,TextStyle_Construct,render,checked
 0x19e3b0,8,thunk_FUN_0019ded0,runtime,ported
 0x19e460,572,Font_DrawWithCursor,hud,checked
-0x19e6a0,124,StaticInit_Font,hud,not started
+0x19e6a0,124,StaticInit_Font,hud,checked
 0x19e7a0,160,Score_GetRankForPoints,scoring,ported
 0x19e840,68,Score_GetRankColour,scoring,ported
 0x19e888,12492,HudOverlay_InitTables,frontend,checked
@@ -2733,7 +2733,7 @@ address,size,name,system,status
 0x1c8bc8,112,BoarderShadow_Draw,render,checked
 0x1c8c38,52,BoarderShadow_Init,render,checked
 0x1c8c70,92,BoarderShadow_AllocTexture,render,checked
-0x1c8cd0,124,StaticInit_TerrainObjNode,world,not started
+0x1c8cd0,124,StaticInit_TerrainObjNode,world,checked
 0x1c8db8,268,cSnowFallMan::cSnowFallMan,render,checked
 0x1c8ec8,512,SnowFall_InitLayers,render,checked
 0x1c90d0,96,SnowFall_SetDensity,render,checked
@@ -2995,7 +2995,7 @@ address,size,name,system,status
 0x1d9700,504,ParticleMan_DrawSlot,render,checked
 0x1d98f8,8,cParticleMan::vf1_1d98f8,render,not started
 0x1d9900,356,cParticleMan::vf2_1d9900,render,checked
-0x1d9a68,124,StaticInit_ParticleMan,render,not started
+0x1d9a68,124,StaticInit_ParticleMan,render,checked
 0x1d9ae8,80,cParticleMan::__tf,runtime,host
 0x1d9b38,44,Vec4_ScaleCopy19,common,not started
 0x1d9be0,96,cPS2BezierMan::cPS2BezierMan,render,checked
@@ -3344,7 +3344,7 @@ address,size,name,system,status
 0x200680,100,Instance_Draw,world,checked
 0x2006e8,524,LensFX_Draw,render,checked
 0x2008f8,1820,Patch_DrawVisibleCells,render,checked
-0x201018,124,StaticInit_Instance,world,not started
+0x201018,124,StaticInit_Instance,world,checked
 0x201098,44,Vec4_ScaleCopy27,common,not started
 0x2010c8,80,BdrLoad_LoadRider,boarder,ported
 0x201118,32,BdrLoad_AddPart,boarder,not started
@@ -3361,7 +3361,7 @@ address,size,name,system,status
 0x201d30,308,AsyncBdrLoad_IsSlotReady,boarder,ported
 0x201e68,912,AsyncBdrLoad_Request,boarder,ported
 0x2021f8,432,BdrLoad_BindTextures,boarder,checked
-0x2023a8,124,StaticInit_AsyncBdrLoad,boarder,not started
+0x2023a8,124,StaticInit_AsyncBdrLoad,boarder,checked
 0x202428,80,cAsyncBdrLoad::__tf,runtime,host
 0x202478,36,cBdrLoad::~cBdrLoad,game,ported
 0x2024a0,64,cBdrLoad::__tf,runtime,host
@@ -3757,7 +3757,7 @@ address,size,name,system,status
 0x221330,152,CrowdSys_StopAll,world,not started
 0x2213c8,40,cCrowdSys::vf5_2213c8,audio,not started
 0x2213f8,44,CrowdSys_GetBoxState,world,ported
-0x221428,124,StaticInit_CrowdSys,world,not started
+0x221428,124,StaticInit_CrowdSys,world,checked
 0x2214a8,36,cCrowdSys::vf6_2214a8,audio,not started
 0x2214e8,80,cCrowdSys::__tf,runtime,host
 0x221538,108,CrowdSoundSet_Destruct,audio,not started
@@ -3786,7 +3786,7 @@ address,size,name,system,status
 0x222160,500,MidiSys_PushEvent,audio,checked
 0x222358,1084,MidiSys_PlayPending,audio,checked
 0x222798,240,MidiSys_PlayEventCallback,audio,checked
-0x222888,124,StaticInit_MidiSys,audio,not started
+0x222888,124,StaticInit_MidiSys,audio,checked
 0x222908,80,cMidiSys::__tf,runtime,host
 0x222998,20,SndEvent_Init,audio,checked
 0x2229b0,28,Mem_DeleteIfFlag8,common,checked
@@ -3884,7 +3884,7 @@ address,size,name,system,status
 0x225c40,100,Music_StartTricky,audio,checked
 0x225ca8,56,Music_StopTricky,audio,checked
 0x225ce0,60,Music_CountEnabledSongs,audio,checked
-0x225d80,124,StaticInit_Music,audio,not started
+0x225d80,124,StaticInit_Music,audio,checked
 0x225e98,48,Audio_GetSongState,audio,not started
 0x225ed0,80,cMusicSys::__tf,runtime,host
 0x225fa8,48,cPS2SoundManager::cPS2SoundManager,audio,not started
@@ -3942,7 +3942,7 @@ address,size,name,system,status
 0x228d10,188,SpeechSys_ClearEvent,audio,checked
 0x228dd0,60,SpeechSys_IsSlotPlaying,audio,checked
 0x228e10,40,SpeechSys_GetBankId,audio,checked
-0x228e38,124,StaticInit_SpeechSys,audio,not started
+0x228e38,124,StaticInit_SpeechSys,audio,checked
 0x228eb8,80,cSpeechSys::__tf,runtime,host
 0x228fb0,668,Stream_Init,audio,not started
 0x229268,128,Stream_Delete,audio,ported
@@ -4003,11 +4003,11 @@ address,size,name,system,status
 0x22aaa0,544,AudioTGroup_GetBounds,audio,checked
 0x22acc0,836,AudioTGroup_GetShapeBounds,audio,not started
 0x22b008,568,AudioTGroups_AddToGrid,audio,ported
-0x22b240,124,StaticInit_AudioTGroups,audio,not started
+0x22b240,124,StaticInit_AudioTGroups,audio,checked
 0x22b370,1928,WorldEmitter_GatherForListener,audio,checked
 0x22baf8,324,WorldInstance_GetSoundKeys,audio,not started
 0x22bc40,296,WorldEmitter_Falloff,audio,checked
-0x22bd68,124,StaticInit_WorldEmitter,audio,not started
+0x22bd68,124,StaticInit_WorldEmitter,audio,checked
 0x22be18,108,WorldTriggerMgr_Create,audio,ported
 0x22be88,56,WorldTriggerMgr_Destroy,audio,not started
 0x22bec0,76,WorldEmitter_Construct,audio,not started
@@ -4040,11 +4040,11 @@ address,size,name,system,status
 0x22e388,100,SoundId_IsAmbient,audio,not started
 0x22e3f0,12,SoundId_IsAmbientExtra,audio,not started
 0x22e400,32,WorldTriggerMgr_SetActive,audio,ported
-0x22e420,124,StaticInit_WorldTriggerMgr,audio,not started
+0x22e420,124,StaticInit_WorldTriggerMgr,audio,checked
 0x22e4e0,108,Speech_PostFEEvent,audio,checked
 0x22e550,88,Speech_GetFEModeMask,audio,checked
 0x22e5a8,124,Speech_PlayFELine,audio,checked
-0x22e628,124,StaticInit_WorldTriggerMgr2,audio,not started
+0x22e628,124,StaticInit_WorldTriggerMgr2,audio,checked
 0x22e6a8,208,SpeechEvt_Post100200f,audio,checked
 0x22e778,72,SpeechEvt_Post1002010,audio,checked
 0x22e7c0,116,SpeechEvt_Post1002012,audio,checked
@@ -4556,7 +4556,7 @@ address,size,name,system,status
 0x2519b0,120,Spline_SaveSnapshot,boarder,checked
 0x251a28,112,SplinePathNode_Load,ai,checked
 0x251a98,136,SplinePathNode_IsVisible,ai,not started
-0x251b20,124,StaticInit_Spline,boarder,not started
+0x251b20,124,StaticInit_Spline,boarder,checked
 0x251ba0,36,cBxCache::cBxCache,world,not started
 0x251bc8,88,cBxCache::~cBxCache,world,not started
 0x251c20,244,CacheBuffer_Init,world,not started
