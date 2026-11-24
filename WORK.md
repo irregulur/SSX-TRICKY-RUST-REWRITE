@@ -56,7 +56,6 @@ state machine and the renderer are ours. Nothing has been checked against the or
 
 | ID | Task | Area | Needs | Who | Notes |
 |---|---|---|---|---|---|
-| G4k4 | The race's small glue on the game's bytes: `cStartRaceHandler` Enter / Update / Exit (0x113478, 0x1134a0, 0x1134d0), `cCountdownHandler::Exit` 0x113738, the pre- and post-AI nodes' ticks (`cPreAI` vf1 0x1146b0, `cPostAI` vf1 0x114730) and destructors (0x114b08, 0x114a68), checked in the runner with G4k's | any | G4k | irregulur/lynx (2026-11-23) | Gap of G4k |
 | G1 | Boarder state machine: every state (0x00–0x14) and motion (0–6), their enter/update/exit, `cBoarder` vtable, in the original's order per tick | unowned | F1 | | [repo] Many states ported one by one; the dispatch is ours |
 | G1a | Prewind, jump, takeoff, spin and flip control (`PrewindState_Update` 0x1050e8, `Jump_ApplyImpulse` 0x1284e0, `Takeoff_SetSpinRates` 0x126e30, `SpinState_Update` 0x100908, `SpinState_StartFromStick` 0x102158) checked | any | F4a | | [repo] Ported, unchecked Split: G1a1, G1a2 |
 | G1a5b | The rest of G1a5: `Rider::step` (`tricky-rs/game/src/rider.rs`) calls the exact prewind, jump, take-off, spin start and spin (`boarder::prewind_update`, `jump::jump_impulse`, `jump::takeoff_spin_rates`, `jump::spin_start_from_stick`, `spin::spin_update`, all checked) on the rider's own fields (cm, z up), replacing `Rider::air_rotation` and the hand-written prewind and jump | any | G1a5a | | Split of G1a5 (wiring; needs a play test). Split: G1a5b1, G1a5b2, G1a5b3 (the exact functions read the game's pad word, built per boarder state by `cPlayer::GetControls`) |
@@ -125,6 +124,7 @@ matches the original.
 
 | ID | Task | Section | Who | Date | Commit |
 |---|---|---|---|---|---|
+| G4k4 | The race's small glue (`aiobj.rs`): `cStartRaceHandler` Enter / Update / Exit (0x113478, 0x1134a0, 0x1134d0), `cCountdownHandler::Exit` 0x113738, `cPreAI` vf1 0x1146b0 / `cPostAI` vf1 0x114730 (the riders' clips, layers, pose, broad phase, look-back) and their destructors 0x114b08 / 0x114a68, checked in the runner (`tests/aiobj.rs`, 16,000 cases; 11 of 11 mutants). Their constructors 0x114b20 / 0x114a80 have no index entry (Ghidra made no function) | P2 | irregulur/lynx | 2026-11-23 | 21090f5 |
 | G4k3 | The race object's (`cAI`) race reset vf14 0x111108 (`aiobj::race_reset`: skins, loads or load requests, the seed, restart points centred on the six start paths, cameras, the animations, mode 6 or 1) and restart vf15 0x1114d0 (`aiobj::restart`), checked in the runner (`tests/aiobj.rs`, 8,000 cases with G4k's; 12 of 13 mutants, the survivor equivalent) | P2 | irregulur/lynx | 2026-11-23 | fc7caf4 |
 | G4k2 | The race object's (`cAI`) constructor 0x114c00 and destructor 0x114d30 (`aiobj::construct` / `destruct`) and the node's default virtuals it keeps (vf2..vf6 0x17dee0..0x17df00), checked in the runner (`tests/aiobj.rs`, 6 mutants caught) | P2 | irregulur/lynx | 2026-11-23 | 48e4aa7 |
 | C11b5 | The practice's write to rider+0x5a70 is the score's trick name (+0x5820 +0x250, `Score_GetTrickName` 0x157978) cleared, so only a trick named during the practice counts as seen: `lesson::Env::clear_trick_text`, checked in `tests/lesson.rs` (the name in the rider's memory compared each step); the lesson's start-up `Lesson::start` (`LessonMan_Init` 0x14aaa0: the rider, the six picture sheets and the archive by the rider's short name, the pad maps, 20.0s, the recording) checked against the real function (`tests/lesson_pads.rs`); `lesson::recording_path` | P3 | irregulur/lynx | 2026-11-23 | 88ae606 |
@@ -1794,3 +1794,4 @@ matches the original.
 - 2026-11-23 irregulur/lynx: added G4k3 (gap of G4k).
 - 2026-11-23 irregulur/lynx: G4k3 done.
 - 2026-11-23 irregulur/lynx: added G4k4 (gap of G4k).
+- 2026-11-23 irregulur/lynx: G4k4 done.
