@@ -89,7 +89,7 @@ matches the original.
 | C8 | Alaska | unowned | C0, E9 | | [est] |
 | C9 | Pipedream (show-off only) | unowned | C0, E9 | | [est] |
 | C10 | Untracked (freeride) | unowned | C0, E9 | | [est] |
-| C12a | The app's World Circuit on `tricky_game::circuit` instead of `ui.rs`'s stand-in: after each circuit race `Career::check_new_records` with a `RecordsEnv` calling `Circuit::process_race_result`, heats through `Circuit::advance_event` (with E1b2o's rider set-up), the unlock list shown on the results screens | unowned | C12, E12d2, E1b2o | | Gap of C12 |
+| C12a | The app's World Circuit on `tricky_game::circuit` instead of `ui.rs`'s stand-in: after each circuit race `Career::check_new_records` with a `RecordsEnv` calling `Circuit::process_race_result`, heats through `Circuit::advance_event` (with E1b2o's rider set-up), the unlock list shown on the results screens | unowned | C12, E12d2, E1b2o | irregulur/neon (2026-11-24) | Gap of C12 |
 | C13 | World Circuit show-off: clock, checkpoints, medals | unowned | C0, E12 | | [repo] README: show-off medals "still mine" |
 | C14 | Single event, freeride and practice modes | unowned | C0, G9 | | [est] |
 | C16 | Unlockables: characters, outfits, boards, the hidden ones, and the button cheats | unowned | C12, E10 | | [repo] |
