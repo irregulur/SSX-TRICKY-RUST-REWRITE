@@ -24,6 +24,7 @@ pub mod cheats;
 pub mod collide;
 pub mod control;
 pub mod controls;
+pub mod copies;
 pub mod controllers;
 pub mod course_ground;
 pub mod knockables;

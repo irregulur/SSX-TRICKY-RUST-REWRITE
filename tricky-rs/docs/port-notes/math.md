@@ -27,3 +27,12 @@ including file's own copy: (1, 0.966, 0), (1, 0.474, 0), (1, 0.0757, 0.002) (bit
 (`StaticInit_PostAI`, `_Boarder`, `_Lesson`, `_HUD`, row X2b) write six more words-groups first, in one of two
 layouts (`WIDE_A` for PostAI and HUD, `WIDE_B` for Boarder and Lesson; 0x60 bytes, then the vectors at +0x60:
 `init_wide`), checked by the same test.
+
+## The copied small helpers (row X2c, proven)
+
+`tricky_game::copies`, checked in the runner (`tests/copies.rs`, 12,000 cases, 10 of 12 mutants caught, the two
+left equivalent: a self-copy, a zero written over a zero). The 28 `Vec4_ScaleCopy*` are byte-for-byte
+`Vec4_Scale` 0x102f50 (`vmulx`); `Vec3_Assign`/`Mem_Copy4`/`Float_Assign` are `memcpy` of 12/4/4 bytes unless
+source and destination are the same (then `v0` is left as it was); `Rand_Init` copies 24 bytes from 0x3a4a00;
+`Vec3_PackShort` writes x, y, z × 32767 (0x46fffe00, `cvt.w.s`) as halfwords at `base + 6i`;
+`PtrArray_FreeAll` frees and clears each set pointer, re-reading the (signed) count every pass, then zeroes it.
