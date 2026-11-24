@@ -98,6 +98,7 @@ matches the original.
 | X1 | No stand-ins left: `grep -rn STANDIN tricky-rs` is empty | any | F8 | | [est] |
 | X2 | Function index at 100% ported (every function either ported or marked not needed, with a reason, e.g. PS2 hardware glue) | any | F1 | | [est] |
 | X3 | Function index at 100% checked | any | F4, X2 | | [est] |
+| X2c | The small helpers the compiler copied into many files, on the game's bytes in `tricky-rs/game/src/copies.rs`: the 28 `Vec4_ScaleCopy*` (0x105b90..0x2b6a70), `Quat_Construct` 0x110860, `Vec4_Construct` 0x110898, `Vec4_AddTo` 0x1108d0, `Vec3_Assign` 0x198720, `Mem_Copy4` 0x198738, `Float_Assign` 0x198750, `Rand_Init` 0x2401a0, `Vec3_PackShort` 0x1e7da0, `Mat4_TransformVec4Copy1` 0x2085e8, `Mem_DeleteIfFlag9` 0x260fa0, `PtrArray_FreeAll` 0x21edf0; checked in the runner | any | F1 | irregulur/lynx (2026-11-24) | Gap of X2 |
 | X4 | Full playthrough of World Circuit, race and show-off, every course, gold everywhere, on our code | any | C1–C16 | | [est] |
 | X5 | 100% completion: every rider maxed, every trick book chapter, every unlock | any | X4 | | [est] |
 | X6 | Runs from the player's own disc only: no SSX-Library, no Python export step, no vgmstream | any | E2–E5, G10 | | [est] |
@@ -1833,3 +1834,4 @@ matches the original.
 - 2026-11-24 irregulur/lynx: C11d1 done.
 - 2026-11-24 irregulur/lynx: closed umbrella C11d (all its parts done or checked).
 - 2026-11-24 irregulur/neon: E9b2 done (unified List-3 descending `sort_id` order in `CellHost`, `World_FindScript` 0x260dd8 / `World_DeleteScriptObject` 0x13bbc0 / `World_RunScript` 0x13bad8, engine starters `RaceMode`/`ShowoffMode`/`FreerideMode`/`NoCountdown`/`StartCountdown`/`EndCountdown`, area wake, contact event 1, controller goal event 4 streaming `ScriptEvent`s into `WorldAnim` & `trick_only_ramps`).
+- 2026-11-24 irregulur/lynx: added X2c (copied small helpers).
