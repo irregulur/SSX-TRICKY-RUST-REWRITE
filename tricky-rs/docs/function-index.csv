@@ -153,9 +153,9 @@ address,size,name,system,status
 0x1117f0,44,Race_GoToEndLesson,race,ported
 0x111820,3376,cAI::vf17_111820,ai,ported
 0x112550,56,cAI::vf12_112550,ai,checked
-0x1125a0,40,cAI::vf9_1125a0,ai,ported
-0x1125c8,292,Race_CreateHandlers,race,ported
-0x1126f0,160,cAI::vf1_1126f0,ai,ported
+0x1125a0,40,cAI::vf9_1125a0,ai,checked
+0x1125c8,292,Race_CreateHandlers,race,checked
+0x1126f0,160,cAI::vf1_1126f0,ai,checked
 0x112790,76,cAI::SaveSnapshot,ai,checked
 0x1127e0,100,cAI::vf8_1127e0,ai,checked
 0x112848,108,Race_HasStartGate,race,checked

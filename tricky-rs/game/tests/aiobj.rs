@@ -2,7 +2,8 @@
 //! it): the race object's vf10 0x1108f0 (reset), vf11 0x110bf8 (the riders made), vf13 0x110fa0 (tear-down) and vf16
 //! 0x111560 (start of a race), (row G4k2) its constructor 0x114c00 and destructor 0x114d30, and (G4k3) vf14 0x111108
 //! (the race reset) and vf15 0x1114d0 (the restart), and (G4k4) the start-race handler, the countdown's exit, the
-//! pre- and post-AI nodes' ticks and destructors. Every case builds a random race object, career roster (0..6 riders, computers and
+//! pre- and post-AI nodes' ticks and destructors, and (G4k5) the mode machine: vf1 0x1126f0, vf9 0x1125a0 and
+//! `Race_CreateHandlers` 0x1125c8 on every mode, the handlers stood in for. Every case builds a random race object, career roster (0..6 riders, computers and
 //! players mixed), app and controllers in the arena; one function then runs on both sides. Every callee is a
 //! stand-in answering from the case's seed: the controllers' constructors answer their object and give it a boarder
 //! (or none, at times) at +0; the list's first node is a random word or none. The calls are compared with their
@@ -57,10 +58,10 @@ fn slot(off: u32) -> u32 {
     0x0182_0000 + off
 }
 /// the objects' virtuals: the boarder's destructor +8, the +0x64 object's +0x10, the race's +0x60 and +0x78
-const SLOTS: [u32; 8] = [8, 0x10, 0x60, 0x78, 0xa0, 0x48, 0x50, 0x68];
-const FUNCS: [u32; 16] = [
+const SLOTS: [u32; 9] = [8, 0x10, 0x60, 0x78, 0xa0, 0x48, 0x50, 0x68, 0x18];
+const FUNCS: [u32; 19] = [
     0x1108f0, 0x110bf8, 0x110fa0, 0x111560, 0x114c00, 0x114d30, 0x111108, 0x1114d0, 0x113478, 0x1134a0, 0x1134d0,
-    0x113738, 0x1146b0, 0x114730, 0x114b08, 0x114a68,
+    0x113738, 0x1146b0, 0x114730, 0x114b08, 0x114a68, 0x1126f0, 0x1125a0, 0x1125c8,
 ];
 /// the riders `Race_GetRider` answers (big objects: +0x46b0 is read)
 const RIDERS: (u32, u32) = (0x0170_0000, 0x4800);
@@ -88,7 +89,7 @@ fn arity(f: u32) -> usize {
         ALLOC | FILL | COMPUTER_CTOR | PLAYER_CTOR | RIDER_INFO | ARCHIVE_OPEN | LIST_ADD => 3,
         f if f == slot(0x78) => 3,
         SKIN_MEM | INPUT_DEFAULTS | VIBRATION | LIST_DELETE_ALL | LIST_FIRST | LIST_UNLINK => 2,
-        f if f == slot(8) || f == slot(0x10) => 2,
+        f if f == slot(8) || f == slot(0x10) || f == slot(0x18) => 2,
         RAND_FX => 0,
         _ => 1,
     }
@@ -172,6 +173,9 @@ fn ours(m: &mut Mem, e: &mut dyn FeEnv, f: u32, a1: u32, a2: u32) -> u32 {
         0x114730 => ao::post_ai_tick(m, e),
         0x114b08 => ao::ai_node_destruct(m, e, AI, ao::PRE_AI_VT, a1),
         0x114a68 => ao::ai_node_destruct(m, e, AI, ao::POST_AI_VT, a1),
+        0x1126f0 => ao::tick(m, e, AI),
+        0x1125a0 => ao::set_mode(m, AI, a1),
+        0x1125c8 => ao::create_handlers(m, AI, a1),
         0x1108f0 => ao::reset(m, e, AI),
         0x110bf8 => ao::make_riders(m, e, AI),
         0x110fa0 => ao::tear_down(m, e, AI),
@@ -217,8 +221,8 @@ fn race_object_glue_matches_the_original() {
     r.mem.read(DATA.0, &mut data).unwrap();
     let mut g = Rng(0x64b0_0000_0000_0001);
     let mut riders = [0u32; 7];
-    for case in 0..16000u32 {
-        let func = FUNCS[(case % 16) as usize];
+    for case in 0..19000u32 {
+        let func = FUNCS[(case % 19) as usize];
         let heap = if func == 0x110bf8 { HEAP.1 } else { 0x100 };
         let mut regions = vec![
             (DATA.0, data.clone()),
@@ -290,6 +294,16 @@ fn race_object_glue_matches_the_original() {
                     m.w32(AI + 0xc4 + 4 * k, g.pick(&[0, obj(k)]));
                 }
             }
+            0x1126f0 | 0x1125a0 | 0x1125c8 => {
+                // (the modes 0..12, the handlers: the race's own or none before)
+                let cur = g.below(13);
+                m.w32(AI + 0x1c, cur);
+                let other = g.below(13);
+                m.w32(AI + 0x20, g.pick(&[cur, other]));
+                let old = obj(g.below(16));
+                m.w32(AI + 0x60, g.pick(&[0, old]));
+                m.w32(AI + 0x64, obj(g.below(16)));
+            }
             0x111108 => {
                 m.w32(AI + 0x88, g.below(7));
                 for k in 0..6 {
@@ -319,7 +333,14 @@ fn race_object_glue_matches_the_original() {
         ans.seed.set(((g.next() as u64) << 32) | g.next() as u64);
         ans.n.set(0);
         ans.heap.set(HEAP.0);
-        let (a1, a2) = if func == 0x111108 { (g.below(2), g.below(2)) } else { (g.next(), 0) };
+        let (a1, a2) = match func {
+            0x111108 => (g.below(2), g.below(2)),
+            0x1125a0 | 0x1125c8 => {
+                let v = [m.r32(AI + 0x1c), g.below(13), g.next()];
+                (g.pick(&v), 0)
+            }
+            _ => (g.next(), 0),
+        };
         // (the handlers: a0 the handler, a1 the race)
         let handler = matches!(func, 0x113478 | 0x1134a0 | 0x1134d0 | 0x113738);
         let mut env = Env { log: Vec::new(), ans: &ans };

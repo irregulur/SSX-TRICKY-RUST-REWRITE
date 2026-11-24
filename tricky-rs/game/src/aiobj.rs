@@ -2,7 +2,8 @@
 //! made (vf11 0x110bf8), torn down (vf13 0x110fa0) and set out at the start of a race (vf16 0x111560). Allocation,
 //! the career's race roster and virtual calls: every call out goes through [`FeEnv`]. Checked in the function runner
 //! (`tests/aiobj.rs`). Row G4k2 adds its constructor 0x114c00, destructor 0x114d30 and the node's default virtuals,
-//! G4k3 the race reset (vf14 0x111108) and the restart (vf15 0x1114d0).
+//! G4k3 the race reset (vf14 0x111108) and the restart (vf15 0x1114d0), G4k5 the mode machine (vf1 0x1126f0, vf9
+//! 0x1125a0, `Race_CreateHandlers` 0x1125c8).
 //!
 //! The race object: +8 its table (the race's own virtuals), +0x1c / +0x20 / +0x60 / +0x68 words, +0x64 an object
 //! (its table at +0), +0x6c..+0x78 the four inputs (`cInput`, 0x274 bytes), +0x7c the players, +0x80 the computer
@@ -511,4 +512,70 @@ pub fn post_ai_tick(m: &mut Mem, e: &mut dyn FeEnv) {
 pub fn ai_node_destruct(m: &mut Mem, e: &mut dyn FeEnv, node: u32, vt: u32, how: u32) {
     m.w32(node + 8, vt);
     e.call(m, NODE_DTOR, &[node, how]);
+}
+
+/// The race's modes' handlers (`Race_CreateHandlers` 0x1125c8, its jump table 0x3645f0) by mode 1..11: the handler's
+/// place in the race object and its name (0x364558..): 1 PreRace +0x24, 2 Countdown +0x2c, 3 Race +0x30, 4 EndRace
+/// +0x34, 5 ReplayEndRace +0x38, 6 LoadLesson +0x48, 7 PreLesson +0x4c, 8 RestartLesson +0x50, 9 SelectLesson +0x54,
+/// 10 EndLesson +0x58, 11 StartRace +0x5c
+pub const MODE_HANDLERS: [(u32, u32); 11] = [
+    (0x24, 0x364558),
+    (0x2c, 0x364560),
+    (0x30, 0x364570),
+    (0x34, 0x364580),
+    (0x38, 0x364588),
+    (0x48, 0x364590),
+    (0x4c, 0x3645a0),
+    (0x50, 0x3645b0),
+    (0x54, 0x3645c0),
+    (0x58, 0x3645d0),
+    (0x5c, 0x3645e0),
+];
+
+/// `Race_CreateHandlers` 0x1125c8(ai, mode): for a mode 1..11 its handler (+0x64), the mode (+0x1c) and the
+/// handler's name (+0x68); any other mode clears the three
+pub fn create_handlers(m: &mut Mem, ai: u32, mode: u32) {
+    match MODE_HANDLERS.get(mode.wrapping_sub(1) as usize) {
+        Some(&(at, name)) => {
+            m.w32(ai + 0x64, ai + at);
+            m.w32(ai + 0x1c, mode);
+            m.w32(ai + 0x68, name);
+        }
+        None => {
+            m.w32(ai + 0x1c, 0);
+            m.w32(ai + 0x64, 0);
+            m.w32(ai + 0x68, 0);
+        }
+    }
+}
+
+/// `cAI` vf9 0x1125a0(ai, mode), the mode asked for: a new mode keeps the one it leaves (+0x20) and that mode's
+/// handler (+0x60), then [`create_handlers`]; the same mode does nothing
+pub fn set_mode(m: &mut Mem, ai: u32, mode: u32) {
+    let cur = m.r32(ai + 0x1c);
+    if mode == cur {
+        return;
+    }
+    m.w32(ai + 0x20, cur);
+    m.w32(ai + 0x60, m.r32(ai + 0x64));
+    create_handlers(m, ai, mode);
+}
+
+/// `cAI` vf1 0x1126f0(ai), the race's tick: on a mode change (+0x20 ≠ +0x1c) the old handler's Exit (its table
+/// +0x10, if there is one), the new one's Enter (+8), the old one forgotten and the change noted; then the handler's
+/// Update (+0x18) and the race's tick count (+0x18) up by one. Each handler gets (itself, the race).
+pub fn tick(m: &mut Mem, e: &mut dyn FeEnv, ai: u32) {
+    if m.r32(ai + 0x20) != m.r32(ai + 0x1c) {
+        let old = m.r32(ai + 0x60);
+        if old != 0 {
+            vcall_at(m, e, old, 0, 0x10, &[ai]);
+        }
+        let new = m.r32(ai + 0x64);
+        vcall_at(m, e, new, 0, 8, &[ai]);
+        m.w32(ai + 0x60, 0);
+        m.w32(ai + 0x20, m.r32(ai + 0x1c));
+    }
+    let h = m.r32(ai + 0x64);
+    vcall_at(m, e, h, 0, 0x18, &[ai]);
+    m.w32(ai + 0x18, m.r32(ai + 0x18).wrapping_add(1));
 }

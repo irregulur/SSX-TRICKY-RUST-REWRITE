@@ -255,6 +255,17 @@ race's `Race_UpdateLookBack`; the count (race +0x88) and the game are read anew 
 table 0x3646e8, 0x114a68 table 0x364698) put the table back and end in the node's. Their constructors (0x114b20,
 0x114a80: the node's, then the table) have no function in the index (Ghidra made none) and are not ported.
 
+Row G4k5 (proven, same test, 19,000 cases over the 19 functions, 12 of 12 mutants): the race object's mode machine on
+the game's bytes (`aiobj::tick`, `set_mode`, `create_handlers`). `Race_CreateHandlers` 0x1125c8 maps modes 1..11
+through its jump table 0x3645f0 to a handler in the race object and a name: 1 +0x24 0x364558, 2 +0x2c 0x364560, 3
++0x30 0x364570, 4 +0x34 0x364580, 5 +0x38 0x364588, 6 +0x48 0x364590, 7 +0x4c 0x3645a0, 8 +0x50 0x3645b0, 9 +0x54
+0x3645c0, 10 +0x58 0x3645d0, 11 +0x5c 0x3645e0, writing +0x64 (handler), +0x1c (mode), +0x68 (name); any other mode
+(0, or above 11) clears all three. vf9 0x1125a0 on a new mode keeps the old mode (+0x20) and its handler (+0x60)
+first; the same mode does nothing. vf1 0x1126f0: when +0x20 ≠ +0x1c the old handler's Exit (table +0x10, skipped
+when +0x60 is null), the new one's Enter (+8), +0x60 cleared and +0x20 = +0x1c; then always the handler's Update
+(+0x18) and +0x18 counts up. Handlers get (handler, race). So mode 0 (no handler) would crash the original: the
+race is always put in a mode first. `lesson::RaceLesson` keeps its own model of modes 6..10 for the lesson.
+
 ## Rank catch-up: the unchecked list walk
 
 Proven on the PS2: `Race_UpdatePlacingsAndRubberBand` 0x115100 runs every 6 ticks (`race+0x18 % 6`), over
