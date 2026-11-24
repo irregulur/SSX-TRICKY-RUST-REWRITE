@@ -1176,6 +1176,15 @@ impl AnimHost {
         self.skins.get(slot)?.last_pose.clone()
     }
 
+    /// `CollBody_Translate` 0x236448 (called by `Boarder_Translate` 0x1267a0): shifts the cached pose's
+    /// `coll_body` (`rider+0x470`) in place so later casts in the same tick (`AirMotion_Update` wall ray,
+    /// `Boarder_RiderCollisions`) see the translated spheres.
+    pub fn translate_coll_body(&mut self, slot: usize, by: [f32; 4]) {
+        if let Some(snap) = self.skins.get_mut(slot).and_then(|s| s.last_pose.as_mut()) {
+            snap.coll_body.translate(by);
+        }
+    }
+
     /// Drain sound / clip-start events accumulated during `play_clip` and `update_layers`.
     pub fn drain_events(&mut self) -> Vec<AnimEvent> {
         std::mem::take(&mut self.alloc.events)
@@ -1428,5 +1437,8 @@ impl RiderAnim {
     }
     pub fn pose_snapshot(&self) -> Option<PoseSnapshot> {
         self.lock().pose_snapshot(self.slot)
+    }
+    pub fn translate_coll_body(&self, by: [f32; 4]) {
+        self.lock().translate_coll_body(self.slot, by);
     }
 }

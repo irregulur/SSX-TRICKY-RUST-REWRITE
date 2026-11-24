@@ -1911,21 +1911,12 @@ impl Rider {
                 }
             }
         }
-        // `Boarder_InstanceCollisions` 0x125088 (0x1089f8, row E8q) + wall ray (0x108a2c), after rail capture
+        // `Boarder_InstanceCollisions` 0x125088 (0x1089f8, row E8q) + wall ray (0x108a2c, row E8p), after rail capture.
+        // `AirMotion_Update` 0x108378 runs the wall ray unconditionally after `Boarder_InstanceCollisions` using the
+        // pre-RK4 board up (`rider+0x4ac0`, `pre_frame[2]`) and the translated collision body (`rider+0x470`, mask `0xcf`).
         if !self.grounded && self.crashed <= 0.0 {
-            match &world.course {
-                Some(course) => {
-                    ground_tick::air_instance_collisions(self, world, course);
-                    if self.crashed <= 0.0 {
-                        self.air_wall(world, course);
-                    }
-                }
-                None => {
-                    let mut q = self.pos;
-                    self.walls(world, &mut q);
-                    self.pos = q;
-                }
-            }
+            let body = world.course.as_ref().map(|course| ground_tick::air_instance_collisions(self, world, course));
+            self.air_wall(world, body, pre_frame[1], pre_frame[2]);
         }
     }
 
@@ -2577,55 +2568,81 @@ impl Rider {
         self.spin_st = Some(st);
     }
 
-    /// The air's wall on the course (row G20c3c3): `AirMotion_Update` 0x108378's wall ray, `World_RayCast` with
-    /// `cWorldBoarder`(the body, 0) and the body's mask 0xcf (rider+0x494), then its push out of the wall and, moving
-    /// into it, the glancing bump that turns the kept attitude toward the wall and takes the velocity's part into it
-    /// away ([`crate::air_motion::wall_push`], [`crate::air_motion::wall_bump`]), or the crash. STANDIN: the body
-    /// on the bind pose ([`Rider::bind_body`]'s, row G5), and the crash as the port's air-wall wipe-out
-    fn air_wall(&mut self, world: &CollisionWorld, course: &crate::course_ground::CourseGround) {
-        let mut body = match self.anim.as_ref().and_then(|a| a.pose_snapshot()) {
-            Some(snap) => snap.coll_body,
+    /// `AirMotion_Update` 0x108378 (`0x108a00..0x108e50`, rows G20c3c3 & E8p): sets collision body mask
+    /// `rider+0x494 = 0xcf`, casts `cWorldBoarder(rider+0x470, 0)` through `World_RayCast` 0x25aff8 on the course
+    /// (or `CollisionWorld::air_wall_cast` on a levels folder without course collision), hands any hit (`0 < frac`)
+    /// to [`Self::air_wall_hit_up`] with the pre-RK4 board up (`rider+0x4ac0`), and leaves the live body's mask at `-1`.
+    fn air_wall(&mut self, world: &CollisionWorld, body: Option<crate::collbody::CollBody>, fwd: [f32; 4], up: [f32; 4]) {
+        let mut body = body.or_else(|| self.anim.as_ref().and_then(|a| a.pose_snapshot()).map(|s| s.coll_body)).unwrap_or_else(|| {
+            ground_tick::bind_body_at(ground_tick::to_game(self.pos, 100.0, 1.0), fwd, up, self.stats.scale)
+        });
+        body.x24 = 0xcf;
+        let hit = match &world.course {
+            Some(course) => {
+                let mut q = crate::worldboarder::WorldBoarder::new(&body, 0);
+                let (t, h) = course.ray_cast(&mut q, world.showoff, None, &|i| world.course_skips(i));
+                h.filter(|_| 0.0 < t).map(|h| crate::air_motion::Ray { frac: t, point: h.pos, normal: h.normal, word: h.surface as u32 })
+            }
             None => {
-                let o = match &self.att {
-                    Some((o, _)) => *o,
-                    None => orient::placed_attitude(placed_heading(self.yaw), None),
-                };
-                let up = self.board_frame()[2];
-                ground_tick::bind_body_at(ground_tick::to_game(self.pos, 100.0, 1.0), o.fwd, up, self.stats.scale)
+                // STANDIN (levels folder without course collision): `cWorldBoarder`(0xcf) cast against mesh triangles
+                let (t, h) = world.air_wall_cast(&body);
+                h.filter(|_| 0.0 < t).map(|h| crate::air_motion::Ray { frac: t, point: h.pos, normal: h.normal, word: 0 })
             }
         };
-        body.x24 = 0xcf;
-        let mut q = crate::worldboarder::WorldBoarder::new(&body, 0);
-        let (t, h) = course.ray_cast(&mut q, world.showoff, None, &|i| world.course_skips(i));
-        let Some(h) = h.filter(|_| 0.0 < t) else { return };
-        self.air_wall_hit(&crate::air_motion::Ray { frac: t, point: h.pos, normal: h.normal, word: h.surface as u32 });
+        if let Some(ray) = hit {
+            self.air_wall_hit_up(&ray, up);
+        }
     }
 
-    /// What the air's wall ray hitting `wall` does to the rider (the second half of [`Rider::air_wall`]): the push out
-    /// of it, then the glance (the kept attitude turned toward the wall, the velocity's part into it gone) or the crash
+    /// What the air's wall ray hitting `wall` does to the rider (`AirMotion_Update` 0x108378 at `0x108a40..0x108e34`,
+    /// rows G20c3c3 & E8p): `Boarder_Translate` 0x1267a0 by `1.1 * frac * normal`, then the glance (quaternion turned
+    /// at most `0x3dd67750` rad, normal velocity stripped, no bounce) or `cPlayer::vf11` spray/rumble + `Boarder_Wipeout`.
     pub fn air_wall_hit(&mut self, wall: &crate::air_motion::Ray) {
+        self.air_wall_hit_up(wall, self.board_frame()[2]);
+    }
+
+    fn air_wall_hit_up(&mut self, wall: &crate::air_motion::Ray, up: [f32; 4]) {
         let mut o = match &self.att {
             Some((o, _)) => *o,
             None => orient::placed_attitude(placed_heading(self.yaw), None),
         };
-        let up = self.board_frame()[2];
         let wall = *wall;
-        self.pos += ground_tick::port_dir(crate::air_motion::wall_push(&wall)) * 0.01;
+        let push = crate::air_motion::wall_push(&wall);
+        // `Boarder_Translate` 0x1267a0 (`0x108a7c`) + `rider+0x140 += push` (`0x108a90`)
+        if let Some(a) = &self.anim {
+            a.translate_coll_body(push);
+        }
+        self.pos += ground_tick::port_dir(push) * 0.01;
         let mut vel = ground_tick::to_game(self.vel, 100.0, 0.0);
         match crate::air_motion::wall_bump(&mut vel, &mut o, up, &wall) {
             None => {
                 self.vel = ground_tick::port_dir(vel) * 0.01;
                 self.att = Some((o, self.yaw));
             }
-            Some(_) => {
-                let n = ground_tick::port_dir(wall.normal);
-                if self.wall_hit.is_none_or(|w| w.1 < self.vel.length()) {
-                    self.wall_hit = Some((self.pos, self.vel.length()));
+            Some(vn2) => {
+                if self.tube_class != u8::MAX {
+                    // STANDIN: Megaplex tube glass steers the rider without crashing (row E9)
+                    let v_glance = crate::probe::sub(vel, crate::probe::scale(wall.normal, vn2));
+                    self.vel = ground_tick::port_dir(v_glance) * 0.01;
+                    return;
                 }
-                self.crash_kind = if n.dot(Vec3::new(self.yaw.cos(), 0.0, -self.yaw.sin())) > 0.0 { 2 } else { 3 };
-                self.crash_at = Some((ground_tick::port_dir(wall.point) * 0.01, n));
-                self.cause = "air wall";
-                self.wipe_out();
+                // `cPlayer::vf11` 0x1532c0: `cBoarder::EmitBrakeSpray` 0x11a798 + `Rumble_Impact` 0x150a80 (`0x108df8`)
+                self.crash_spray = Some((
+                    ground_tick::port_dir(wall.point) * 0.01,
+                    ground_tick::port_dir(vel) * 0.01,
+                    ground_tick::port_dir(wall.normal),
+                ));
+                self.rumble_impact(vel, wall.normal);
+                if self.crashed <= 0.0 {
+                    let n = ground_tick::port_dir(wall.normal);
+                    if self.wall_hit.is_none_or(|w| w.1 < self.vel.length()) {
+                        self.wall_hit = Some((self.pos, self.vel.length()));
+                    }
+                    self.crash_kind = if n.dot(Vec3::new(self.yaw.cos(), 0.0, -self.yaw.sin())) > 0.0 { 2 } else { 3 };
+                    self.crash_at = Some((ground_tick::port_dir(wall.point) * 0.01, n));
+                    self.cause = "air wall";
+                    self.wipe_out();
+                }
             }
         }
     }

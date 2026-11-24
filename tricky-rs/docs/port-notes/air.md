@@ -245,3 +245,18 @@ Checked: 20,000 predictions and 20,000 air ticks (all five outcomes) against the
   `land_puffs_vn`. Verified by `tests/landing_game.rs`, `tests/air_wall.rs`, `tests/air_motion.rs`, and the full
   `tricky-game` and `tricky-rs` test suites.
 
+- **Exact air wall ray (row E8p, `Rider::air_wall`, `Rider::air_wall_hit`, `CollisionWorld::air_wall_cast`)**:
+  Removed the non-original air branch and `Boarder_WallCollide` (`0x126250`) bounce/gates (`vin > 1`, `n.y < 0.7`,
+  `air_time > 0.15`) from `Rider::walls` (`ground_tick.rs`, now ground-only). `Rider::air_motion_update` runs
+  `ground_tick::air_instance_collisions` (`Boarder_InstanceCollisions` `0x125088`, starting from the animated
+  `pose_snapshot().coll_body` when attached and translating both the local body and `AnimHandle::translate_coll_body`
+  via `Boarder_Translate` `0x1267a0`), followed unconditionally by `Rider::air_wall` (`AirMotion_Update` `0x108a2c`):
+  sets `body.x24 = 0xcf`, casts `cWorldBoarder(body, 0)` through `CourseGround::ray_cast` (`World_RayCast` `0x25aff8`,
+  or `CollisionWorld::air_wall_cast` via `WorldBoarder::triangle_either_side` on a folder level without course
+  collision), pushes `coll_body` (`Boarder_Translate` `0x1267a0`) and `pos` by `1.1 * frac * normal` (`wall_push`),
+  and runs `wall_bump` against the pre-RK4 board up (`rider+0x4ac0`, `pre_frame[2]`): glancing hits turn the
+  quaternion at most `0x3dd67750` rad and strip normal velocity (no bounce); square hits emit `cPlayer::vf11`
+  spray & `Rumble_Impact` (`0x1532c0` / `0x150a80`) and invoke `Boarder_Wipeout` (`0x11d830`) -> `Boarder_SetState(0x13)`
+  -> `SpinControl_Exit` (`0x1029d0`, folding remaining `spin`/`flip` into `att` inside `Rider::set_control`).
+  Verified by `tests/air_wall.rs`, `tests/air_motion.rs`, `tests/air_instances.rs`, `tests/walls.rs`, `tests/physics.rs`.
+

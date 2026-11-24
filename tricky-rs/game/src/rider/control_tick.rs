@@ -398,6 +398,10 @@ impl Rider {
         if s == self.ctl {
             return;
         }
+        if self.ctl == SPIN {
+            // `SpinControl_Exit` 0x1029d0: fold remaining spin/flip into `att` and keep pivot bone put.
+            self.fold_spin_into_att();
+        }
         if self.ctl == RAIL {
             // `RailSlideControl_Exit` 0x1075f0
             self.boost_lvl = 0.0;

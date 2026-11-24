@@ -872,9 +872,10 @@ impl Rider {
         self.up = lean_up(self.up, game_dir(self.normal));
     }
 
-    /// The walls: a sphere around the body (`Boarder_WallCollide` 0x126250: bounce off at least 0.56 m/s) and
-    /// `Boarder_WallImpactCheck` 0x126540. STANDIN: our sphere against the drawn mesh's walls, for the game's
-    /// collision spheres and probes (row E8b). Moves `p`; returns (pushed, hit a wall going in).
+    /// The ground walls: a sphere around the body (`Boarder_WallCollide` 0x126250: bounce off at least 0.56 m/s) and
+    /// `Boarder_WallImpactCheck` 0x126540. STANDIN: our sphere against the drawn mesh's walls when no course collision
+    /// is loaded, for the game's collision spheres and probes (row E8b); ground-only (`Boarder_WallCollide` is never
+    /// called in the air, row E8p). Moves `p`; returns (pushed, hit a wall going in).
     pub(super) fn walls(&mut self, world: &CollisionWorld, p: &mut Vec3) -> (bool, bool) {
         use super::BODY_RADIUS;
         let lift = Vec3::Y * (BODY_RADIUS + 0.35);
@@ -892,38 +893,19 @@ impl Rider {
                 }
                 let side = if n.dot(Vec3::new(self.yaw.cos(), 0.0, -self.yaw.sin())) > 0.0 { 2 } else { 3 };
                 let up = self.board_up();
-                if self.grounded {
-                    // Boarder_WallImpactCheck: s = max(vin/2, 0.56); over 8.33(up.n)+19.44 m/s is a crash,
-                    // over 8.33(up.n) a stumble (only a real knock, not a brush)
-                    let s = (0.5 * vin).max(0.5556);
-                    let un = up.dot(n);
-                    if s > 8.3333 * un + 19.4444 {
-                        self.crash_kind = side;
-                        self.cause = "wall";
-                        self.crash_at = Some((c - n * BODY_RADIUS, n));
-                        self.wipe_out();
-                    } else if s > 8.3333 * un && vin > 4.0 {
-                        self.stumble_by(true);
-                    }
-                    self.vel += n * (vin + (0.5 * vin).max(0.556));
-                } else if vin > 1.0 && n.y < 0.7 && self.air_time > 0.15 {
-                    // in the air: glance off anything close to the way your feet point, else go down
-                    let f = (0.6 + 0.0135 * vin).min(0.9);
-                    // (inside the Megaplex tube the glass only steers the rider)
-                    if up.dot(n) > f || self.tube_class != u8::MAX {
-                        self.vel += n * vin;
-                    } else {
-                        if std::env::var("TRICKY_CRASHDBG").is_ok() {
-                            println!("air wall vin {vin:.2} n {n:.2?} up {up:.2?} flip {:.2} air {:.2}", self.flip, self.air_time);
-                        }
-                        self.crash_at = Some((c - n * BODY_RADIUS, n));
-                        self.crash_kind = side;
-                        self.cause = "air wall";
-                        self.wipe_out();
-                    }
-                } else {
-                    self.vel += n * (vin + (0.5 * vin).max(0.556));
+                // Boarder_WallImpactCheck: s = max(vin/2, 0.56); over 8.33(up.n)+19.44 m/s is a crash,
+                // over 8.33(up.n) a stumble (only a real knock, not a brush)
+                let s = (0.5 * vin).max(0.5556);
+                let un = up.dot(n);
+                if s > 8.3333 * un + 19.4444 {
+                    self.crash_kind = side;
+                    self.cause = "wall";
+                    self.crash_at = Some((c - n * BODY_RADIUS, n));
+                    self.wipe_out();
+                } else if s > 8.3333 * un && vin > 4.0 {
+                    self.stumble_by(true);
                 }
+                self.vel += n * (vin + (0.5 * vin).max(0.556));
             }
         }
         (pushed, hit)
@@ -1236,9 +1218,12 @@ impl crate::walls::WallEnv for AirWallGlue<'_> {
     fn accumulate_impact(&mut self, _: &mut crate::walls::WallRider, n: V4) {
         accumulate_impact(&mut self.r.impact, &mut self.r.impact_n, n);
     }
-    /// `Boarder_Translate` 0x1267a0: `CollBody_Translate` 0x236448 on the body.
+    /// `Boarder_Translate` 0x1267a0: `CollBody_Translate` 0x236448 on the body and cached pose snapshot.
     fn translate(&mut self, _: &mut crate::walls::WallRider, by: V4) {
         self.body.translate(by);
+        if let Some(a) = &self.r.anim {
+            a.translate_coll_body(by);
+        }
     }
     /// `Boarder_TurnFromWall` 0x1257a0 is only called in motion 2 (never in air).
     fn turn_from_wall(&mut self, _: &mut crate::walls::WallRider, _: V4) {}
@@ -1301,9 +1286,14 @@ impl crate::walls::WallEnv for AirWallGlue<'_> {
 /// `Boarder_InstanceCollisions` 0x125088 in the air (`AirMotion_Update` 0x108378 at 0x1089f8, row E8q):
 /// queries touch objects (`World_QueryInstances` 0x25b878 -> `Instance_OnPlayerContact` 0x13bd40 ->
 /// `Boarder_InstanceBounce` 0x125a00 -> `Boarder_WallImpactCheck` 0x126540 -> `Sfx_InstanceCollision` 0x216c50)
-/// with the bind-pose body (`mask = -1`, before the air wall ray sets `0xcf`), then kicks overlapping rollers
-/// (`roller::rider_kick`) and starts any scripts they queued.
-pub(super) fn air_instance_collisions(r: &mut Rider, world: &CollisionWorld, course: &crate::course_ground::CourseGround) {
+/// with the animated (or bind-pose) body (`mask = -1`, before the air wall ray sets `0xcf`), kicks overlapping
+/// rollers (`roller::rider_kick`), starts any scripts they queued, and returns the translated collision body for
+/// the subsequent `0xcf` air wall ray (`0x108a2c`, row E8p).
+pub(super) fn air_instance_collisions(
+    r: &mut Rider,
+    world: &CollisionWorld,
+    course: &crate::course_ground::CourseGround,
+) -> crate::collbody::CollBody {
     let o = match &r.att {
         Some((o, _)) => *o,
         None => orient::placed_attitude(super::placed_heading(r.yaw), None),
@@ -1313,17 +1303,25 @@ pub(super) fn air_instance_collisions(r: &mut Rider, world: &CollisionWorld, cou
     let vel = to_game(r.vel, 100.0, 0.0);
     let ground = to_game(r.normal, 1.0, 0.0);
     let mut wr = crate::walls::WallRider { pos, vel, ground, knocks: r.knocks, mode: r.motion, state: r.ctl, up };
-    let body = bind_body_at(pos, o.fwd, up, r.stats.scale);
+    let mut body = r
+        .anim
+        .as_ref()
+        .and_then(|a| a.pose_snapshot())
+        .map(|s| s.coll_body)
+        .unwrap_or_else(|| bind_body_at(pos, o.fwd, up, r.stats.scale));
+    body.x24 = -1;
     let id = rider_id(r);
     let mut glue = AirWallGlue { r, world, course, body, tree: None, starts: Vec::new() };
     crate::walls::instance_collisions(&mut wr, &mut glue);
     glue.r.vel = to_port(wr.vel, 0.01);
     kick_rollers(course, &mut wr, id, &mut glue, |g| g.body);
+    let body = glue.body;
     let starts = std::mem::take(&mut glue.starts);
     course.knock.lock().unwrap_or_else(|e| e.into_inner()).start_scripts(course, &starts);
     r.knocks = wr.knocks;
     r.pos = to_port(wr.pos, 0.01);
     r.vel = to_port(wr.vel, 0.01);
+    body
 }
 
 /// What the ground tick calls, answered by the port.
@@ -1396,7 +1394,7 @@ impl gm::Env for GroundEnv<'_> {
 
     /// `Boarder_WallCollide` 0x126250 (`walls::wall_collide`) on the course's collision (row E7c3c), with the
     /// body [`wall_body`] gives; without the course's files (a folder level) the port's sphere against the drawn
-    /// mesh ([`Rider::walls`], STANDIN). The air's walls (row E8o) are still the drawn mesh's.
+    /// mesh ([`Rider::walls`], STANDIN, ground only; air walls use `AirMotion_Update` 0x108a2c, row E8p).
     fn wall_collide(&mut self, g: &mut gm::Rider) -> bool {
         if let Some(course) = self.world.course.clone() {
             let mut wr = crate::walls::WallRider { pos: g.p.pos, vel: g.vel, ground: g.p.normal, knocks: self.r.knocks, mode: 2, state: g.state, up: g.board_up };

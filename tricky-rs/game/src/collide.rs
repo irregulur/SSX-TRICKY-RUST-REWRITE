@@ -526,6 +526,36 @@ impl CollisionWorld {
         self.movers.iter().filter(|m| m.reset && m.lo.cmple(c + r).all() && m.hi.cmpge(c - r).all())
             .flat_map(|m| m.tris.iter()).any(|t| (c - closest_point(c, t.p[0], t.p[1], t.p[2])).length_squared() < radius * radius)
     }
+    /// Folder-level mesh fallback for `World_RayCast` 0x25aff8 with `cWorldBoarder(body, 0)` (row E8p):
+    /// casts `body`'s active spheres (`body.x24`, `0xcf` in `AirMotion_Update` 0x108a2c) against every
+    /// non-skipped mesh triangle in its active AABB via `WorldBoarder::triangle_either_side` (0x257a50),
+    /// returning `(depth, hit)` nearest `target = 2 * body.radius` (in game cm, z up).
+    pub fn air_wall_cast(&self, body: &crate::collbody::CollBody) -> (f32, Option<crate::worldline::Hit>) {
+        use crate::world::Shape;
+        let q = crate::worldboarder::WorldBoarder::new(body, 0);
+        let lo_p = Vec3::new(q.lo[0], q.lo[2], -q.hi[1]) * 0.01;
+        let hi_p = Vec3::new(q.hi[0], q.hi[2], -q.lo[1]) * 0.01;
+        let target = q.target();
+        let mut best_t = 1e20f32;
+        let mut best: Option<crate::worldline::Hit> = None;
+        let to_g = |v: Vec3, k: f32, w: f32| [v.x * k, -v.z * k, v.y * k, w];
+        for t in self.near(lo_p, hi_p) {
+            if self.skip(t) {
+                continue;
+            }
+            let a = to_g(t.p[0], 100.0, 1.0);
+            let b = to_g(t.p[1], 100.0, 1.0);
+            let c = to_g(t.p[2], 100.0, 1.0);
+            let n = to_g(t.face, 1.0, 0.0);
+            let Some(h) = q.triangle_either_side(a, b, c, n) else { continue };
+            if (h.t - target).abs() < (best_t - target).abs() {
+                best_t = h.t;
+                best = Some(h);
+            }
+        }
+        if best.is_some() { (best_t, best) } else { (-1.0, None) }
+    }
+
     /// Push a sphere out of every wall it overlaps. Returns the corrected centre and the
     /// normals of the walls that were touched.
     pub fn push_out(&self, mut center: Vec3, radius: f32) -> (Vec3, Vec<Vec3>) {
