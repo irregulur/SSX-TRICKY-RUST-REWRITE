@@ -98,7 +98,7 @@ matches the original.
 | X1 | No stand-ins left: `grep -rn STANDIN tricky-rs` is empty | any | F8 | | [est] |
 | X2 | Function index at 100% ported (every function either ported or marked not needed, with a reason, e.g. PS2 hardware glue) | any | F1 | | [est] |
 | X3 | Function index at 100% checked | any | F4, X2 | | [est] |
-| E12f2b | The PS2 memory card driver, the rest (`tricky_game::memcard`): vf2 0x23edc8 (the per-frame sync), vf13 0x23fb60, vf53 0x23ffe0, `MemCard_CheckRoomForFiles` 0x23fcb8, `MemCard_FormatSaveTitle` 0x1ce8f8 and the SJIS converters 0x23d628..0x23d868; checked in the runner like E12f1 | any | E12f2a | | Split of E12f2 |
+| E12f2b | The PS2 memory card driver, the rest (`tricky_game::memcard`): vf2 0x23edc8 (the per-frame sync), vf13 0x23fb60, vf53 0x23ffe0, `MemCard_CheckRoomForFiles` 0x23fcb8, `MemCard_FormatSaveTitle` 0x1ce8f8 and the SJIS converters 0x23d628..0x23d868; checked in the runner like E12f1 | any | E12f2a | irregulur/lynx (2026-11-24) | Split of E12f2 |
 | X4 | Full playthrough of World Circuit, race and show-off, every course, gold everywhere, on our code | any | C1–C16 | | [est] |
 | X5 | 100% completion: every rider maxed, every trick book chapter, every unlock | any | X4 | | [est] |
 | X6 | Runs from the player's own disc only: no SSX-Library, no Python export step, no vgmstream | any | E2–E5, G10 | | [est] |
