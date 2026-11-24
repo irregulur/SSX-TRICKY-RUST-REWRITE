@@ -1824,3 +1824,4 @@ matches the original.
 - 2026-11-24 irregulur/lynx: X2b done.
 - 2026-11-24 irregulur/lynx: `cAIWorld::~cAIWorld` 0x116650 added to G4k4's port and test (same shape), index checked.
 - 2026-11-24 irregulur/neon: C15b done (`ScoreCall::TrickBook(id)` -> `Career::trick_book_check` `0x1579e0` over `TRICKDEF.DAT` `0x31e210`, `Scoring_PushMessage` `0x11`, `Sfx_OnTrickBookDone` `0x2190f0` chimes on `BankHost`, career block persistence in `book.rs`/`ui.rs`/`racespeech.rs`; verified against real `TRICKY_DISC`).
+- 2026-11-24 irregulur/lynx: `cLessonMan::~cLessonMan` 0x14b520 and `PadCfg_Destruct` 0x14f550 ported in `aiobj.rs` and checked with G4k's test (tutorial gaps too small for rows).
