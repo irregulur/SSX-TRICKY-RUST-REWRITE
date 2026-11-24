@@ -49,14 +49,14 @@ fn vf(off: u32) -> u32 {
 const VOFFS: [u32; 9] = [0x88, 0x98, 0xf0, 0x148, 0x158, 0x168, 0x180, 0x198, 0x1c8];
 const RESULTS: [i32; 17] = [0, -1, -2, -3, -5, -6, -7, -8, -10, -11, -9999, -10000, -10001, -10002, -10003, 1, 5];
 
-const FUNCS: [u32; 68] = [
+const FUNCS: [u32; 69] = [
     0x23d908, 0x23d940, 0x23d998, 0x23db08, 0x23db10, 0x23db40, 0x23dbc8, 0x23dc40, 0x23dc50, 0x23dd10, 0x23dd18,
     0x23dd70, 0x23dd80, 0x23dd88, 0x23dd90, 0x23ddf8, 0x23de08, 0x23de48, 0x23de98, 0x23dea0, 0x23dea8, 0x23df20,
     0x23df80, 0x23df98, 0x23dfa8, 0x23dfb8, 0x23dfc0, 0x23e038, 0x23e090, 0x23e0a8, 0x23e0b8, 0x23e0c8, 0x23e928,
     0x23e988, 0x23e9b0, 0x23ea18, 0x23ea78, 0x23ea98, 0x23eac0, 0x23eb18, 0x23eb28, 0x23eb48, 0x23eb60, 0x23eb80,
     0x23ebd8, 0x23ebf0, 0x23ec08, 0x23ecf0, 0x23ed08, 0x23ed10, 0x23ed18, 0x23ed48, 0x23ed60, 0x23ed78, 0x23edb0,
     0x23fda8, 0x23fe38, 0x23fe48, 0x23fea8, 0x23ff18, 0x23fed8, 0x23ff38, 0x23ff70, 0x240010, 0x240040, 0x240070,
-    0x2400f8, 0x23fcb8,
+    0x2400f8, 0x23fcb8, 0x23ffe0,
 ];
 /// The constant and field answers (`memcard::constant`)
 const CONSTS: [u32; 11] =
@@ -263,6 +263,7 @@ fn memory_card_driver_matches_the_original() {
             0x23df20 | 0x23e038 => (g.below(4), g.next(), g.next()),
             0x23ecf0 => (g.below(4), OUT, 0),
             0x23ec08 => (g.below(2), OUT, 0),
+            0x23ffe0 => (OUT, 0, 0),
             0x23fe48 => (g.pick(&[0, 1, 2, u32::MAX]), OUT, 0),
             0x23fe38 => (g.pick(&RESULTS) as u32, 0, 0),
             0x23ff18 => (g.pick(&[0, 1, 0x3ff, 0x400, 0x401, 0x12345, u32::MAX, 0x8000_0000, 0xffff_fc00]), 0, 0),
@@ -346,6 +347,7 @@ fn memory_card_driver_matches_the_original() {
             0x240070 => mc::forward(mm, e, C, 0x148, 0x10),
             0x2400f8 => { mc::memcard_destruct(mm, e, C, a1); none }
             0x23fcb8 => { mc::check_room(mm, e, C); none }
+            0x23ffe0 => { mc::current_text(mm, e, C, a1); none }
             0x23ffb0 => mc::current_error(mm, C),
             0x23fff0 => mc::current_changed(mm, C),
             f => mc::constant(mm, C, f).unwrap(),

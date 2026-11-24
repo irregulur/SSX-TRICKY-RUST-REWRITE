@@ -927,3 +927,9 @@ pub fn check_room(m: &mut Mem, e: &mut dyn FeEnv, c: u32) {
         }
     }
 }
+
+/// `cPS2MemCard::vf53` 0x23ffe0(c, out): the current port's line ([`slot_text`])
+pub fn current_text(m: &mut Mem, e: &mut dyn FeEnv, c: u32, out: u32) {
+    let p = m.r32(c + 0x10);
+    slot_text(m, e, c, p, out);
+}
