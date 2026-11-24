@@ -55,6 +55,7 @@ state machine and the renderer are ours. Nothing has been checked against the or
 
 | ID | Task | Area | Needs | Who | Notes |
 |---|---|---|---|---|---|
+| G4k6 | The race's remaining glue on the game's bytes (`aiobj.rs`): `cRaceHandler` Enter 0x113740 / Update 0x113820 (the show-off clock, time-up, everyone finished), `Race_UpdateRiderStreaming` 0x112920, `Race_ResetRiderRenders` 0x1128b8, `Race_GoToEndLesson` 0x1117f0, `Game_IsTutorial` 0x1148d0, `Race_FindRiderByPlayer` 0x1148e8, `Career_StoreCircuitAttitudes` 0x114f70, checked in the runner with G4k's | any | G4k | irregulur/lynx (2026-11-24) | Gap of G4k |
 | G1 | Boarder state machine: every state (0x00–0x14) and motion (0–6), their enter/update/exit, `cBoarder` vtable, in the original's order per tick | unowned | F1 | | [repo] Many states ported one by one; the dispatch is ours |
 | G1a | Prewind, jump, takeoff, spin and flip control (`PrewindState_Update` 0x1050e8, `Jump_ApplyImpulse` 0x1284e0, `Takeoff_SetSpinRates` 0x126e30, `SpinState_Update` 0x100908, `SpinState_StartFromStick` 0x102158) checked | any | F4a | | [repo] Ported, unchecked Split: G1a1, G1a2 |
 | G1a5b | The rest of G1a5: `Rider::step` (`tricky-rs/game/src/rider.rs`) calls the exact prewind, jump, take-off, spin start and spin (`boarder::prewind_update`, `jump::jump_impulse`, `jump::takeoff_spin_rates`, `jump::spin_start_from_stick`, `spin::spin_update`, all checked) on the rider's own fields (cm, z up), replacing `Rider::air_rotation` and the hand-written prewind and jump | any | G1a5a | | Split of G1a5 (wiring; needs a play test). Split: G1a5b1, G1a5b2, G1a5b3 (the exact functions read the game's pad word, built per boarder state by `cPlayer::GetControls`) |
@@ -1800,3 +1801,4 @@ matches the original.
 - 2026-11-23 irregulur/lynx: added G4k5 (gap of G4k).
 - 2026-11-24 irregulur/neon: E8r done (wired `AirMotion_Update` 0x108378 landing decision, pre-RK4 board frame pivot & `pivot_offset_of`, `Boarder_ProbeGround` 0x128ae8 clamp, `SpinControl_Exit` 0x1029d0 before `Landing_CheckAngles` 0x12ba78, `Landing_ChooseState` 0x109308, direct slow-down factors, and post-landing scoring/speech/rumble/puffs into `Rider::air_motion_update`).
 - 2026-11-24 irregulur/lynx: G4k5 done.
+- 2026-11-24 irregulur/lynx: added G4k6 (gap of G4k).
