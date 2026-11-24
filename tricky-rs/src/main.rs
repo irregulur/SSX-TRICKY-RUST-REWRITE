@@ -1921,22 +1921,60 @@ fn ride(
     } else {
         for o in opponents.0.iter_mut() { o.driver.time_scale = 1.0; }
     }
-    // the pre-race scene: riders stand where the scene puts them; put back in the gate after
+    // the pre-race / post-race scene: riders stand where the scene puts them and play scene clips on `AnimHost`
+    // (`rider+0x428 = 1` SCRIPTED so `Boarder_UpdatePose` sets `skin_child = true` and `PoseBlend_EvalCurves`
+    // evaluates facial morph curves, row G5d5); put back in the gate after.
     if let Some(sc) = race.0.scene.as_mut() {
         let n = 1 + opponents.0.len();
         if sc.saved.len() < n { sc.saved.resize(n, None); }
+        if !sc.ended {
+            if let (Some(anim), Some((_, disc_path))) = (r.anim.as_ref(), lib.disc_elf.as_ref()) {
+                let missing = sc.clips.iter().any(|name| {
+                    anim.clip_id_by_name(name).is_some_and(|cid| !anim.is_clip_loaded(cid))
+                });
+                if missing {
+                    if let Ok(disc) = tricky_data::disc::Disc::open(disc_path) {
+                        let mut files = tricky_data::big::Files::new(disc);
+                        if files.mount_game_archives().is_ok() {
+                            anim.ensure_scene_clips_loaded(&sc.clips, |p| files.load(p).ok().flatten());
+                        }
+                    }
+                }
+            }
+        }
         for k in 0..n {
             let rr: &mut Rider = if k == 0 { &mut *r } else { &mut opponents.0[k - 1].rider };
             if sc.ended {
                 if let Some((p, yaw)) = sc.saved[k].take() { rr.pos = p; rr.yaw = yaw; rr.vel = Vec3::ZERO; rr.grounded = false; rr.set_motion(1); }
-            } else if let Some(Some((p, yaw))) = sc.slot(k).and_then(|i| sc.spots.get(i)) {
-                if sc.saved[k].is_none() { sc.saved[k] = Some((rr.pos, rr.yaw)); }
-                // the scene's heights are the stage floor's own (the stage is not part of the snow)
-                rr.pos = *p;
-                rr.grounded = true;
-                rr.set_motion(2);
-                rr.yaw = *yaw;
-                rr.vel = Vec3::ZERO;
+                if rr.ctl == tricky_game::rider::control_tick::SCRIPTED {
+                    rr.set_control(tricky_game::rider::control_tick::CRUISE);
+                }
+                if let Some(a) = &rr.anim {
+                    if a.clip_type(0) == 13 {
+                        a.play_clip(0x1ff, 0, 5, &mut tricky_game::rand::rand_game);
+                    }
+                }
+            } else if let Some(slot_i) = sc.slot(k) {
+                if let Some(Some((p, yaw))) = sc.spots.get(slot_i) {
+                    if sc.saved[k].is_none() { sc.saved[k] = Some((rr.pos, rr.yaw)); }
+                    // the scene's heights are the stage floor's own (the stage is not part of the snow)
+                    rr.pos = *p;
+                    rr.grounded = true;
+                    rr.set_motion(2);
+                    rr.yaw = *yaw;
+                    rr.vel = Vec3::ZERO;
+                }
+                if let Some(clip_name) = sc.clips.get(slot_i) {
+                    if let Some(a) = rr.anim.clone() {
+                        if let Some(cid) = a.clip_id_by_name(clip_name).filter(|&cid| a.is_clip_loaded(cid)) {
+                            rr.set_control(tricky_game::rider::control_tick::SCRIPTED);
+                            if a.clip(0) != cid {
+                                a.set_stance(0);
+                                a.play_clip(cid, 0, 5, &mut tricky_game::rand::rand_game);
+                            }
+                        }
+                    }
+                }
             }
         }
         if sc.ended { race.0.scene = None; }
@@ -2632,14 +2670,20 @@ fn animate_visuals(
         };
         // standing up once stopped over the line (finish state 2)
         let finished = r.fin.is_some_and(|f| f.0 >= 2);
-        // the game's own `AnimCtl_BlendPose` / `PoseBlend_BlendSkeleton` (row G5d3) when disc animations are live,
-        // falling back to the legacy clip picker (`animate`) without `TRICKY_DISC` or during pre-race scenes (G5d4).
+        // the game's own `AnimCtl_BlendPose` / `Boarder_UpdatePose` (rows G5d3–G5d5) when disc animations are live,
+        // including pre-/post-race scene clips (`clip_type(0) == 13`, `ctl == SCRIPTED`), falling back to `lib.scenes`
+        // or the legacy clip picker (`animate`) only when `TRICKY_DISC` is absent or a scene clip is not loaded.
         let k = match vis.who { Who::Player => 0, Who::Ai(i) => i + 1 };
-        let scene_sample = race.0.scene.as_ref().filter(|s| !s.ended).and_then(|sc| {
-            let set = lib.scenes.as_ref()?;
-            let c = sc.slot(k).and_then(|i| sc.clips.get(i)).and_then(|n| set.get(n))?;
-            Some(c.at((sc.t * character::ANIM_FPS) % c.len().max(1.0), true))
-        });
+        let anim_playing_scene = r.anim.as_ref().is_some_and(|a| a.clip_type(0) == 13);
+        let scene_sample = if anim_playing_scene {
+            None
+        } else {
+            race.0.scene.as_ref().filter(|s| !s.ended).and_then(|sc| {
+                let set = lib.scenes.as_ref()?;
+                let c = sc.slot(k).and_then(|i| sc.clips.get(i)).and_then(|n| set.get(n))?;
+                Some(c.at((sc.t * character::ANIM_FPS) % c.len().max(1.0), true))
+            })
+        };
         let board_model = lib.shapes.get(vis.shape).and_then(|s| s.as_ref()).or(lib.board.as_ref());
         let pose_snap = if scene_sample.is_none() {
             r.anim.as_ref().and_then(|a| a.pose_snapshot())
@@ -2688,8 +2732,20 @@ fn animate_visuals(
             let (pos, nrm) = (&mut s.0, &mut s.1);
             let (model, mats) = if part.board { (board_model, &board_mats) } else { (Some(&entry.model), &mats) };
             let Some(p) = model.and_then(|m| m.parts.get(part.part)) else { continue };
-            if use_anim_space { character::skin_part_anim(p, mats, pos, nrm); }
-            else { character::skin_part(p, mats, if part.board { 0.0 } else { lift }, pos, nrm); }
+            if use_anim_space {
+                if !part.board {
+                    if let (Some(mslot), Some(a)) = (p.morph_slot, r.anim.as_ref()) {
+                        let mw = a.read_morph_weights(mslot as i32);
+                        character::skin_part_anim_morphed(p, mats, &mw, r.stats.scale, pos, nrm);
+                    } else {
+                        character::skin_part_anim(p, mats, pos, nrm);
+                    }
+                } else {
+                    character::skin_part_anim(p, mats, pos, nrm);
+                }
+            } else {
+                character::skin_part(p, mats, if part.board { 0.0 } else { lift }, pos, nrm);
+            }
             // legacy fallback switch mirror (unused when `PoseBlend_BlendSkeleton` posed the bones)
             if use_vertex_mirror {
                 for v in pos.iter_mut().chain(nrm.iter_mut()) { v[0] = -v[0]; }

@@ -627,7 +627,7 @@ impl Rider {
             Some((o, _)) => *o,
             None => orient::placed_attitude(placed_heading(self.yaw), None),
         };
-        let motion = if self.reset.is_some() {
+        let motion = if self.reset.is_some() || self.ctl == control_tick::SCRIPTED {
             4
         } else if self.crashed > 0.0 {
             if self.motion == 6 { 6 } else { 5 }
@@ -1470,7 +1470,7 @@ impl Rider {
         }
         // Reconcile `motion` (+0x424) with any direct host/test mutation of `reset`, `crashed`, `rail`, `grounded`
         let resetting = self.reset.is_some();
-        let expected_motion = if resetting {
+        let expected_motion = if resetting || self.ctl == control_tick::SCRIPTED {
             4
         } else if self.crashed > 0.0 {
             if self.motion == 6 { 6 } else { 5 }
@@ -1778,6 +1778,11 @@ impl Rider {
     /// `3` cruise, `10` jump, `0xb` hard land, `0xc` normal land, `0xd` natural air, `0xe` prewind, `0xf` rail,
     /// `0x10` spin, `0x13` wipe-out, `0x14` get-up, `0x16` reset.
     pub(super) fn control_update(&mut self, world: &CollisionWorld, rails: &Rails, raw_input: Input, ctl_input: Input, dt: f32) {
+        // Scripted scene control (`rider+0x428 == 1`, `cPreRaceHandler` / `cEndRaceHandler`): leave layer 0 and
+        // `Boarder_UpdatePose`'s `skin_child = true` untouched while the scene plays.
+        if self.ctl == control_tick::SCRIPTED {
+            return;
+        }
         // Reconcile `ctl` (+0x428) if a test/host mutated `reset`/`crashed`/`rail`/`grounded` directly
         if self.reset.is_some() {
             if self.ctl != control_tick::RESET {

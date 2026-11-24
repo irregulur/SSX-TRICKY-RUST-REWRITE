@@ -27,14 +27,34 @@ struct RawBone {
     raw: Option<[u8; 0x54]>,
 }
 #[derive(Deserialize)]
-struct RawMesh { #[serde(default)] shadow: bool, pos: Vec<f32>, nrm: Vec<f32>, uv: Vec<f32>, weights: Vec<Vec<i32>>, mat: Vec<i32> }
+struct RawMesh {
+    #[serde(default)]
+    shadow: bool,
+    pos: Vec<f32>,
+    nrm: Vec<f32>,
+    uv: Vec<f32>,
+    weights: Vec<Vec<i32>>,
+    mat: Vec<i32>,
+    #[serde(skip)]
+    morph_slot: Option<i8>,
+    #[serde(skip)]
+    morph_targets: Vec<Vec<[f32; 3]>>,
+}
 #[derive(Deserialize)]
 struct RawModel { bones: Vec<RawBone>, materials: Vec<String>, meshes: Vec<RawMesh> }
 
 pub struct Bone { pub name: String, pub parent: i32, pub slot: i8, pub raw: Option<[u8; 0x54]>, local: Mat4, world_rot: Quat, inv_bind: Mat4 }
 pub struct Vert { pub pos: Vec3, pub nrm: Vec3, pub uv: Vec2, pub w: [(u16, f32); 4] }
 /// All triangles that share one texture ("suit", "boot", "head", "helm", "bord").
-pub struct Part { pub texture: String, pub verts: Vec<Vert> }
+pub struct Part {
+    pub texture: String,
+    pub verts: Vec<Vert>,
+    /// Skin slot (`PartEntry+0x4a`) when this part contains facial morph targets (`Face3000`).
+    pub morph_slot: Option<i8>,
+    /// Per morph target (`0..morph_count`), per vertex (`0..verts.len()`): `[dx, dy, dz]` in cm at weight 1, scale 1
+    /// (`MpfMesh::morphs`, proven against VU1 `0x002 -> 0x06b` / `MORPH_SCALE = 2560.0 / 32768.0`).
+    pub morph_targets: Vec<Vec<Vec3>>,
+}
 pub struct CharModel {
     pub bones: Vec<Bone>,
     pub parts: Vec<Part>,
@@ -89,8 +109,18 @@ impl CharModel {
                     Some(i) => i,
                     None => { raw.materials.extend([tex.clone(), format!("{tex} gloss"), format!("{tex} envr")]); raw.materials.len() - 3 }
                 };
-                let mut mesh = RawMesh { shadow: false, pos: Vec::new(), nrm: Vec::new(), uv: Vec::new(), weights: Vec::new(), mat: Vec::new() };
-                for t in m.triangles() {
+                let (tris, morph_targets) = m.triangles_with_morphs();
+                let mut mesh = RawMesh {
+                    shadow: false,
+                    pos: Vec::new(),
+                    nrm: Vec::new(),
+                    uv: Vec::new(),
+                    weights: Vec::new(),
+                    mat: Vec::new(),
+                    morph_slot: (!morph_targets.is_empty()).then_some(p.slot),
+                    morph_targets,
+                };
+                for t in tris {
                     for v in t {
                         mesh.pos.extend(v.pos);
                         mesh.nrm.extend(v.nrm);
@@ -160,7 +190,10 @@ impl CharModel {
                 let texture = raw.materials.get(mat / 3 * 3).or(raw.materials.get(mat)).cloned().unwrap_or_default();
                 let part = match parts.iter().position(|p| p.texture == texture) {
                     Some(p) => p,
-                    None => { parts.push(Part { texture, verts: Vec::new() }); parts.len() - 1 }
+                    None => {
+                        parts.push(Part { texture, verts: Vec::new(), morph_slot: None, morph_targets: Vec::new() });
+                        parts.len() - 1
+                    }
                 };
                 let mut ws = [(0u16, 0.0f32); 4];
                 let mut total = 0.0;
@@ -170,12 +203,24 @@ impl CharModel {
                 }
                 if total <= 0.0 { ws[0] = (0, 1.0); total = 1.0; }
                 for x in ws.iter_mut() { x.1 /= total; }
-                parts[part].verts.push(Vert {
+                let dst = &mut parts[part];
+                if !m.morph_targets.is_empty() && dst.morph_targets.is_empty() {
+                    let prev_len = dst.verts.len();
+                    dst.morph_targets = vec![vec![Vec3::ZERO; prev_len]; m.morph_targets.len()];
+                    dst.morph_slot = m.morph_slot;
+                }
+                dst.verts.push(Vert {
                     pos: Vec3::new(m.pos[i * 3], m.pos[i * 3 + 1], m.pos[i * 3 + 2]),
                     nrm: Vec3::new(m.nrm[i * 3], m.nrm[i * 3 + 1], m.nrm[i * 3 + 2]),
                     uv: Vec2::new(m.uv[i * 2], m.uv[i * 2 + 1]),
                     w: ws,
                 });
+                if !dst.morph_targets.is_empty() {
+                    for (ti, tvec) in dst.morph_targets.iter_mut().enumerate() {
+                        let d = m.morph_targets.get(ti).and_then(|v| v.get(i)).copied().unwrap_or([0.0; 3]);
+                        tvec.push(Vec3::from(d));
+                    }
+                }
             }
         }
         Self { bones, parts, ik_points: Vec::new(), morph_slots: Vec::new() }
@@ -457,6 +502,51 @@ impl CharModel {
     pub fn skin_board_pose(&self, trans: [f32; 3], rot: [f32; 3]) -> Vec<Mat4> {
         let m = Mat4::from_rotation_translation(euler(&rot), Vec3::from(trans));
         self.bones.iter().map(|b| m * b.inv_bind).collect()
+    }
+}
+
+/// Skin one part that is posed in animation space, applying facial morph vertex deltas (`cPS2GraphicsMan::vf91_1df478`
+/// 0x1df478 + VU1 `0x002 -> 0x06b`, row G5d5) before bone skinning when `morph_weights` has active channels:
+/// target 0 whenever `w != 0.0`, targets `1..` whenever `w > 0.01`, scaled by `w * scale` (`part+0x38 * 2560.0 / 32768.0`).
+pub fn skin_part_anim_morphed(
+    part: &Part,
+    mats: &[Mat4],
+    morph_weights: &[f32],
+    scale: f32,
+    pos: &mut Vec<[f32; 3]>,
+    nrm: &mut Vec<[f32; 3]>,
+) {
+    if part.morph_targets.is_empty() || morph_weights.is_empty() {
+        skin_part_anim(part, mats, pos, nrm);
+        return;
+    }
+    let active: Vec<(usize, f32)> = morph_weights
+        .iter()
+        .enumerate()
+        .take(part.morph_targets.len())
+        .filter_map(|(t, &w)| ((t == 0 && w != 0.0) || (t > 0 && w > 0.01)).then_some((t, w * scale)))
+        .collect();
+    if active.is_empty() {
+        skin_part_anim(part, mats, pos, nrm);
+        return;
+    }
+    pos.clear();
+    nrm.clear();
+    for (vi, v) in part.verts.iter().enumerate() {
+        let mut base = v.pos;
+        for &(t, ws) in &active {
+            base += part.morph_targets[t][vi] * ws;
+        }
+        let (mut p, mut n) = (Vec3::ZERO, Vec3::ZERO);
+        for (bone, w) in v.w {
+            if w <= 0.0 { continue; }
+            let m = &mats[(bone as usize).min(mats.len() - 1)];
+            p += m.transform_point3(base) * w;
+            n += Mat3::from_mat4(*m) * v.nrm * w;
+        }
+        p.z += 4.8;
+        pos.push(anim_to_local(p).into());
+        nrm.push(anim_dir_to_local(n.normalize_or(Vec3::Z)).into());
     }
 }
 

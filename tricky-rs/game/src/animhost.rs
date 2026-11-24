@@ -749,17 +749,113 @@ impl AnimHost {
     }
 
     /// Read the evaluated facial morph channel weights (`PoseBlend+0x210..`, written by `PoseBlend_EvalCurves`
-    /// 0x2029d8) for a morph part registered via [`Self::add_morph_part`].
+    /// 0x2029d8) for a morph part registered via [`Self::add_morph_part`]. Returns an empty `Vec` when no clip
+    /// wrote curves to this part on the last tick (`PoseBlend+0x288 == 0`, matching `cPS2GraphicsMan::vf91_1df478`
+    /// 0x1df968).
     pub fn read_morph_weights(&self, slot: usize, part_id: i32) -> Vec<f32> {
         let Some(meta) = self.skins.get(slot) else { return Vec::new() };
         let Some((k, &(_, n))) = meta.parts.iter().enumerate().find(|(_, &(pid, _))| pid == part_id) else {
             return Vec::new();
         };
         let p = Self::rider_addr(slot) + 0x7c0 + 0x394 * k as u32;
-        if self.mem.r32(p + 0x388) != 0 {
+        if self.mem.r32(p + 0x388) != 0 || self.mem.r32(p + 0x288) == 0 {
             return Vec::new();
         }
         (0..n as u32).map(|j| f32::from_bits(self.mem.r32(p + 0x210 + 4 * j))).collect()
+    }
+
+    /// Resolve a clip name from `CLIPS` (`0x3242a0`, e.g. `"scrSG_GLIDE1"`, `"scrGAT_6COM1a"`, `"scrMac_WIN_1"`,
+    /// `"scrFL_Common1"`) to its `AnimCtl` clip ID (`0..0x1fc`, lookup mode 2 via `0x3bffd0`).
+    pub fn clip_id_by_name(&self, name: &str) -> Option<u32> {
+        let anm = tricky_data::anim_names::CLIPS
+            .iter()
+            .position(|c| c.eq_ignore_ascii_case(name))? as u32;
+        if anm == 796 {
+            Some(0)
+        } else if (905..=1411).contains(&anm) {
+            Some(anm - 904)
+        } else {
+            None
+        }
+    }
+
+    /// Resolve an `.afl` archive name from `FILES` (`0x3258b0`, `0..0x1be`) case-insensitively.
+    pub fn file_index_by_name(&self, name: &str) -> Option<u32> {
+        tricky_data::anim_names::FILES
+            .iter()
+            .position(|f| f.eq_ignore_ascii_case(name))
+            .map(|i| i as u32)
+    }
+
+    /// Map a pre-/post-race scene clip name (`scrSG_*`, `scrGAT_*`, `scrFL_Common*`, `scr<Code>_<WIN|LOS|CON|RCON>_<n>`)
+    /// to the `.afl` file names in `FILES` (`0x3258b0`) that contain it.
+    pub fn scene_files_for_clip(clip_name: &str) -> Vec<String> {
+        if let Some(rest) = clip_name.strip_prefix("scr").or_else(|| clip_name.strip_prefix("SCR")) {
+            if rest.starts_with("SG_") || rest.starts_with("sg_") {
+                return ["stg_com_1", "stg_com_2", "stg_com_3", "stg_com_4"].iter().map(|s| s.to_string()).collect();
+            }
+            if rest.starts_with("FL_Common") || rest.starts_with("fl_common") {
+                return vec!["FL_COM_1".to_string()];
+            }
+            if let Some(g) = rest.strip_prefix("GAT_").or_else(|| rest.strip_prefix("gat_")) {
+                // e.g. `6COM1a` -> `GAT_6COM_1`
+                let bytes = g.as_bytes();
+                if bytes.len() >= 6 && bytes[1..4].eq_ignore_ascii_case(b"COM") {
+                    let count = bytes[0] as char;
+                    let num = bytes[4] as char;
+                    return vec![format!("GAT_{count}COM_{num}")];
+                }
+            }
+            // e.g. `Mac_WIN_1` -> `MAC_WIN_1`, `Edd_CON_2` -> `EDD_CON_2`, `Eli_RCON_1` -> `ELI_RCON_1`
+            return vec![rest.to_ascii_uppercase()];
+        }
+        Vec::new()
+    }
+
+    /// True if `clip_id` (lookup mode 2 via `0x3bffd0`, `0..0x1fc`) is currently indexed in `KEY_TABLE` (`0x3bc530`).
+    pub fn is_clip_loaded(&self, clip_id: u32) -> bool {
+        if clip_id >= 0x1fc {
+            return false;
+        }
+        let anm = self.mem.r32(0x3bffd0 + 4 * clip_id);
+        if anm >= data::NCLIP {
+            return false;
+        }
+        self.mem.r32(seq::KEY_TABLE + 4 * anm) != self.mem.r32(seq::NO_KEY)
+    }
+
+    /// Ensure the `.afl` files needed for every scene clip in `clip_names` are loaded into `AnimData` (`0x3211a8`)
+    /// and indexed into `KEY_TABLE`. Skips files that are already loaded.
+    pub fn ensure_scene_clips_loaded(
+        &mut self,
+        clip_names: &[String],
+        mut load_file: impl FnMut(&str) -> Option<Vec<u8>>,
+    ) -> usize {
+        let mut to_load: Vec<u32> = Vec::new();
+        for name in clip_names {
+            if let Some(cid) = self.clip_id_by_name(name) {
+                if self.is_clip_loaded(cid) {
+                    continue;
+                }
+            }
+            for fname in Self::scene_files_for_clip(name) {
+                if let Some(idx) = self.file_index_by_name(&fname) {
+                    let loaded = self.mem.r32(BANK + data::FILES + 0x18 * idx + 4) != 0;
+                    if !loaded && !to_load.contains(&idx) {
+                        to_load.push(idx);
+                    }
+                }
+            }
+        }
+        if to_load.is_empty() {
+            return 0;
+        }
+        let mut env = SyncLoadEnv { alloc: &mut self.alloc, loader: &mut load_file, open_files: HashMap::new(), next_handle: 0 };
+        for &idx in &to_load {
+            load::load_file(&mut self.mem, &mut env, BANK, idx, true);
+        }
+        load::index_all(&mut self.mem, BANK);
+        to_load.len()
     }
 
     /// `Boarder_ResetAnim` 0x117170 -> `AnimCtl_Reset` 0x15ee30 on `slot`.
@@ -1268,6 +1364,19 @@ impl RiderAnim {
     }
     pub fn read_morph_weights(&self, part_id: i32) -> Vec<f32> {
         self.lock().read_morph_weights(self.slot, part_id)
+    }
+    pub fn clip_id_by_name(&self, name: &str) -> Option<u32> {
+        self.lock().clip_id_by_name(name)
+    }
+    pub fn is_clip_loaded(&self, clip_id: u32) -> bool {
+        self.lock().is_clip_loaded(clip_id)
+    }
+    pub fn ensure_scene_clips_loaded(
+        &self,
+        clip_names: &[String],
+        load_file: impl FnMut(&str) -> Option<Vec<u8>>,
+    ) -> usize {
+        self.lock().ensure_scene_clips_loaded(clip_names, load_file)
     }
     pub fn pivot_pos(&self) -> [f32; 3] {
         self.lock().pivot_pos(self.slot)

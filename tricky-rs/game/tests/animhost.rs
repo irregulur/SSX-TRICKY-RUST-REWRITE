@@ -613,10 +613,105 @@ fn update_pose_world_bones_and_collbody_match_original() {
         assert!(pos.iter().all(|p| p.iter().all(|v| v.is_finite())));
     }
 
-    // Check morph weights accessor works cleanly on registered head morph part.
-    for &(mslot, mcount) in &body_model.morph_slots {
+    // Check morph weights accessor returns empty when clip `0x1ff` carries no face curves (`PoseBlend+0x288 == 0`).
+    for &(mslot, _) in &body_model.morph_slots {
         let w = host.read_morph_weights(slot, mslot as i32);
-        assert_eq!(w.len(), mcount);
-        assert!(w.iter().all(|v| v.is_finite()));
+        assert!(w.is_empty(), "riding clip 0x1ff should leave PoseBlend+0x288 == 0");
     }
+}
+
+#[test]
+fn scene_clips_and_facial_morphs_drive_skinning() {
+    // Row G5d5: pre-/post-race scene clips loaded on demand into `AnimHost`, played through `AnimCtl` with
+    // `SCRIPTED` (state=1 -> `skin_child=true`), evaluating real facial morph curves via `PoseBlend_EvalCurves`
+    // 0x2029d8 and deforming `Face3000` vertices via `skin_part_anim_morphed` (`vf91_1df478` 0x1df478 / VU1 `0x002`).
+    let Some((elf, mut files)) = disc_and_elf() else { return };
+    let body_model = CharModel::rider_from_disc(&mut files, "eddie").expect("load eddie");
+    let board_model = CharModel::board_from_disc(&mut files, Some("Bx")).expect("load Bx");
+    let body_bones = body_model.slot_raw_bones(0);
+    let board_bones = board_model.slot_raw_bones(1);
+    let face_part = body_model
+        .parts
+        .iter()
+        .find(|p| p.morph_slot.is_some() && !p.morph_targets.is_empty())
+        .expect("eddie head must expose morphed Face3000 part");
+    let morph_slot = face_part.morph_slot.unwrap();
+    assert_eq!(face_part.morph_targets.len(), 23, "Face3000 must carry 23 morph targets");
+    for (ti, tvec) in face_part.morph_targets.iter().enumerate() {
+        assert_eq!(tvec.len(), face_part.verts.len(), "morph target {ti} len must match verts len");
+    }
+
+    let roster = [RosterEntry { character: 0, board_class: 0, load_uber: true }];
+    let mut host = AnimHost::from_disc(&elf, &mut files, &roster).expect("init AnimHost");
+    let scale = 1.05f32;
+    let slot = host.add_rider(0, 0, scale, &[(0, &body_bones), (1, &board_bones)]);
+    host.set_board_ik_points(slot, &board_model.ik_points);
+    for &(mslot, mcount) in &body_model.morph_slots {
+        host.add_morph_part(slot, mslot as i32, mcount);
+    }
+
+    // Load staging, gate, and post-race scene `.afl` files on demand and verify all scene clips resolve & index.
+    let scene_names: Vec<String> = [
+        "scrSG_GLIDE1",
+        "scrSG_TALK1",
+        "scrGAT_6COM1a",
+        "scrFL_Common1",
+        "scrEdd_WIN_1",
+        "scrEdd_CON_1",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    let loaded = host.ensure_scene_clips_loaded(&scene_names, |p| files.load(p).ok().flatten());
+    assert!(loaded > 0, "expected scene .afl files to load into AnimData");
+    for name in &scene_names {
+        let cid = host.clip_id_by_name(name).unwrap_or_else(|| panic!("missing clip id for {name}"));
+        assert!(host.is_clip_loaded(cid), "scene clip {name} ({cid:#x}) not indexed in KEY_TABLE");
+    }
+
+    // Drive `Rider::step` in `SCRIPTED` (state 1) playing `scrEdd_WIN_1`: verify `CruiseControl` does not overwrite
+    // layer 0, `Boarder_UpdatePose` uses `skin_child = true`, and `PoseBlend_EvalCurves` produces live face weights.
+    let anim = RiderAnim::new(Arc::new(Mutex::new(host)), slot);
+    let win_cid = anim.clip_id_by_name("scrEdd_WIN_1").unwrap();
+    let mut world = CollisionWorld::default();
+    world.add_ex([Vec3::new(-200.0, 0.0, 200.0), Vec3::new(200.0, 0.0, 200.0), Vec3::new(-200.0, 0.0, -200.0)], None, true, 1, false);
+    world.add_ex([Vec3::new(200.0, 0.0, 200.0), Vec3::new(200.0, 0.0, -200.0), Vec3::new(-200.0, 0.0, -200.0)], None, true, 1, false);
+    let rails = Rails::default();
+    let mut r = Rider::new(Vec3::new(0.0, 0.05, 0.0), 0.0);
+    r.grounded = true;
+    r.motion = 2;
+    r.stats.scale = scale;
+    r.attach_anim(anim.clone());
+    r.set_control(control_tick::SCRIPTED);
+    anim.play_clip(win_cid, 0, 5, &mut tricky_game::rand::rand_game);
+
+    let mut saw_nonzero_morph = false;
+    let mut max_delta = 0.0f32;
+    for _ in 0..90 {
+        r.pos = Vec3::new(0.0, 0.05, 0.0);
+        r.vel = Vec3::ZERO;
+        r.grounded = true;
+        r.step(&world, &rails, Input::default(), 1.0 / 60.0);
+        assert_eq!(anim.clip(0), win_cid, "SCRIPTED state must keep scene clip on layer 0");
+        let snap = anim.pose_snapshot().expect("scene pose snapshot");
+        assert!(snap.skin_child, "SCRIPTED state (1) must pose scene clip with skin_child = true");
+        let mw = anim.read_morph_weights(morph_slot as i32);
+        if mw.iter().any(|&w| w > 0.01) {
+            saw_nonzero_morph = true;
+            let mats = body_model.skin_bone_matrices(&snap.body_local_mats, scale);
+            let (mut base_pos, mut base_nrm) = (Vec::new(), Vec::new());
+            let (mut morph_pos, mut morph_nrm) = (Vec::new(), Vec::new());
+            tricky_data::character::skin_part_anim(face_part, &mats, &mut base_pos, &mut base_nrm);
+            tricky_data::character::skin_part_anim_morphed(face_part, &mats, &mw, scale, &mut morph_pos, &mut morph_nrm);
+            assert_eq!(base_pos.len(), morph_pos.len());
+            for (a, b) in base_pos.iter().zip(&morph_pos) {
+                assert!(b.iter().all(|v| v.is_finite()));
+                let d = ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt();
+                max_delta = max_delta.max(d);
+            }
+            break;
+        }
+    }
+    assert!(saw_nonzero_morph, "scrEdd_WIN_1 should evaluate non-zero facial morph curves via PoseBlend_EvalCurves");
+    assert!(max_delta > 1e-4, "facial morph weights should measurably deform Face3000 vertices (max_delta={max_delta})");
 }

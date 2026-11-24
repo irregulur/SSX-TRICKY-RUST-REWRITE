@@ -39,6 +39,7 @@ pub struct Records {
 }
 
 /// The control states (rider+0x428)
+pub const SCRIPTED: u32 = 1;
 pub const CRUISE: u32 = 3;
 pub const JUMP: u32 = 10;
 pub const LAND_HARD: u32 = 0xb;

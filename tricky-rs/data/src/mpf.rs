@@ -224,6 +224,50 @@ impl MpfMesh {
         out
     }
 
+    /// Same triangles as [`Self::triangles`], plus per-target `[dx, dy, dz]` facial morph deltas (cm at weight 1,
+    /// scale 1) aligned 1:1 with the emitted triangle vertices (`morph_targets[target].len() == tris.len() * 3`
+    /// when `self.is_morph()`, else empty).
+    pub fn triangles_with_morphs(&self) -> (Vec<[&MpfVertex; 3]>, Vec<Vec<[f32; 3]>>) {
+        let mut out = Vec::new();
+        let n_targets = self
+            .morphs
+            .first()
+            .and_then(|l| l.first())
+            .map_or(0, Vec::len);
+        let mut out_morphs: Vec<Vec<[f32; 3]>> = (0..n_targets).map(|_| Vec::new()).collect();
+        for (l_idx, list) in self.lists.iter().enumerate() {
+            for (k_idx, rec) in list.iter().enumerate() {
+                let rec_morphs = self.morphs.get(l_idx).and_then(|l| l.get(k_idx));
+                let mut flat_base = 0usize;
+                for s in rec {
+                    for t in 0..s.len().saturating_sub(2) {
+                        let (a, b, c) = (&s[t], &s[t + 1], &s[t + 2]);
+                        if a.pos == b.pos || b.pos == c.pos || a.pos == c.pos {
+                            continue;
+                        }
+                        let (tri, idxs) = if t % 2 == 0 {
+                            ([a, b, c], [flat_base + t, flat_base + t + 1, flat_base + t + 2])
+                        } else {
+                            ([b, a, c], [flat_base + t + 1, flat_base + t, flat_base + t + 2])
+                        };
+                        out.push(tri);
+                        if let Some(targets) = rec_morphs {
+                            for (ti, dst) in out_morphs.iter_mut().enumerate() {
+                                if let Some(deltas) = targets.get(ti) {
+                                    for &vi in &idxs {
+                                        dst.push(deltas.get(vi).copied().unwrap_or([0.0; 3]));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    flat_base += s.len();
+                }
+            }
+        }
+        (out, out_morphs)
+    }
+
     /// `shadow_strips` as triangles, same winding and degenerate culling as `triangles`.
     pub fn shadow_triangles(&self) -> Vec<[&MpfShadowVertex; 3]> {
         let mut out = Vec::new();

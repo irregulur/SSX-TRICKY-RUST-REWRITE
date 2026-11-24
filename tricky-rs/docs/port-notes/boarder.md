@@ -1928,7 +1928,33 @@ Proven (`SLUS_203.26`):
   `SLUS_203.26` bit-for-bit in `r5900::Runner`; 35 `tricky-data` + 89 `tricky-game` (12 suites) + 20 `tricky-rs`
   binary tests pass.
 - **Remaining gaps (split/noted for follow-up)**:
-  - Facial morph vertex blending in the Bevy renderer (`AnimHost::read_morph_weights` evaluates `PoseBlend_EvalCurves`
-    0x2029d8, but `CharModel` does not yet apply `MpfMesh::morphs` vertex deltas per frame) and pre-/post-race scene
-    clips still using `AnimSet::scenes_from_disc`.
   - Visual play-test of `G5d` in Bevy with `TRICKY_DISC` still needed before closing the `G5d` umbrella row.
+
+## Facial morph vertex-delta blending & pre-/post-race scene clips on `AnimHost` (row G5d5; checked: `tests/animhost.rs`, `tests/vu1mpf.rs`)
+
+- **Proven (`SLUS_203.26` disassembly & VU1 proof)**:
+  - `cPS2GraphicsMan::vf91_1df478` 0x1df478 checks `PoseBlend+0x288 != 0` (`done` set by `PoseBlend_EvalCurves`
+    0x2029d8 at `0x1df968`), uploads `(weight, part+0x38 * 2560.0)` to `VU1[0x3ff]` for target 0 unconditionally and
+    for targets `1..morph_count` whenever `weight > 0.01`, and runs VU1 `0x002 -> 0x06b` (`itof15(delta_i8) * weight
+    * scale * 2560.0`) before bone skinning `MSCAL 0x96` (`tests/vu1mpf.rs`).
+  - `AnimIds_Init` 0x15aec0 maps `CLIPS[905..=1411]` (`scrSG_*`, `scrGAT_*`, `scrFL_Common*`, `scr<Code>_WIN_*`,
+    `scr<Code>_LOS_*`, `scr<Code>_CON_*`, `scr<Code>_RCON_*`) directly to `AnimCtl` clip IDs `0x001..=0x1fb`
+    (lookup mode 2 via `0x3bffd0`, category `13`, `AnimMode_Loop`). During pre-/post-race scenes riders hold
+    `motion = 4` (stationary `0x10afe0`) and `state = 1` (`SCRIPTED`), so `Boarder_UpdatePose` 0x129628 takes its
+    `skin_child = true` (`Boarder_SetSkinChildMatrices` 0x2083e8) pure-FK branch and feet animate freely off the
+    snowboard while `PoseBlend_EvalCurves` 0x2029d8 evaluates facial morph curves.
+- **Ported (`mpf.rs`, `character.rs`, `animhost.rs`, `control_tick.rs`, `rider.rs`, `main.rs`)**:
+  - `MpfMesh::triangles_with_morphs` aligns per-target `[dx, dy, dz]` morph deltas 1:1 with triangulated vertices;
+    `Part::{morph_slot, morph_targets}` preserves face morph targets (padding `Vec3::ZERO` for non-morph meshes
+    sharing the `"head"` texture); `character::skin_part_anim_morphed` applies `vf91_1df478` / VU1 `0x002` deltas
+    before bone skinning.
+  - `AnimHost::{clip_id_by_name, file_index_by_name, scene_files_for_clip, is_clip_loaded, ensure_scene_clips_loaded}`
+    load needed scene `.afl` files (`stg_com_1..4`, `GAT_*COM_*`, `FL_COM_1`, `<CODE>_<WIN|LOS|CON|RCON>_<n>`) into
+    `AnimData` on demand and index them into `KEY_TABLE`; `read_morph_weights` guards on `PoseBlend+0x288 != 0`.
+  - `control_tick::SCRIPTED` (`1`) keeps `motion = 4` and skips `CruiseControl` in `Rider::step`; `main.rs` drives
+    pre-/post-race scenes on `AnimHost` and renders live facial morph deltas via `skin_part_anim_morphed`.
+- **Verified**: `tests/animhost.rs` (`scene_clips_and_facial_morphs_drive_skinning`: loads real staging, gate, and
+  post-race `.afl` files from `TRICKY_DISC`, plays `scrEdd_WIN_1` under `Rider::step` in `SCRIPTED`, verifies
+  `skin_child == true`, non-zero live `PoseBlend_EvalCurves` weights, and measurable finite vertex deformation of
+  Eddie's `Face3000`); `tricky-data` (35), `tricky-game` (89 across 11 suites including `vu1mpf`), and `tricky-rs`
+  binary tests pass. **Needs a visual play-test with `TRICKY_DISC` to sign off and close `G5d`.**
