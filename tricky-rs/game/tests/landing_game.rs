@@ -115,4 +115,50 @@ fn landings_are_the_games() {
     });
     println!("uber cut short: crashed {} cause {}", uber.crashed, uber.cause);
     assert!(uber.crashed > 0.0 && uber.cause == "grab", "an uber cut short: down");
+
+    // E8r: mid-backflip (`flip = pi`, even with upright `att`): `Landing_CheckAngles` folds `flip` into `att`
+    // via `SpinControl_Exit` 0x1029d0 before checking angles -> upside-down landing crashes!
+    let mid_flip = drop_with(&world, at, |r| {
+        r.flip = pi;
+    });
+    println!("mid backflip: crashed {} cause {}", mid_flip.crashed, mid_flip.cause);
+    assert!(mid_flip.crashed > 0.0 && mid_flip.cause == "landing angle", "upside-down flip must crash via Landing_CheckAngles");
+
+    // E8r: short hop (`air_time = 0.05 <= 0.15`) STILL goes through `AirMotion_Update` landing (no artificial
+    // `air_time > 0.15` gate): clears `predict.t_land`, sets `land_fall > 0`, and catches a bad flip/grab!
+    let short_hop = drop_with(&world, at, |r| {
+        r.air_time = 0.02;
+        r.predict.t_land = 0.5;
+        r.predict.word = u32::MAX;
+    });
+    assert!(short_hop.grounded && short_hop.crashed <= 0.0, "clean short hop lands");
+    assert_eq!(short_hop.predict.t_land, 0.0, "AirPredict_ClearLandTime 0x123f00 clears predict.t_land");
+    assert!(short_hop.land_fall > 0.0, "AirMotion_Update records rider+0x798 fall speed");
+
+    // E8r: live `AnimHost` landing uses real `PoseBlend` pivot bone, blends out layer-1 type 0x1a clip, and
+    // transitions cleanly into `LAND_NORMAL` (0xc) on clip `0x1ff`.
+    if let Ok(elf_path) = std::env::var("TRICKY_ELF") {
+        if let (Ok(elf), Ok(disc)) = (std::fs::read(&elf_path), std::env::var("TRICKY_DISC")) {
+            let mut files = tricky_data::big::Files::new(tricky_data::disc::Disc::open(&disc).unwrap());
+            files.mount_game_archives().unwrap();
+            let body = tricky_data::character::CharModel::rider_from_disc(&mut files, "mac").unwrap();
+            let brd = tricky_data::character::CharModel::board_from_disc(&mut files, Some("Fr")).unwrap();
+            let body_bones = body.slot_raw_bones(0);
+            let brd_bones = brd.slot_raw_bones(1);
+            let roster = [tricky_game::animhost::RosterEntry { character: 2, board_class: 1, load_uber: true }];
+            let mut host = tricky_game::animhost::AnimHost::from_disc(&elf, &mut files, &roster).unwrap();
+            let slot = host.add_rider(2, 1, 1.0, &[(0, &body_bones), (1, &brd_bones)]);
+            host.set_board_ik_points(slot, &brd.ik_points);
+            let anim = tricky_game::animhost::RiderAnim::new(Arc::new(std::sync::Mutex::new(host)), slot);
+            let live = drop_with(&world, at, |r| {
+                r.data = &tricky_game::trickdata::RIDERS[2];
+                r.stats.kind = 1;
+                r.attach_anim(anim.clone());
+            });
+            assert!(live.grounded && live.crashed <= 0.0, "live AnimHost clean landing");
+            assert_eq!(live.ctl, tricky_game::rider::control_tick::LAND_NORMAL, "Landing_ChooseState -> LAND_NORMAL (0xc)");
+            assert_eq!(anim.clip(0), 0x1ff, "Landing_ChooseState plays clip 0x1ff");
+            assert!(live.land_fall > 0.0, "recorded landing fall speed");
+        }
+    }
 }

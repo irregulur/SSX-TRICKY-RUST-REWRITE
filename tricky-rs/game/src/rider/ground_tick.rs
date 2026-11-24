@@ -617,58 +617,109 @@ pub(super) fn quat_of(x: V4, y: V4, z: V4) -> V4 {
     }
 }
 
+/// Result of a course air landing (`AirMotion_Update` 0x108554..0x1089bc, row E8r) in game space (cm, z up).
+#[derive(Clone, Copy, Debug)]
+pub(super) struct CourseLanding {
+    pub down_point: V4,
+    pub down_normal: V4,
+    pub probe_normal: V4,
+    pub surface: u8,
+    pub vn: f32,
+    pub height_m: f32,
+}
+
 impl Rider {
-    /// The landing of `AirMotion_Update` 0x108378 (0x108554..0x1089bc; rows E8r, E7c3d) on the course's collision:
-    /// the down ray `cWorldLine`(0.5, P − 100·U, P + 200·U, 1) through the rider's last-hit record (+0x430), U the
-    /// board's up (frame row +0x4ac0); if it hits and the velocity goes into its normal, `Boarder_ProbeGround`
-    /// 0x128ae8 along that normal; landed when that hits and the height (+0x1bc) is under half the surface's word
-    /// 6, put onto the hit point when the height is below 0. The hit for the port's landing, with `p` moved.
-    /// STANDIN: P is the position, for the board frame times minus the pivot bone (rider+0x4aa0, the bone's
-    /// +0x8c8; G5), and the probe runs from the position, for the pivot turned by half the spin and flip
-    /// (0x1085a8..0x108960); the side is the normal × the board's forward in its plane, for rider+0x330. The down
-    /// ray's normal is the rider's at every hit (0x108588, row G20c2b).
-    pub(super) fn course_landing(&mut self, world: &CollisionWorld, p: &mut Vec3) -> Option<crate::collide::GroundHit> {
-        let u = self.board_up();
-        let (_, n, _) = world.course_line(0.5, *p - u * 1.0, *p + u * 2.0, 1, Some(&mut self.last_hit))?;
-        // any hit's normal becomes the rider's (+0x2a0, stored at 0x108588 before the velocity is tested; row G20c2b)
-        self.normal = n;
-        if self.vel.dot(n) >= 0.0 {
+    /// The landing decision of `AirMotion_Update` 0x108378 (0x108500..0x1089bc; rows E8r, E7c3d) on the course's
+    /// collision:
+    /// 1. Pivot `P = frame * [-bone.x, -bone.y, -bone.z, 1]` and board up `U = frame[2]` (+0x4ac0).
+    /// 2. Down ray `cWorldLine`(0.5, P − 100·U, P + 200·U, 1) through `rider+0x430` (`self.last_hit`); any hit writes
+    ///    `rider+0x2a0` (`self.normal`, 0x108588).
+    /// 3. When `dot(down.normal, vel) < 0`: shifts `pos` by `air_motion::pivot_offset_of(q, spin, flip, bone)`
+    ///    (0x1085c8..0x108920), runs `Boarder_ProbeGround` 0x128ae8 (`cWorldLine`(0.5, …, 2)), restores `pos`.
+    /// 4. Recomputes `vn = dot(probe.normal, vel)` (0x108988); landed when `probe.height < SURFACE_TABLE[surface][6] * 0.5`;
+    ///    when `probe.height < 0`, sets `pos = probe.ground - offset` and `height = 0` (0x1089b0).
+    pub(super) fn course_landing(
+        &mut self,
+        world: &CollisionWorld,
+        frame: [V4; 4],
+        bone: [f32; 3],
+        gp: &mut V4,
+        gv: V4,
+    ) -> Option<CourseLanding> {
+        let course = world.course.as_ref()?;
+        let up = frame[2];
+        let b = [-bone[0], -bone[1], -bone[2], 1.0];
+        let mut piv = [0.0f32; 4];
+        for i in 0..4 {
+            piv[i] = ((frame[0][i] * b[0] + frame[1][i] * b[1]) + frame[2][i] * b[2]) + frame[3][i] * b[3];
+        }
+        let from = add(piv, scale(up, -100.0));
+        let to = add(piv, scale(up, 200.0));
+        let mut q = crate::worldline::WorldLine::new(0.5, from, to, 1);
+        let (t, h) = course.ray_cast(&mut q, world.showoff, Some(&mut self.last_hit), &|i| world.course_skips(i));
+        let down = h.filter(|_| 0.0 <= t)?;
+        // Any hit's normal becomes the rider's (+0x2a0, stored at 0x108588 before velocity is tested; row G20c2b)
+        self.normal = port_dir(down.normal);
+        if !(dot(down.normal, gv) < 0.0) {
             return None;
         }
-        let normal = game_dir(n);
-        let fwd = game_dir(super::heading(self.yaw));
+        let o = match self.att {
+            Some((o, _)) => o,
+            None => orient::placed_attitude(super::placed_heading(self.yaw), None),
+        };
+        let off = crate::air_motion::pivot_offset_of(o.q, self.spin, self.flip, bone);
+        let probe_pos = add(*gp, off);
+        let normal = down.normal;
+        let fwd = o.fwd;
         let plane = sub(fwd, scale(normal, dot(fwd, normal)));
-        let plane = scale(plane, 1.0 / dot(plane, plane).sqrt());
+        let plane_len = dot(plane, plane).sqrt();
+        let plane = if plane_len > 1e-6 { scale(plane, 1.0 / plane_len) } else { fwd };
+        let side = if dot(self.air_side, self.air_side) > 1e-6 { self.air_side } else { cross(normal, plane) };
         let mut pr = probe::Rider {
-            pos: to_game(*p, 100.0, 1.0),
+            pos: probe_pos,
             fwd,
             normal,
             plane_fwd: plane,
-            side: cross(normal, plane),
+            side,
             x244: self.lean[0],
             stat60: self.stats.scale,
             surface: self.surface as u32,
+            surface_ticks: self.air_surface_ticks as u32,
             ..Default::default()
         };
-        // the probe's `cWorldLine`(0.5, from, to, 2) cast in the game's space, its hit's kind (+0x2e0) kept
-        let (from, to) = probe::line(&pr);
-        let hit = world.course.as_ref().and_then(|course| {
-            let mut q = crate::worldline::WorldLine::new(0.5, from, to, 2);
-            let (t, h) = course.ray_cast(&mut q, world.showoff, Some(&mut self.last_hit), &|i| world.course_skips(i));
-            h.filter(|_| t >= 0.0).map(|h| Hit { kind: h.kind, point: h.pos, normal: h.normal, surface: h.surface as u32 })
-        });
+        let (p_from, p_to) = probe::line(&pr);
+        let hit = {
+            let mut pq = crate::worldline::WorldLine::new(0.5, p_from, p_to, 2);
+            let (pt, ph) = course.ray_cast(&mut pq, world.showoff, Some(&mut self.last_hit), &|i| world.course_skips(i));
+            ph.filter(|_| pt >= 0.0).map(|h| Hit { kind: h.kind, point: h.pos, normal: h.normal, surface: h.surface as u32 })
+        };
         if !probe::probe(&mut pr, hit) {
             return None;
         }
         let surface = (pr.surface as usize).min(19);
+        self.surface = surface as u8;
+        self.air_surface_ticks = pr.surface_ticks as i32;
         self.hit_kind = pr.kind;
+        self.air_side = pr.side;
+        self.normal = port_dir(pr.normal);
+        let vn = dot(pr.normal, gv);
         if !(pr.height < SURFACE_TABLE[surface][6] * 0.5) {
             return None;
         }
-        if pr.height < 0.0 {
-            *p = to_port(pr.ground, 0.01);
-        }
-        Some(crate::collide::GroundHit { y: p.y, normal: port_dir(pr.normal), surface: surface as u8 })
+        let height_m = if pr.height < 0.0 {
+            *gp = sub(pr.ground, off);
+            0.0
+        } else {
+            pr.height * 0.01
+        };
+        Some(CourseLanding {
+            down_point: down.pos,
+            down_normal: down.normal,
+            probe_normal: pr.normal,
+            surface: surface as u8,
+            vn,
+            height_m,
+        })
     }
 
     /// The game-side rider from the port's: the board lies on the ground (its up is the ground's normal) and points

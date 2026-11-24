@@ -135,14 +135,14 @@ pub trait AirEnv {
 }
 
 /// The pivot's height turned back by the trick's spin and flip, as seen from the rider's attitude without them:
-/// the offset the down ray and the probe start from (0x1085c8..0x108920).
-fn pivot_offset(r: &AirRider) -> V4 {
-    let (s1, c1) = crate::math::sin_cos(r.spin * -0.5);
-    let (s2, c2) = crate::math::sin_cos(r.flip * -0.5);
+/// the offset the down ray and the probe start from (`AirMotion_Update` 0x1085c8..0x108920).
+pub fn pivot_offset_of(quat: V4, spin: f32, flip: f32, bone: [f32; 3]) -> V4 {
+    let (s1, c1) = crate::math::sin_cos(spin * -0.5);
+    let (s2, c2) = crate::math::sin_cos(flip * -0.5);
     let t = quat_multiply([c1, 0.0, 0.0, s1], [c2, s2, 0.0, 0.0]);
-    let q = quat_multiply(r.orient.q, t);
+    let q = quat_multiply(quat, t);
     let zero = 0.0f32;
-    let bz = r.bone[2];
+    let bz = bone[2];
     let (w, x, y, z) = (t[0], t[1], t[2], t[3]);
     let tv = [y * bz - z * zero, z * zero - x * bz, x * zero - y * zero];
     let u = [y * tv[2] - z * tv[1], z * tv[0] - x * tv[2], x * tv[1] - y * tv[0]];
@@ -152,6 +152,10 @@ fn pivot_offset(r: &AirRider) -> V4 {
     let e = sub(back, p);
     let wv = turn_axis(q, [e[0], e[1], e[2]]);
     [wv[0], wv[1], wv[2], zero]
+}
+
+fn pivot_offset(r: &AirRider) -> V4 {
+    pivot_offset_of(r.orient.q, r.spin, r.flip, r.bone)
 }
 
 /// A crash: the spray virtual, the wipe-out record (the hit point, the unit velocity, the normal, the speed into

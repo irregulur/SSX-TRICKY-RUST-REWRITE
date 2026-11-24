@@ -86,8 +86,9 @@ fn the_air_glances_off_gari_walls_as_the_game_does() {
     let mut world = CollisionWorld::default();
     world.min_y = -1e9;
     world.course = Some(Arc::new(cg));
-    // one of gari's walls ahead, upright: the body's cast hits it and the rider is put down
-    let (d, dz, r) = reach(&world, wall, wrd, wrd, [-wrd[0], -wrd[1], 0.0, 0.0], &|r: &Rider| r.crashed > 0.0);
+    // one of gari's walls ahead, upright: the body's cast hits it and the rider is put down (from in front of the
+    // wall; at d = 0, dz = -200 the pre-RK4 down ray `piv + 200·up` touches `wall` itself and crashes as a landing)
+    let (d, dz, r) = reach(&world, wall, wrd, wrd, [-wrd[0], -wrd[1], 0.0, 0.0], &|r: &Rider| r.crashed > 0.0 && r.cause == "air wall");
     println!("wall {wn:?} {d} cm back, {dz} cm over: crashed {} cause {}", r.crashed, r.cause);
     assert!(r.crashed > 0.0 && r.cause == "air wall", "put down by the wall");
     // a glance (over a plane slope the board lands before the 0xcf spheres reach it, so the hit is handed in): one of

@@ -519,11 +519,20 @@ pub struct Rider {
     pub pad_rumble: crate::input::Rumble,
     /// true when a menu/replay mode holds off pad motors (`impact::muted`, `RumbleEnv::held_off`)
     pub rumble_muted: bool,
+    /// the take-off's flight prediction (`cAirPredict`, rider+0x57b0): ticked by `AirPredict_Tick` 0x123ec8 in
+    /// `AirMotion_Update` 0x108378 and cleared by `AirPredict_ClearLandTime` 0x123f00 on landing (row E8r)
+    pub predict: crate::air::Predict,
     /// the take-off's flight prediction: landing point, velocity, normal and surface word (+0x57c0..+0x57f0)
     pub land_point: [f32; 4],
     pub land_vel: [f32; 4],
     pub land_word: u32,
     pub land_normal: [f32; 4],
+    /// `rider+0x29c` surface ticks in air, `rider+0x798` landing normal impact speed (negated), `rider+0x28`
+    /// celebration counter (0..3), and `rider+0x330` board side on surface
+    pub air_surface_ticks: i32,
+    pub land_fall: f32,
+    pub celebrate_idx: i32,
+    pub air_side: [f32; 4],
     /// the wind-ups the last take-off left the snow with (rider+0x220, +0x22c, before `Takeoff_SetSpinRates` clears them)
     pub takeoff_wind: (f32, f32),
     /// ticks before this rider can be hit by another again (`Boarder_RiderCollisions`: three ticks)
@@ -598,7 +607,9 @@ impl Rider {
                course_dir: None, course_pts: None, wipe: None, crash_at: None, gm: None, crash_spray: None, land_puffs_vn: None, lean: [0.0; 3], up: [0.0, 0.0, 1.0, 0.0], recover: None, ai: false, down_t: 0.0, getup: -1.0, stumble: 0.0, wall_hit: None, speed_timer: 0.0, spin_timer: 0.0, spin_used: false, tube_class: u8::MAX, gate_p: 0.0, gate_hi: 0.0, gate_lo: 0.0, gate_still: 0.0, gate_target: 0.0, gate_speed: 0.0, gate_state: 8, gate_rock_dir: 0, band: (0.005, 0.0250417), spin_base: 0.0, flip_base: 0.0, late: false, cause: "", spin_ax: Axis::default(), flip_ax: Axis::default(), air_mode2: false, rail_off: 0.0, rail_time: 0.0, rail_halves: 0, boost_was: false, chain: 0,
                ubers: Vec::new(), uber: 0.0, uber_id: 0, uber_done: false, letters: 0, multiplier: 1,
                sc: new_score(), tick_acc: 0.0, full_count: 0, rail_kind: 0, rail_lean: 0.0, rail_goal0: 0.0, rail_committed: 0.0, show_parts: Vec::new(), speech: Vec::new(), hit_by: u32::MAX, grab_scored: false, grab_tw: false, hit_wait: 0, att: None, last_hit: Default::default(), impact: 0.0, impact_n: [0.0; 4], knocks: 0.0, slot: 0, place_ray: None, hit_kind: 0, land_time: 0.0, takeoffs: 0, rail_blend: 0.0, rail_word: 0, rail_grid: false, rail_hit: [0.0; 4], spin_st: None, pad_dev: Default::default(), pad_from_host: false, pad_cfg: None, vibration: Default::default(), pad_rumble: Default::default(), rumble_muted: false, land_point: [0.0; 4], land_vel: [0.0; 4], land_word: u32::MAX, land_normal: [0.0, 0.0, 1.0, 0.0], takeoff_wind: (0.0, 0.0), ctl: control_tick::CRUISE, cruise: Default::default(), land_normal_ctl: Default::default(), natural_air_ctl: Default::default(), rail_ctl: Default::default(), rail_turn_t: 0.0, prewind_started: 0, trick_ctl: Default::default(), rec: Default::default(), boost_lvl: 0.0, reset_flag: 0, reset_req: None, reset: None, reset_acc: 0.0, fade: (1.0, 0.0), reset_ctx: ResetCtx::default(),
-               vf7: crate::boarder_tick::TickRider { active: 1, time_scale: 1.0, speed_limit: SPEED_CAP * 100.0, ..Default::default() }, speed_sum: 0.0, speed_samples: 0.0, anim: None, anim_tick: 0 };
+               vf7: crate::boarder_tick::TickRider { active: 1, time_scale: 1.0, speed_limit: SPEED_CAP * 100.0, ..Default::default() }, speed_sum: 0.0, speed_samples: 0.0, anim: None, anim_tick: 0,
+               predict: crate::air::Predict { word: u32::MAX, normal: [0.0, 0.0, 1.0, 0.0], ..Default::default() },
+               air_surface_ticks: 0, land_fall: 0.0, celebrate_idx: 0, air_side: [0.0; 4] };
         // the start line's `Boarder_PlaceAt` 0x11cae8 (`cBoarder::vf8` 0x116ab8: heading from the path's direction)
         r.att = Some((orient::placed_attitude(placed_heading(yaw), None), yaw));
         r
@@ -1152,22 +1163,27 @@ impl Rider {
         if off > 25f32.to_radians() { self.land_kind = 3; }
         self.vel *= 1.0643 - 0.2454 * off.clamp(15f32.to_radians(), 50f32.to_radians());
     }
-    /// The landing as `AirMotion_Update` 0x108378 decides it (row G20c3), for a rider whose attitude was kept through
-    /// the air: `Landing_CheckAngles` 0x12ba78 ([`crate::landing::check_angles`]) on the board's forward and up
-    /// (+0x180, +0x1a0), the velocity going in, the snow's normal and surface and the stability byte (stats+0x16);
-    /// refused (a grab, tweak or uber clip short of its safe point, surface 0, 6 or 10) or not clean (the roll out of
-    /// its range): a crash (false). Else `Landing_ChooseState` 0x109308 ([`crate::landing::choose_state`]): a hard
-    /// landing (state 0xb) holds the rider in it for its landing clip (`LandHardControl_Update` 0x104800 leaves it
-    /// at the clip's end); the speed scaled down by the roll (15°..50°: × 1.0643 − 0.2454 · it) and then by the
-    /// angle to the travel (25°..80°: × 1.1136 − 0.2603 · it); landing backwards rides switch. STANDIN: the clip type
-    /// as the port's grab and uber (0xe while short of safe), the port's sloppy-landing kind (`land_kind`) from the two
-    /// angles, and the landing clips' length (`wipeout::clip_frames`' 30-frame default: which clips the ids name is
-    /// row G5).
-    fn land_as_game(&mut self, o: Orient, v_in: Vec3, n: Vec3, surface: u8, vn: f32) -> bool {
+    /// `AirMotion_Update` 0x108378 post-landing (`0x108a90..0x1092a0`, row E8r): clears `predict.t_land`, sets
+    /// `LandNormalControl` crouch (`AirMotion_SetFallScale` 0x1049a0), adds impact rumble (`virtual_6c`,
+    /// `vn * -0.00072000007`), blends out layer-1 type `0x1a` clip, runs `Landing_CheckAngles` 0x12ba78 (with
+    /// `Boarder_SetState(1)` -> `SpinControl_Exit` 0x1029d0 folding `spin`/`flip` into `att` before angle check),
+    /// then either crashes (`Boarder_Wipeout` + `Score_Crash` + `Boarder_AddMeter`) or runs `Landing_ChooseState`
+    /// 0x109308, the two landing slow-down factors directly on `vel`, `Score_LandTrick` -> `Boarder_AddMeter`,
+    /// `Speech_OnAirTime` / celebration counter, and `Boarder_SpawnLandingPuffs`.
+    fn finish_course_landing(&mut self, hit: ground_tick::CourseLanding) {
         use std::f32::consts::{FRAC_PI_2, PI};
         let k = |b: u32| f32::from_bits(b);
-        // `AirMotion_SetFallScale` 0x1049a0: crouch target for `cLandNormalControl` (+8)
-        self.land_normal_ctl.crouch = (vn * 100.0 * -0.000_450_000_02).clamp(0.25, 1.0);
+        self.predict.t_land = 0.0;
+        self.land_time = 0.0;
+        // `AirMotion_SetFallScale` 0x1049a0
+        self.land_normal_ctl.crouch = (hit.vn * -0.000_450_000_02).clamp(0.25, 1.0);
+        // `AirMotion_Update` virtual +0x6c (`cPlayer::vf12` 0x153350 -> `Rumble_Add` 0x150be8)
+        self.rumble_add(hit.vn * k(0xba3c_be63));
+        if let Some(a) = &self.anim {
+            if a.clip_type(1) == 0x1a {
+                a.blend_out_all();
+            }
+        }
         let (clip_type, clip_flag4) = if let Some(a) = &self.anim {
             (a.clip_type(0) as i64, a.test_flag(4, 0))
         } else if self.trick_ctl.clip_type != 8 {
@@ -1177,28 +1193,76 @@ impl Rider {
         } else {
             (0, false)
         };
+        let early_grab = matches!(clip_type, 0xe..=0x10) && !clip_flag4;
+        let early_surface = matches!(hit.surface, 0 | 6 | 10) && self.tube_class == u8::MAX;
+        if early_grab || early_surface {
+            self.land_fall = -hit.vn;
+            self.crash_at = Some((ground_tick::port_dir(hit.down_point) * 0.01, ground_tick::port_dir(hit.down_normal)));
+            self.crash_kind = 0;
+            self.cause = if early_grab { "grab" } else { "surface" };
+            self.wipe_out();
+            return;
+        }
+        // `Landing_CheckAngles` 0x12ba78 calls `Boarder_SetState(1)` after its early outs, which invokes
+        // `SpinControl_Exit` 0x1029d0 folding any remaining `spin`/`flip` into `att` (`rider+0x170..+0x1b0`).
+        self.fold_spin_into_att();
+        let o = match self.att {
+            Some((o, _)) => o,
+            None => orient::placed_attitude(placed_heading(self.yaw), None),
+        };
         let st = crate::landing::LandingState {
             clip_type,
             clip_flag4,
-            surface: surface as u32,
+            surface: if self.tube_class != u8::MAX && matches!(hit.surface, 6 | 10) { 1 } else { hit.surface as u32 },
             board: o.fwd,
-            vel: ground_tick::to_game(v_in, 100.0, 0.0),
+            vel: ground_tick::to_game(self.vel, 100.0, 0.0),
             up: o.up,
             stability: self.stats.bytes[8],
         };
-        let Some(l) = crate::landing::check_angles(&st, ground_tick::game_dir(n)).filter(|l| l.ok) else {
+        let Some(l) = crate::landing::check_angles(&st, hit.probe_normal).filter(|l| l.ok) else {
+            self.land_fall = -hit.vn;
+            self.crash_at = Some((ground_tick::port_dir(hit.down_point) * 0.01, ground_tick::port_dir(hit.down_normal)));
             self.crash_kind = 0;
-            self.cause = if matches!(clip_type, 0xe..=0x10) && !clip_flag4 { "grab" } else { "landing angle" };
+            self.cause = "landing angle";
             self.wipe_out();
-            return false;
+            return;
         };
+        self.land_fall = -hit.vn;
+        self.air_side = l.side;
+        if self.spin_used {
+            self.spin_timer = 0.0;
+            self.spin_used = false;
+        }
+        self.release_grab();
+        let mut switch_land = self.switch != self.data.goofy;
+        if FRAC_PI_2 < l.pitch.abs() {
+            switch_land = !switch_land;
+        }
         let stance = self.data.goofy as u32;
         let c = crate::landing::choose_state(
             &crate::landing::ChooseState { clip_type, class: self.stats.kind as u32, switch: (self.switch != self.data.goofy) as u32, stance },
             l.pitch,
             l.roll,
-            vn * 100.0,
+            hit.vn,
         );
+        self.set_motion(2);
+        if let Some((new_sw, turn_rad)) = c.turned {
+            // Alpine board landing backwards: half turn π about board up, layers rotated, switch toggled
+            let (s, co) = crate::math::sin_cos(PI * 0.5);
+            let dq = [co, s * o.up[0], s * o.up[1], s * o.up[2]];
+            let mut o2 = o;
+            o2.q = orient::quat_multiply(dq, o.q);
+            orient::update_orientation(&mut o2);
+            self.yaw = wrap(self.yaw + PI);
+            self.att = Some((o2, self.yaw));
+            self.set_switch((new_sw != 0) != self.data.goofy);
+            if let Some(a) = &self.anim {
+                a.turn_all_layers(turn_rad);
+            }
+        } else if FRAC_PI_2 < l.pitch.abs() {
+            self.set_switch(!self.switch);
+            self.yaw = wrap(self.yaw + PI);
+        }
         let (lo, hi) = (k(0x3e86_0a92), k(0x3f5f_66f3));
         let g = l.roll.abs().clamp(lo, hi);
         if lo < g {
@@ -1209,10 +1273,6 @@ impl Rider {
         if lo < g {
             self.vel *= g * k(0xbe85_4942) + k(0x3f8e_8a0d);
         }
-        if FRAC_PI_2 < l.pitch.abs() {
-            self.set_switch(!self.switch);
-            self.yaw = wrap(self.yaw + PI);
-        }
         let deg25 = 25f32.to_radians();
         self.land_kind = if deg25 < l.roll.abs() { 3 } else if deg25 < l.pitch.abs() && l.pitch.abs() < PI - deg25 { 1 } else { 0 };
         self.hard_land = if c.state == 0xb { crate::rider::wipeout::clip_frames(c.clip as u16, self.stats.kind as u8) / 30.0 } else { 0.0 };
@@ -1220,8 +1280,7 @@ impl Rider {
             a.reset_trick_clips();
             a.play_clip(c.clip, 0, 5, &mut crate::rand::rand_game);
         }
-        // `Landing_ChooseState` 0x109308: grab-clip landing snaps crouch to 1 and zeroes brake/steer before entering 0xc
-        if c.state == 0xc && clip_type == 0xe {
+        if c.grab_reset {
             self.rec.crouch = [1.0, 0.0, 1.0];
             self.rec.brake = [0.0; 3];
             self.rec.steer = [0.0; 3];
@@ -1229,8 +1288,23 @@ impl Rider {
             self.brake_v = 0.0;
             self.steer = 0.0;
         }
-        self.set_control(c.state as u32);
-        true
+        self.set_control(c.state);
+        // `Score_LandTrick` 0x155f28 -> `Boarder_AddMeter` 0x11b018 + `Speech_OnAirTime` 0x233448
+        let before = self.sc.x88;
+        let steep = (hit.probe_normal[2] < k(0x3f33_3333)) as u32;
+        let (share, calls) = self.sc.land_trick(0, switch_land as u32, steep);
+        self.show(&calls);
+        self.add_meter(share);
+        if before < self.sc.x88 {
+            if self.tricky() && before < 6 {
+                self.speech.push(RiderSpeech::AirTime);
+            }
+            self.celebrate_idx = (self.celebrate_idx + 1) % 4;
+        }
+        self.multiplier = 1;
+        self.land_puffs_vn = Some(hit.vn);
+        self.from_rail = false;
+        self.clear_air();
     }
     /// Shoved over by another rider: `dv` the velocity change of the shove (m/s). A knock-down is scored as
     /// `Boarder_ScoreCrash` does (the trick banked; the meter only with `lose_meter`). Returns true if it put the
@@ -1445,6 +1519,7 @@ impl Rider {
             }
         };
         let p = crate::air::predict_at_takeoff(ground_tick::to_game(self.pos, 100.0, 1.0), ground_tick::to_game(self.vel, 100.0, 0.0), ground_tick::game_dir(self.normal), &mut ray);
+        self.predict = p;
         self.land_time = p.t_land;
         (self.land_point, self.land_vel, self.land_word, self.land_normal) = (p.point, p.vel, p.word, p.normal);
         self.takeoffs = self.takeoffs.wrapping_add(1);
@@ -1580,17 +1655,43 @@ impl Rider {
         }
     }
 
-    /// `AirMotion_Update` 0x108378: RK4 integration, down ray & landing, `Rail_TryCapture` (0x1089f0), and air walls
-    /// (`Boarder_InstanceCollisions` 0x1089f8 + wall ray 0x108a2c).
+    /// `AirMotion_Update` 0x108378: RK4 integration, `AirPredict_Tick` 0x123ec8, down ray & landing (row E8r),
+    /// `Rail_TryCapture` (0x1089f0), and air walls (`Boarder_InstanceCollisions` 0x1089f8 + wall ray 0x108a2c).
     fn air_motion_update(&mut self, world: &CollisionWorld, rails: &Rails, input: Input, dt: f32) {
         self.boost_lvl = 0.0;
         self.boosting = false;
-        let mut p = self.pos;
-        let (mut gp, mut gv) = ([p.x * 100.0, p.z * 100.0, p.y * 100.0, 1.0], [self.vel.x * 100.0, self.vel.z * 100.0, self.vel.y * 100.0, 0.0]);
+        // Board frame (`rider+0x4aa0`, with position at pivot bone `frame_where`) as `Boarder_UpdatePose` left it
+        // before RK4 moves `pos` (`AirMotion_Update` 0x108500).
+        let bone = self.anim.as_ref().map_or([0.0, 0.0, 91.7 * self.stats.scale], |a| a.pivot_pos());
+        let f0 = self.board_frame();
+        let pre_frame = [
+            f0[0],
+            f0[1],
+            f0[2],
+            crate::pose::frame_where(f0, bone, false, 1, self.up, 0.0, self.stats.scale),
+        ];
+        let mut gp = ground_tick::to_game(self.pos, 100.0, 1.0);
+        let mut gv = ground_tick::to_game(self.vel, 100.0, 0.0);
         crate::air::integrate_rk4(dt, &mut gp, &mut gv, false);
-        p = Vec3::new(gp[0], gp[2], gp[1]) / 100.0;
-        self.vel = Vec3::new(gv[0], gv[2], gv[1]) / 100.0;
+        let mut p = ground_tick::port_dir(gp) * 0.01;
+        self.vel = ground_tick::port_dir(gv) * 0.01;
         self.air_time += dt;
+        // `AirPredict_Tick` 0x123ec8 + predicted surface update (`AirMotion_Update` 0x1084a0..0x1084f8)
+        self.predict.tick();
+        if self.predict.t_land > 0.0 {
+            self.land_time = self.predict.t;
+        }
+        let slope_kind = self.predict.word as i32;
+        if slope_kind != -1 {
+            if self.surface as i32 == slope_kind {
+                if -1 < self.air_surface_ticks {
+                    self.air_surface_ticks = 0;
+                }
+            } else {
+                self.surface = (slope_kind as u32).min(19) as u8;
+                self.air_surface_ticks = 0x8000_0001u32 as i32;
+            }
+        }
         let mut jumped = false;
         if !input.jump && self.air_time < 0.15 && (self.charge > 0.0 || self.jump_c > 0.0) {
             let c = if self.jump_c > 0.0 { self.jump_c } else { self.charge };
@@ -1607,65 +1708,52 @@ impl Rider {
             self.spin_enter_game();
             jumped = true;
         }
-        // `AirMotion_Update` 0x108378 order (row E8o): integration -> down ray (landing) -> rail capture -> air walls
+        // `AirMotion_Update` 0x108378 order (rows E8o, E8r): integration -> down ray & probe (landing) -> rail capture -> air walls
         let s = self.vel.length();
         if !jumped {
-            let found = if world.course.is_some() {
-                self.course_landing(world, &mut p)
-            } else {
-                world.ground(p, 1.2, 0.02).filter(|h| self.vel.dot(h.normal) <= 0.5)
-            };
-            if let Some(hit) = found {
+            if world.course.is_some() {
+                if let Some(hit) = self.course_landing(world, pre_frame, bone, &mut gp, gv) {
+                    p = ground_tick::port_dir(gp) * 0.01;
+                    self.pos = p;
+                    self.height = hit.height_m;
+                    self.grounded = true;
+                    self.finish_course_landing(hit);
+                    return;
+                }
+            } else if let Some(hit) = world.ground(p, 1.2, 0.02).filter(|h| self.vel.dot(h.normal) <= 0.5) {
+                // STANDIN (levels folder without course collision): mesh ground fallback
                 let vn = self.vel.dot(hit.normal);
-                let v_in = self.vel;
                 p.y = hit.y;
                 let impact = vn;
                 self.vel -= hit.normal * vn.min(0.0);
-                // the fall becomes speed along the slope
                 let after = self.vel.length();
                 if after > 0.5 { self.vel *= s.min(self.cap.max(SPEED_CAP)) / after; }
                 self.normal = hit.normal;
                 self.surface = hit.surface;
                 self.height = 0.0;
                 self.grounded = true;
-                let mut down = false;
-                let mut chose_state = false;
                 if self.air_time > 0.15 {
-                    match self.att.filter(|_| world.course.is_some()) {
-                        Some((o, _)) => {
-                            down = !self.land_as_game(o, v_in, hit.normal, hit.surface, impact);
-                            chose_state = true;
-                        }
-                        None => {
-                            self.touch_down();
-                            self.land_normal_ctl.crouch = (impact * 100.0 * -0.000_450_000_02).clamp(0.25, 1.0);
-                            let tau = std::f32::consts::TAU;
-                            let r = self.flip - tau * (self.flip / tau).round();
-                            if r < -std::f32::consts::FRAC_PI_4 || impact < -27.77 { self.hard_land = 0.5; }
-                        }
-                    }
+                    self.touch_down();
+                    self.land_normal_ctl.crouch = (impact * 100.0 * -0.000_450_000_02).clamp(0.25, 1.0);
+                    let tau = std::f32::consts::TAU;
+                    let r = self.flip - tau * (self.flip / tau).round();
+                    if r < -std::f32::consts::FRAC_PI_4 || impact < -27.77 { self.hard_land = 0.5; }
                 }
-                // `AirMotion_Update` 0x108378 virtual +0x6c (`cPlayer::vf12` 0x153350 -> `Rumble_Add` 0x150be8):
-                // landing impact normal velocity (cm/s) × −0.00072000007 (`0xba3cbf47`)
-                self.rumble_add(impact * 100.0 * f32::from_bits(0xba3c_bf47));
-                if !down {
-                    self.land_puffs_vn = Some(impact * 100.0);
-                    self.land(None);
-                    if self.crashed <= 0.0 {
-                        self.set_motion(2);
-                        if !chose_state {
-                            let st = if self.hard_land > 0.0 {
-                                control_tick::LAND_HARD
-                            } else if self.air_time > 0.15 {
-                                control_tick::LAND_NORMAL
-                            } else {
-                                control_tick::CRUISE
-                            };
-                            self.set_control(st);
-                        }
-                    }
-                    self.steer = 0.0;
+                self.rumble_add(impact * 100.0 * f32::from_bits(0xba3c_be63));
+                self.land_puffs_vn = Some(impact * 100.0);
+                self.land(None);
+                if self.crashed <= 0.0 {
+                    self.set_motion(2);
+                    let st = if self.hard_land > 0.0 {
+                        control_tick::LAND_HARD
+                    } else if self.air_time > 0.15 {
+                        control_tick::LAND_NORMAL
+                    } else {
+                        control_tick::CRUISE
+                    };
+                    self.set_control(st);
                 }
+                self.steer = 0.0;
             }
         }
         self.pos = p;
@@ -2007,17 +2095,17 @@ impl Rider {
     /// 0x224 and the spin and flip clips are not in those ranges (0x224 is type 0): they never gate.
     /// The board's frame (rider+0x4aa0..: its x, y and z rows and the position it is drawn at) as `Boarder_UpdatePose`
     /// builds it ([`crate::pose::board_frame`]) from the kept attitude (or the one placed from the yaw), the steer, the
-    /// rider's up and body height and the lean. STANDIN: the board's side on the ground (+0x330) is the attitude's,
-    /// and the trick's spin and flip are left out (they turn the frame about the pivot bone: rows G5, G20c3c2)
+    /// rider's up and body height, the lean, and the trick's spin and flip about the pivot bone's height (`pivot_z`,
+    /// from `AnimHost::pivot_pos()` when loaded). STANDIN: the board's side on the ground (+0x330) is the attitude's.
     pub fn board_frame(&self) -> [[f32; 4]; 4] {
         let o = match &self.att {
             Some((o, _)) => *o,
             None => orient::placed_attitude(placed_heading(self.yaw), None),
         };
         let motion = if self.crashed > 0.0 { 5 } else if self.rail.is_some() { 3 } else if self.grounded { 2 } else { 1 };
-        let (spin, flip, pivot_z) = match &self.anim {
-            Some(a) => (self.spin, self.flip, a.pivot_pos()[2]),
-            None => (0.0, 0.0, 0.0),
+        let pivot_z = match &self.anim {
+            Some(a) => a.pivot_pos()[2],
+            None => 91.7 * self.stats.scale,
         };
         crate::pose::board_frame(&crate::pose::PoseIn {
             quat: o.q,
@@ -2030,8 +2118,8 @@ impl Rider {
             side: o.side,
             lean: self.lean[0],
             lean_scale: self.stats.scale,
-            spin,
-            flip,
+            spin: self.spin,
+            flip: self.flip,
             pivot_z,
         })
     }
@@ -2085,10 +2173,11 @@ impl Rider {
         self.att = Some((o, self.yaw));
     }
 
-    /// The spin state ended (`SpinControl_Exit` 0x1029d0, [`crate::spin::spin_exit`]): any spin or flip left turned
-    /// into the kept attitude, the position moved so the pivot bone stays put
-    fn end_spin(&mut self) {
-        if self.spin_st.take().is_none() {
+    /// Fold any active `spin` / `flip` into `self.att` via `SpinControl_Exit` 0x1029d0 (`crate::spin::spin_exit`),
+    /// preserving the pivot bone's world position, and clear `spin_st`, `spin`, `flip`.
+    fn fold_spin_into_att(&mut self) {
+        let had = self.spin_st.take().is_some();
+        if !had && self.spin == 0.0 && self.flip == 0.0 {
             return;
         }
         let Some((o, y)) = self.att else { return };
@@ -2108,6 +2197,17 @@ impl Rider {
             self.att = Some((o2, y));
             self.pos = ground_tick::port_dir(r.pos) * 0.01;
         }
+        self.spin = 0.0;
+        self.flip = 0.0;
+    }
+
+    /// The spin state ended (`SpinControl_Exit` 0x1029d0, [`crate::spin::spin_exit`]): any spin or flip left turned
+    /// into the kept attitude, the position moved so the pivot bone stays put
+    fn end_spin(&mut self) {
+        if self.spin_st.is_none() {
+            return;
+        }
+        self.fold_spin_into_att();
     }
 
     /// Feeds the host's `Ps2Pad::play` device state and parsed disc `BTNMAP<n>.DAT` config directly into the rider

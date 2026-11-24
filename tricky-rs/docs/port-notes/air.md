@@ -227,3 +227,21 @@ pushes left and push it after the prediction (rec16 6765 r0, proven against the 
   `Sfx_UpdateAir`; then virtual +0x9c.
 Checked: 20,000 predictions and 20,000 air ticks (all five outcomes) against the original.
 
+- **In the live rider (row E8r, `Rider::air_motion_update`, `Rider::course_landing`, `Rider::finish_course_landing`)**:
+  On course collision (`world.course.is_some()`), `Rider::air_motion_update` runs `Air_IntegrateRK4` (`0x12b340`),
+  `AirPredict_Tick` (`0x123ec8`, updating `surface` / `air_surface_ticks` from the predicted landing surface word),
+  the down ray `cWorldLine(0.5, piv − 100·U, piv + 200·U, 1)` from the pre-RK4 board frame pivot
+  `piv = pre_frame * [-bone, 1]` along board up `U = pre_frame[2]` (`0x108500..0x108588`), the spin/flip pivot
+  offset `air_motion::pivot_offset_of(q, spin, flip, bone)` (`0x1085c8..0x108920`), `Boarder_ProbeGround`
+  (`0x128ae8`, `cWorldLine(0.5, …, 2)`), the recomputed `vn = dot(probe.normal, vel)`, the `< surface[6] * 0.5`
+  height test, and the `height < 0` ground clamp `pos = probe.ground - off` (`0x1089b0`). On landing,
+  `finish_course_landing` clears `predict.t_land` (`AirPredict_ClearLandTime` `0x123f00`), sets crouch
+  (`AirMotion_SetFallScale` `0x1049a0`), adds landing rumble (`0xba3cbe63`), blends out layer-1 type `0x1a` clips,
+  checks `Landing_CheckAngles` (`0x12ba78`) early outs (grab/tweak/uber without flag 4, surface 0/6/10) and folds
+  `spin`/`flip` into `att` via `SpinControl_Exit` (`0x1029d0`, `Boarder_SetState(1)`) before checking pitch/roll,
+  runs `Landing_ChooseState` (`0x109308`, including alpine backwards half-turn and clip/state selection), applies
+  the two angle slow-down factors directly to `vel` without zeroing normal velocity or gating on `air_time > 0.15`,
+  runs `Score_LandTrick` -> `Boarder_AddMeter`, triggers `Speech_OnAirTime` / celebration counter, and sets
+  `land_puffs_vn`. Verified by `tests/landing_game.rs`, `tests/air_wall.rs`, `tests/air_motion.rs`, and the full
+  `tricky-game` and `tricky-rs` test suites.
+
