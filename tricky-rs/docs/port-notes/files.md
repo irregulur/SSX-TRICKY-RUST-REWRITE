@@ -972,3 +972,4 @@ answering the code byte-swapped (as stored) and sign-extended; `Sjis_ToAscii` 0x
 (0x345ee8 − 0x40) and the 0x82 row's three groups (0x345ee0). `MemCard_AsciiToSjis` / `MemCard_SjisToAscii`
 (0x23d628 / 0x23d680) run them over a string.
 `MemCard_CheckRoomForFiles` 0x23fcb8 (E12f2b, proven, `memcard::check_room`, in the first test): free blocks (vf +0x88) less a save's (vf +0x98 of +0x24) for each file the card lacks (vf +0x1c8 answers 0); a file that does not fit is marked +0x1a4 (signed compare).
+`cPS2MemCard::vf13` 0x23fb60 (E12f2b, proven, `memcard::file_line`): a file's line for the menu: busy text 0x3a4590 in states 5..0x10, else the strings 0x15f (no card, or the file not on it), 0x1cf (card unusable), 0x148 (file flagged), 0x18b (no room), else the file's title (+0x1e8); cut to 32 characters on the stack and copied out.

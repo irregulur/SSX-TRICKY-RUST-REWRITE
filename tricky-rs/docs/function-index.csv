@@ -4375,7 +4375,7 @@ address,size,name,system,status
 0x23ed78,56,cPS2MemCard::vf54_23ed78,save,checked
 0x23edb0,24,cPS2MemCard::vf55_23edb0,save,checked
 0x23edc8,3752,cPS2MemCard::vf2_23edc8,save,not started
-0x23fb60,344,cPS2MemCard::vf13_23fb60,save,not started
+0x23fb60,344,cPS2MemCard::vf13_23fb60,save,checked
 0x23fcb8,236,MemCard_CheckRoomForFiles,save,checked
 0x23fda8,140,cPS2MemCard::vf11_23fda8,save,checked
 0x23fe38,12,MemCard_IsErrorCode,save,checked

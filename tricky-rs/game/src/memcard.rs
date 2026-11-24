@@ -933,3 +933,39 @@ pub fn current_text(m: &mut Mem, e: &mut dyn FeEnv, c: u32, out: u32) {
     let p = m.r32(c + 0x10);
     slot_text(m, e, c, p, out);
 }
+
+pub const WSTR_SET_ASCII: u32 = 0x17ccb8;
+/// The busy line's ASCII (0x3a4590)
+pub const BUSY_TEXT: u32 = 0x3a4590;
+
+/// `cPS2MemCard::vf13` 0x23fb60(c, i, out) (`sp` the stack pointer on entry): file `i`'s line into `out` (cut at
+/// 32 characters): busy (states 5..0x10) the text at 0x3a4590; no card (vf +0x170) or none usable (vf +0x178) the
+/// strings 0x15f / 0x1cf; a flagged file 0x148, one without room 0x18b; a file the card lacks (vf +0x1c8) 0x15f;
+/// else the file's title (+0x1e8)
+pub fn file_line(m: &mut Mem, e: &mut dyn FeEnv, c: u32, i: u32, out: u32, sp: u32) {
+    let buf = sp - 0xd0;
+    let f = file(c, i);
+    let id = if m.r32(c + 4).wrapping_sub(5) < 0xc {
+        e.call(m, WSTR_SET_ASCII, &[buf, BUSY_TEXT]);
+        None
+    } else if vcall(m, e, c, 0x170, &[]) == 0 {
+        Some(0x15f)
+    } else if vcall(m, e, c, 0x178, &[]) == 0 {
+        Some(0x1cf)
+    } else if m.r32(f + 0x19c) != 0 || m.r32(f + 0x1a0) != 0 {
+        Some(0x148)
+    } else if m.r32(f + 0x1a4) != 0 {
+        Some(0x18b)
+    } else if vcall(m, e, c, 0x1c8, &[i]) == 0 {
+        Some(0x15f)
+    } else {
+        e.call(m, WSTR_SET_ASCII, &[buf, f + 0x1e8]);
+        None
+    };
+    if let Some(id) = id {
+        let t = loc(m, e, id);
+        e.call(m, WSTR_COPY, &[buf, t]);
+    }
+    m.w16(buf + 0x40, 0);
+    e.call(m, WSTR_COPY, &[out, buf]);
+}
