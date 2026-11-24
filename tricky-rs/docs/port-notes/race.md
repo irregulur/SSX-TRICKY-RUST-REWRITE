@@ -219,6 +219,14 @@ computers' counts at +0x7c / +0x80 and all riders' at +0x88, the players' contro
 The test runs 1,000 cases of each, with up to six riders (up to four players), every callee a stand-in; 27 of 27
 mutants are caught.
 
+Row G4k2 (proven, same test): `cAI::cAI` 0x114c00 makes the node (`cBxObjNode::cBxObjNode` with the parent), sets the
+race's table 0x364738 at +8 and eleven one-word handlers' tables (+0x24 0x364860, +0x2c 0x364820, +0x30 0x364840,
++0x34 0x364800, +0x38 0x3647e0, +0x48 0x36e780, +0x4c 0x36e760, +0x50 0x36e740, +0x54 0x364e48, +0x58 0x36e720, +0x5c
+0x364e28; +0x28 and +0x3c..+0x44 are left), then the archives +0xfc, +0x110 and the loader +0x124; `~cAI` 0x114d30
+puts the table back, destroys the loader, +0x110, +0xfc (each with 2) and ends in the node's destructor with its
+argument. The table's vf2 is the node's empty 0x17df00 and vf3..vf6 the node's `return 0` (0x17def8, 0x17def0,
+0x17dee8, 0x17dee0).
+
 ## Rank catch-up: the unchecked list walk
 
 Proven on the PS2: `Race_UpdatePlacingsAndRubberBand` 0x115100 runs every 6 ticks (`race+0x18 % 6`), over

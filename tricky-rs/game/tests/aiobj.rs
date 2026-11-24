@@ -1,6 +1,6 @@
 //! `tricky_game::aiobj` (board row G4k) against the original in the function runner (TRICKY_ELF; skipped without
 //! it): the race object's vf10 0x1108f0 (reset), vf11 0x110bf8 (the riders made), vf13 0x110fa0 (tear-down) and vf16
-//! 0x111560 (start of a race). Every case builds a random race object, career roster (0..6 riders, computers and
+//! 0x111560 (start of a race), and (row G4k2) its constructor 0x114c00 and destructor 0x114d30. Every case builds a random race object, career roster (0..6 riders, computers and
 //! players mixed), app and controllers in the arena; one function then runs on both sides. Every callee is a
 //! stand-in answering from the case's seed: the controllers' constructors answer their object and give it a boarder
 //! (or none, at times) at +0; the list's first node is a random word or none. The calls are compared with their
@@ -56,7 +56,7 @@ fn slot(off: u32) -> u32 {
 }
 /// the objects' virtuals: the boarder's destructor +8, the +0x64 object's +0x10, the race's +0x60 and +0x78
 const SLOTS: [u32; 4] = [8, 0x10, 0x60, 0x78];
-const FUNCS: [u32; 4] = [0x1108f0, 0x110bf8, 0x110fa0, 0x111560];
+const FUNCS: [u32; 6] = [0x1108f0, 0x110bf8, 0x110fa0, 0x111560, 0x114c00, 0x114d30];
 const CTORS: [u32; 2] = [ao::COMPUTER_CTOR, ao::PLAYER_CTOR];
 
 #[derive(Clone, Debug, PartialEq)]
@@ -66,6 +66,8 @@ fn arity(f: u32) -> usize {
     use ao::*;
     match f {
         LOADER_MANAGERS => 4,
+        NODE_CTOR | NODE_DTOR | ARCHIVE_DTOR | LOADER_DTOR => 2,
+        ARCHIVE_CTOR | LOADER_CTOR => 1,
         ALLOC | FILL | COMPUTER_CTOR | PLAYER_CTOR | RIDER_INFO | ARCHIVE_OPEN | LIST_ADD => 3,
         f if f == slot(0x78) => 3,
         SKIN_MEM | INPUT_DEFAULTS | VIBRATION | LIST_DELETE_ALL | LIST_FIRST | LIST_UNLINK => 2,
@@ -128,14 +130,17 @@ impl FeEnv for Env<'_> {
     }
 }
 
-fn ours(m: &mut Mem, e: &mut dyn FeEnv, f: u32) {
+fn ours(m: &mut Mem, e: &mut dyn FeEnv, f: u32, a1: u32) -> u32 {
     match f {
+        0x114c00 => return ao::construct(m, e, AI, a1),
+        0x114d30 => ao::destruct(m, e, AI, a1),
         0x1108f0 => ao::reset(m, e, AI),
         0x110bf8 => ao::make_riders(m, e, AI),
         0x110fa0 => ao::tear_down(m, e, AI),
         0x111560 => ao::start_race(m, e, AI),
         _ => unreachable!(),
     }
+    0
 }
 
 #[test]
@@ -150,7 +155,7 @@ fn race_object_glue_matches_the_original() {
     let mut stubs = vec![
         ALLOC, FILL, COMPUTER_CTOR, PLAYER_CTOR, SKIN_MEM, RIDER_INFO, GET_DEVICE, INPUT_DEFAULTS, VIBRATION,
         ARCHIVE_OPEN, ARCHIVE_CLOSE, LOADER_MANAGERS, DELETE, ANIM_RESET, LIST_DELETE_ALL, LIST_FIRST, LIST_UNLINK,
-        LIST_ADD, RAND_FX,
+        LIST_ADD, RAND_FX, NODE_CTOR, NODE_DTOR, ARCHIVE_CTOR, ARCHIVE_DTOR, LOADER_CTOR, LOADER_DTOR,
     ];
     stubs.extend(SLOTS.map(slot));
     for f in stubs {
@@ -170,8 +175,8 @@ fn race_object_glue_matches_the_original() {
     r.mem.read(DATA.0, &mut data).unwrap();
     let mut g = Rng(0x64b0_0000_0000_0001);
     let mut riders = [0u32; 7];
-    for case in 0..4000u32 {
-        let func = FUNCS[(case % 4) as usize];
+    for case in 0..6000u32 {
+        let func = FUNCS[(case % 6) as usize];
         let heap = if func == 0x110bf8 { HEAP.1 } else { 0x100 };
         let regions = vec![
             (DATA.0, data.clone()),
@@ -246,14 +251,19 @@ fn race_object_glue_matches_the_original() {
         ans.seed.set(((g.next() as u64) << 32) | g.next() as u64);
         ans.n.set(0);
         ans.heap.set(HEAP.0);
+        let a1 = g.next();
         let mut env = Env { log: Vec::new(), ans: &ans };
-        ours(&mut m, &mut env, func);
+        let v = ours(&mut m, &mut env, func, a1);
         ans.n.set(0);
         ans.heap.set(HEAP.0);
         log.borrow_mut().clear();
         r.cpu.set_gpr(4, AI as i32 as i64 as u64);
+        r.cpu.set_gpr(5, a1 as i32 as i64 as u64);
         r.call(func).unwrap_or_else(|e| panic!("case {case} {func:#x}: {e}"));
         assert_eq!(*log.borrow(), env.log, "case {case} {func:#x}: the calls");
+        if func == 0x114c00 {
+            assert_eq!(r.cpu.gpr(2) as u32, v, "case {case}: the answer");
+        }
         for (at, b) in &m.regions {
             let mut th = vec![0u8; b.len()];
             r.mem.read(*at, &mut th).unwrap();
@@ -265,4 +275,20 @@ fn race_object_glue_matches_the_original() {
         }
     }
     assert!(riders.iter().all(|&n| n > 100), "every roster size: {riders:?}");
+}
+
+#[test]
+fn default_virtuals_match_the_original() {
+    let Some(mut r) = Runner::from_env() else { return };
+    // (the race object's table, 0x364738: vf2..vf6)
+    let slots: Vec<u32> = (3..8).map(|k| r.mem.read_u32(ao::AI_VT + 8 * k + 4)).collect();
+    assert_eq!(slots, [0x17df00, 0x17def8, 0x17def0, 0x17dee8, 0x17dee0]);
+    for (k, f) in slots.into_iter().enumerate() {
+        r.allow(f);
+        r.cpu.set_gpr(2, 0x1234_5678);
+        r.call(f).unwrap();
+        if k > 0 {
+            assert_eq!(r.cpu.gpr(2) as u32, ao::default_virtual(k as u32 + 2), "vf{}", k + 2);
+        }
+    }
 }

@@ -195,9 +195,9 @@ address,size,name,system,status
 0x114ab8,80,cPostAI::__tf,runtime,host
 0x114b08,20,cPreAI::~cPreAI,ai,not started
 0x114b58,80,cPreAI::__tf,runtime,host
-0x114c00,208,cAI::cAI,ai,not started
+0x114c00,208,cAI::cAI,ai,checked
 0x114cd0,92,cAI::__tf,runtime,host
-0x114d30,100,cAI::~cAI,ai,not started
+0x114d30,100,cAI::~cAI,ai,checked
 0x114d98,80,cEndRaceHandler::__tf,runtime,host
 0x114de8,80,cRaceHandler::__tf,runtime,host
 0x114e38,80,cStartRaceHandler::__tf,runtime,host
@@ -1736,11 +1736,11 @@ address,size,name,system,status
 0x17de58,120,BxList_DestroySlot,world,checked
 0x17ded0,8,cCounterNode::vf8_17ded0,world,not started
 0x17ded8,8,cLessonMan::vf7_17ded8,tutorial,not started
-0x17dee0,8,cAI::vf6_17dee0,ai,not started
-0x17dee8,8,cAI::vf5_17dee8,ai,not started
-0x17def0,8,cAI::vf4_17def0,ai,not started
-0x17def8,8,cAI::vf3_17def8,ai,not started
-0x17df00,8,cAI::vf2_17df00,ai,not started
+0x17dee0,8,cAI::vf6_17dee0,ai,checked
+0x17dee8,8,cAI::vf5_17dee8,ai,checked
+0x17def0,8,cAI::vf4_17def0,ai,checked
+0x17def8,8,cAI::vf3_17def8,ai,checked
+0x17df00,8,cAI::vf2_17df00,ai,checked
 0x17df08,8,cBxObjNode::Update,world,not started
 0x17df30,64,cBxObjNode::__tf,runtime,host
 0x17dff0,80,cBxTypeObjNodeState::__tf,runtime,host

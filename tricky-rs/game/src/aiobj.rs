@@ -1,7 +1,7 @@
 //! The race object's (`cAI`) object glue (board row G4k) on the game's bytes: its reset (vf10 0x1108f0), the riders
 //! made (vf11 0x110bf8), torn down (vf13 0x110fa0) and set out at the start of a race (vf16 0x111560). Allocation,
 //! the career's race roster and virtual calls: every call out goes through [`FeEnv`]. Checked in the function runner
-//! (`tests/aiobj.rs`).
+//! (`tests/aiobj.rs`). Row G4k2 adds its constructor 0x114c00, destructor 0x114d30 and the node's default virtuals.
 //!
 //! The race object: +8 its table (the race's own virtuals), +0x1c / +0x20 / +0x60 / +0x68 words, +0x64 an object
 //! (its table at +0), +0x6c..+0x78 the four inputs (`cInput`, 0x274 bytes), +0x7c the players, +0x80 the computer
@@ -245,4 +245,59 @@ pub fn start_race(m: &mut Mem, e: &mut dyn FeEnv, ai: u32) {
         k += 1;
     }
     vcall_at(m, e, ai, 8, 0x78, &[1, 1]);
+}
+
+/// The race object's table (0x364738) and its handlers' (each handler one word, its table): +0x24, +0x2c, +0x30,
+/// +0x34, +0x38, +0x48, +0x4c, +0x50, +0x54, +0x58, +0x5c, in the constructor's order
+pub const AI_VT: u32 = 0x364738;
+pub const HANDLER_VTS: [(u32, u32); 11] = [
+    (0x24, 0x364860),
+    (0x2c, 0x364820),
+    (0x30, 0x364840),
+    (0x34, 0x364800),
+    (0x38, 0x3647e0),
+    (0x48, 0x36e780),
+    (0x4c, 0x36e760),
+    (0x50, 0x36e740),
+    (0x54, 0x364e48),
+    (0x58, 0x36e720),
+    (0x5c, 0x364e28),
+];
+/// `cBxObjNode::cBxObjNode` 0x17cf50, its destructor 0x17cfe0; `cAsyncBigFile`'s constructor 0x23bd10 and destructor
+/// 0x23bd90; the bdr loader's 0x201b50 / 0x201b90
+pub const NODE_CTOR: u32 = 0x17cf50;
+pub const NODE_DTOR: u32 = 0x17cfe0;
+pub const ARCHIVE_CTOR: u32 = 0x23bd10;
+pub const ARCHIVE_DTOR: u32 = 0x23bd90;
+pub const LOADER_CTOR: u32 = 0x201b50;
+pub const LOADER_DTOR: u32 = 0x201b90;
+
+/// `cAI::cAI` 0x114c00(ai, parent): the node made (with `parent`), the race's table at +8 and the handlers' tables,
+/// the two async archives (+0xfc, +0x110) and their loader (+0x124) made; answers `ai`
+pub fn construct(m: &mut Mem, e: &mut dyn FeEnv, ai: u32, parent: u32) -> u32 {
+    e.call(m, NODE_CTOR, &[ai, parent]);
+    m.w32(ai + 8, AI_VT);
+    for (at, vt) in HANDLER_VTS {
+        m.w32(ai + at, vt);
+    }
+    e.call(m, ARCHIVE_CTOR, &[ai + 0xfc]);
+    e.call(m, ARCHIVE_CTOR, &[ai + 0x110]);
+    e.call(m, LOADER_CTOR, &[ai + 0x124]);
+    ai
+}
+
+/// `cAI::~cAI` 0x114d30(ai, how): the race's table back at +8, the loader, the archive at +0x110 then +0xfc destroyed
+/// (each with 2: not freed), then the node's destructor with `how`
+pub fn destruct(m: &mut Mem, e: &mut dyn FeEnv, ai: u32, how: u32) {
+    m.w32(ai + 8, AI_VT);
+    e.call(m, LOADER_DTOR, &[ai + 0x124, 2]);
+    e.call(m, ARCHIVE_DTOR, &[ai + 0x110, 2]);
+    e.call(m, ARCHIVE_DTOR, &[ai + 0xfc, 2]);
+    e.call(m, NODE_DTOR, &[ai, how]);
+}
+
+/// The node's default virtuals the race object keeps: vf3..vf6 (0x17def8, 0x17def0, 0x17dee8, 0x17dee0) answer 0,
+/// vf2 0x17df00 does nothing
+pub fn default_virtual(_slot: u32) -> u32 {
+    0
 }
