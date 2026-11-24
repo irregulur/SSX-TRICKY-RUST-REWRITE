@@ -267,9 +267,10 @@ fn wf(m: &mut Mem, at: u32, v: f32) {
     m.w32(at, v.to_bits());
 }
 
-const FUNCS: [u32; 19] = [
+const FUNCS: [u32; 21] = [
     0x14bbe8, 0x14bd98, 0x14c098, 0x14c2d0, 0x14cf38, 0x14cfb0, 0x14d138, 0x14d320, 0x14d5e0, 0x14ed88, 0x1550f8,
-    0x1550d0, 0x1550c8, 0x1550e0, 0x1550e8, 0x17ded8, 0x14c2c0, 0x14c2c8, 0x14c098,
+    0x1550d0, 0x1550c8, 0x1550e0, 0x1550e8, 0x17ded8, 0x14c2c0, 0x14c2c8, 0x14c098, 0x1b8548,
+    0x1b8560,
 ];
 
 #[test]
@@ -339,6 +340,7 @@ fn lesson_drawing_matches_the_original() {
             m.w32(RVT + off + 4, rv(off));
         }
         m.w32(RACE + 0x1c, R1);
+        m.w32(RACE + 0x34, LM);
         m.w32(R1 + 0x8c, OWNER);
         m.w32(OWNER + 0x870, CFG);
         for k in 0..0x40 {
@@ -396,6 +398,7 @@ fn lesson_drawing_matches_the_original() {
             _ => (g.next(), 0.0, 0.0),
         };
         let a0 = match func {
+            0x1b8548 => FONTS,
             _ => LM,
         };
         let seed = g.next() as u64 | (g.next() as u64) << 32;
@@ -408,6 +411,7 @@ fn lesson_drawing_matches_the_original() {
         let (e, mm) = (&mut env, &mut m);
         let ours = match func {
             0x14bbe8 => { draw(mm, e, a0); none }
+            0x1b8548 => { overlay_draw(mm, e, a0, TOP); none }
             0x14bd98 => { draw_buttons(mm, e, a0); none }
             0x14c098 => { draw_page(mm, e, a0, a1, TOP); none }
             0x14c2d0 => { draw_trick_book_page(mm, e, a0, a1, TOP); none }

@@ -594,3 +594,10 @@ pub fn nothing() {}
 pub fn trick_info_vf4() -> F {
     F(0.0)
 }
+
+/// `cLessonOverlay::Draw` 0x1b8548(ov): the race's lesson manager (+0x34) draws its page with the overlay as its
+/// font set (a tail call: the same `sp`). `cLessonControllerOverlay::Draw` 0x1b8560 does nothing ([`nothing`]).
+pub fn overlay_draw(m: &mut Mem, e: &mut dyn TextBoxEnv, ov: u32, sp: u32) {
+    let lm = m.r32(m.r32(m.r32(APP) + 0x730) + 0x34);
+    draw_page(m, e, lm, ov, sp);
+}

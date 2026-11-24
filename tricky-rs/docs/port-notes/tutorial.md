@@ -197,3 +197,5 @@ the pad config between two stand-ins that write nothing).
 - `Lesson_DrawMenu` 0x14d5e0(lm, flag) calls `Overlay_DrawMenuList` with ten arguments (the last two, `flag` and
   lm+0x84, on the stack). `Lesson_GetString` 0x14ed88(lm, id) is `Loc_GetString(id)`.
 - `cTrickInfo` vf1/vf3/vf5 do nothing, vf4 answers 0.0, its destructor sets the table 0x36fad0 at +0x24.
+- `cLessonOverlay::Draw` 0x1b8548(ov) is `DrawPage(race+0x34, ov)` (the overlay is the font set);
+  `cLessonControllerOverlay::Draw` 0x1b8560 does nothing. Both in the same test.

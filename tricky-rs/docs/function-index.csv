@@ -62,7 +62,7 @@ address,size,name,system,status
 0x106228,132,GateLaunchControl_Enter,boarder,checked
 0x1062b0,464,GateLaunchControl_Update,boarder,checked
 0x106480,124,StaticInit_GateLaunchControl,boarder,checked
-0x106500,60,LessonWaitControl_Enter,tutorial,ported
+0x106500,60,LessonWaitControl_Enter,tutorial,checked
 0x106548,124,StaticInit_LessonWaitControl,tutorial,checked
 0x1065c8,36,FinishLineControl_IsDone,boarder,checked
 0x1065f0,16,FinishLineControl_IsPhase4,boarder,checked
@@ -2542,8 +2542,8 @@ address,size,name,system,status
 0x1b73e0,2488,cHiScoreRecordOverlay::DrawText,frontend,checked
 0x1b7d98,1056,cHiScoreRecordOverlay::Update,frontend,checked
 0x1b81b8,912,HiScore_SubmitEntry,race,checked
-0x1b8548,24,cLessonOverlay::Draw,frontend,not started
-0x1b8560,8,cLessonControllerOverlay::Draw,frontend,not started
+0x1b8548,24,cLessonOverlay::Draw,frontend,checked
+0x1b8560,8,cLessonControllerOverlay::Draw,frontend,checked
 0x1b8568,240,SaveOverlay_Init,save,ported
 0x1b8658,192,Draw_SolidRect,render,checked
 0x1b8718,1180,cSelectNextEventOverlay::vf17_1b8718,frontend,checked
