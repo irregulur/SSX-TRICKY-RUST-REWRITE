@@ -92,6 +92,7 @@ matches the original.
 | C14 | Single event, freeride and practice modes | unowned | C0, G9 | | [est] |
 | C16 | Unlockables: characters, outfits, boards, the hidden ones, and the button cheats | unowned | C12, E10 | | [repo] |
 | C11d | The tutorial screens: `cLessonOverlay` / `cLessonControllerOverlay` (0x1be4a0, 0x1be540), the page tabs and trick pictures (`tb_<rider><n>` textures), `Results_BuildLessonPage` 0x1b1aa8 (done in G9v3), the `Speech_LessonLine` lines; and the loading screen `cTrickTutorialLoad` 0x250068 | any | C11, E5 | | Gap of C11 |
+| C11d1 | Split of C11d: the lesson manager's draw, checked in the runner: `cLessonMan` vf2 0x14bbe8, `LessonOverlay_DrawButtons` 0x14bd98, the page draws 0x14c098..0x14d320 (`DrawPage`, `DrawTrickBookPage`, `DrawTrickInfo`, `DrawTrickPage`, `DrawTipPage`, `DrawInstructions`), `Lesson_DrawMenu` 0x14d5e0, `Lesson_GetString` 0x14ed88, and the trivial `cTrickInfo` virtuals 0x1550c8..0x1550f8 and `cLessonMan` vf7 0x17ded8 | any | C11, E5 | irregulur/lynx (2026-11-24) | Gap of C11 |
 | C11e | The tutorial in the app: game mode 6 on the `trick` course (the course's level files from the disc, E3a4, the mode switch in `main.rs`), the pad map swap at start and exit, and the lessons' effect on the trick book (C15) | any | C11b, C11c, C11d, E3a4 | | Gap of C11 |
 
 ## P4 Finishing
@@ -1827,3 +1828,4 @@ matches the original.
 - 2026-11-24 irregulur/lynx: `cLessonMan::~cLessonMan` 0x14b520 and `PadCfg_Destruct` 0x14f550 ported in `aiobj.rs` and checked with G4k's test (tutorial gaps too small for rows).
 - 2026-11-24 irregulur/neon: C12a done (World Circuit event loop on `tricky_game::circuit` with persistent `RosterRes.circuit`/`heat_ready`, `Career::check_new_records` -> `Circuit::process_race_result`, `Circuit_StoreRiderAttitudes` `0x16c228`, `Career::finish_race` -> `Circuit::advance_event` -> `Circuit_SetupEventRiders` `0x16d300` syncing `Circuit::out` <-> `CircuitHeats::rows[r][3]`, and `cUnlockedOverlay` unlock display on Results via `GameText::format_unlocks`).
 - 2026-11-24 irregulur/neon: E7b2 done (`tricky_game::cellhost::CellHost` wired into `CourseGround`, `knockables.rs`, `worldanim.rs`, and `main.rs`; `AiCells::tick` + controllers + `meshanim::mesh_frame` posing at 60 Hz; verified on Mesablanca `1444` and Tokyo Megaplex `Pinball_FlipperL` `75` 300-tick flip in `tests/cellhost.rs`).
+- 2026-11-24 irregulur/lynx: split C11d1 (the lesson manager draw) out of C11d.
