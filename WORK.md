@@ -106,7 +106,7 @@ matches the original.
 | X1 | No stand-ins left: `grep -rn STANDIN tricky-rs` is empty | any | F8 | | [est] |
 | X2 | Function index at 100% ported (every function either ported or marked not needed, with a reason, e.g. PS2 hardware glue) | any | F1 | | [est] |
 | X3 | Function index at 100% checked | any | F4, X2 | | [est] |
-| X3a | Index sweep: the functions a passing runner test calls directly (`r.call(0x…)` in `tricky-rs/game/tests`) still marked ported or not started in the function index (316 on 2026-11-24) checked against their tests and marked checked | any | F4 | irregulur/lynx (2026-11-24) | Split of X3 |
+| X3a | Index sweep: the functions a passing runner test calls directly (`r.call(0x…)` in `tricky-rs/game/tests`) still marked ported or not started in the function index (316 on 2026-11-24) checked against their tests and marked checked (the runner exists; F4 itself is still open) | any | - | irregulur/lynx (2026-11-24) | Split of X3 |
 | X4 | Full playthrough of World Circuit, race and show-off, every course, gold everywhere, on our code | any | C1–C16 | | [est] |
 | X5 | 100% completion: every rider maxed, every trick book chapter, every unlock | any | X4 | | [est] |
 | X6 | Runs from the player's own disc only: no SSX-Library, no Python export step, no vgmstream | any | E2–E5, G10 | | [est] |
