@@ -971,3 +971,4 @@ The SJIS converters (row E12f2b, proven; third test in `tests/memcard.rs`, 5 of 
 answering the code byte-swapped (as stored) and sign-extended; `Sjis_ToAscii` 0x23d868 reverses the 0x81 row
 (0x345ee8 − 0x40) and the 0x82 row's three groups (0x345ee0). `MemCard_AsciiToSjis` / `MemCard_SjisToAscii`
 (0x23d628 / 0x23d680) run them over a string.
+`MemCard_CheckRoomForFiles` 0x23fcb8 (E12f2b, proven, `memcard::check_room`, in the first test): free blocks (vf +0x88) less a save's (vf +0x98 of +0x24) for each file the card lacks (vf +0x1c8 answers 0); a file that does not fit is marked +0x1a4 (signed compare).

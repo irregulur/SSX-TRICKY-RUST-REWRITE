@@ -900,3 +900,30 @@ pub fn sjis_string_to_ascii(m: &mut Mem, dst: u32, src: u32) {
     }
     m.w8(d, 0);
 }
+
+/// `MemCard_CheckRoomForFiles` 0x23fcb8(c): the card's free blocks (vf +0x88) and a save's (vf +0x98 with +0x24);
+/// each file the driver's vf +0x1c8 does not have yet takes its blocks from the free ones, or is marked (+0x1a4)
+/// when they are too few
+pub fn check_room(m: &mut Mem, e: &mut dyn FeEnv, c: u32) {
+    let mut free = vcall(m, e, c, 0x88, &[]) as i32;
+    let size = m.r32(c + 0x24);
+    let need = vcall(m, e, c, 0x98, &[size]) as i32;
+    let mut i = 0u32;
+    if (m.r32(c + 0x14) as i32) > 0 {
+        loop {
+            let at = file(c, i) + 0x1a4;
+            m.w32(at, 0);
+            if vcall(m, e, c, 0x1c8, &[i]) == 0 {
+                if free < need {
+                    m.w32(at, 1);
+                } else {
+                    free = free.wrapping_sub(need);
+                }
+            }
+            i += 1;
+            if (i as i32) >= (m.r32(c + 0x14) as i32) {
+                break;
+            }
+        }
+    }
+}
