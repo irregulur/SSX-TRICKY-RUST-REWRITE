@@ -921,7 +921,7 @@ address,size,name,system,status
 0x14aa10,80,cRigidBodyState::__tf,runtime,host
 0x14aa60,64,cReplayRecordHeader::__tf,runtime,host
 0x14aaa0,2684,LessonMan_Init,tutorial,checked
-0x14b520,136,cLessonMan::~cLessonMan,tutorial,not started
+0x14b520,136,cLessonMan::~cLessonMan,tutorial,checked
 0x14b5a8,140,LessonMan_Reset,tutorial,ported
 0x14b638,300,LessonMan_EndAttempt,tutorial,checked
 0x14b768,96,Lesson_SetupRider,tutorial,checked
@@ -1012,7 +1012,7 @@ address,size,name,system,status
 0x14f4b0,8,cLoadLessonHandler::Exit,game,checked
 0x14f4b8,80,cLoadLessonHandler::__tf,runtime,host
 0x14f510,64,cAIStateHandler::__tf,runtime,host
-0x14f550,28,PadCfg_Destruct,input,not started
+0x14f550,28,PadCfg_Destruct,input,checked
 0x14f5b0,64,cLessonManState::__tf,runtime,host
 0x14f5f0,20,Vec4_Set,common,ported
 0x14f608,188,ContactPool_Init,world,checked

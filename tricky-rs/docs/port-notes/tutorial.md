@@ -166,3 +166,9 @@ stay ported only: the test covers modes 6..10, not 1..5.
 
 - `Lesson_ResetScene` 0x14d7d0's callees, the overlays and the load
   screen (C11d), the texture loader `FUN_00112920`.
+
+`cLessonMan::~cLessonMan` 0x14b520 (proven, `aiobj::lesson_destruct`, checked in `tests/aiobj.rs`, 5 of 5 mutants with
+`PadCfg_Destruct`): the table 0x36e570 back at +8; the recording buffer (+0x46c) `Mem_Delete`d if any; an open lesson
+archive (+0xa8) `BigArchive_Close`d, then (read again) `BigArchive_Delete(…, 3)` and +0xa8 cleared; the trick info
+(+0x514) destroyed with 2; the node's destructor with the caller's argument. `PadCfg_Destruct` 0x14f550 deletes the
+pad map only when its argument has bit 0.

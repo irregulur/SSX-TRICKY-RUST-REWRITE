@@ -806,3 +806,38 @@ pub fn update_rider_streaming(m: &mut Mem, e: &mut dyn FeEnv, ai: u32, scratch: 
     }
     m.w32(ai + 0x4f8, 0);
 }
+
+/// `cLessonMan`'s table (0x36e570), `BigArchive_Close` 0x23bcc0, `BigArchive_Delete` 0x23bb98,
+/// `cGameTrickInfo::~cGameTrickInfo` 0x155058
+pub const LESSON_VT: u32 = 0x36e570;
+pub const ARCHIVE_CLOSE_BIG: u32 = 0x23bcc0;
+pub const ARCHIVE_DELETE: u32 = 0x23bb98;
+pub const TRICK_INFO_DTOR: u32 = 0x155058;
+
+/// `cLessonMan::~cLessonMan` 0x14b520(lesson, how): its table back; the recording buffer (+0x46c), if any, deleted;
+/// the lesson archive (+0xa8), if open, closed and (read again) deleted with 3 and forgotten; the trick info (+0x514)
+/// destroyed with 2; the node's destructor with `how`
+pub fn lesson_destruct(m: &mut Mem, e: &mut dyn FeEnv, l: u32, how: u32) {
+    m.w32(l + 8, LESSON_VT);
+    let buf = m.r32(l + 0x46c);
+    if buf != 0 {
+        e.call(m, DELETE, &[buf]);
+    }
+    if m.r32(l + 0xa8) != 0 {
+        e.call(m, ARCHIVE_CLOSE_BIG, &[m.r32(l + 0xa8)]);
+        let a = m.r32(l + 0xa8);
+        if a != 0 {
+            e.call(m, ARCHIVE_DELETE, &[a, 3]);
+        }
+        m.w32(l + 0xa8, 0);
+    }
+    e.call(m, TRICK_INFO_DTOR, &[l + 0x514, 2]);
+    e.call(m, NODE_DTOR, &[l, how]);
+}
+
+/// `PadCfg_Destruct` 0x14f550(cfg, how): deleted when `how` has bit 0
+pub fn pad_cfg_destruct(m: &mut Mem, e: &mut dyn FeEnv, cfg: u32, how: u32) {
+    if how & 1 != 0 {
+        e.call(m, DELETE, &[cfg]);
+    }
+}

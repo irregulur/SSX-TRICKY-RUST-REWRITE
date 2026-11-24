@@ -60,10 +60,11 @@ fn slot(off: u32) -> u32 {
 }
 /// the objects' virtuals: the boarder's destructor +8, the +0x64 object's +0x10, the race's +0x60 and +0x78
 const SLOTS: [u32; 9] = [8, 0x10, 0x60, 0x78, 0xa0, 0x48, 0x50, 0x68, 0x18];
-const FUNCS: [u32; 28] = [
+const FUNCS: [u32; 30] = [
     0x1108f0, 0x110bf8, 0x110fa0, 0x111560, 0x114c00, 0x114d30, 0x111108, 0x1114d0, 0x113478, 0x1134a0, 0x1134d0,
     0x113738, 0x1146b0, 0x114730, 0x114b08, 0x114a68, 0x1126f0, 0x1125a0, 0x1125c8, 0x1117f0, 0x1128b8, 0x1148d0,
-    0x1148e8, 0x114f70, 0x113740, 0x113820, 0x112920, 0x116650,
+    0x1148e8, 0x114f70, 0x113740, 0x113820, 0x112920, 0x116650, 0x14b520,
+    0x14f550,
 ];
 /// the courses' records (read from the ELF) and the speech system's pointer
 const COURSES: (u32, u32) = (ao::COURSE_TABLE, 13 * 0x1c);
@@ -86,7 +87,8 @@ fn arity(f: u32) -> usize {
         RESET_SKIN | GET_PATH | FOCUS_RIDER | SCENE_SETUP => 2,
         HIDE_OVERLAYS | SEED_GAME | MAIN_PATH | GET_CAMERA | IS_TUTORIAL | RESET_RENDERS | SCENE_ANIMS => 1,
         DEFAULT_REQUEST | VALIDATE_ALL => 0,
-        GET_RIDER => 2,
+        GET_RIDER | ARCHIVE_DELETE | TRICK_INFO_DTOR => 2,
+        ARCHIVE_CLOSE_BIG => 1,
         BDR_REQUEST => 4,
         HUD_SHOW | HUD_HIDE | STORE_ATTITUDES | MUSIC_STATE => 3,
         SLOT_READY | BIND_TEXTURES | FREE_SLOT | FINISH | PAIR_DISTANCES | PLACINGS => 2,
@@ -187,6 +189,8 @@ fn ours(m: &mut Mem, e: &mut dyn FeEnv, f: u32, a1: u32, a2: u32) -> u32 {
         0x114b08 => ao::ai_node_destruct(m, e, AI, ao::PRE_AI_VT, a1),
         0x114a68 => ao::ai_node_destruct(m, e, AI, ao::POST_AI_VT, a1),
         0x116650 => ao::ai_node_destruct(m, e, AI, ao::AI_WORLD_VT, a1),
+        0x14b520 => ao::lesson_destruct(m, e, AI, a1),
+        0x14f550 => ao::pad_cfg_destruct(m, e, AI, a1),
         0x1126f0 => ao::tick(m, e, AI),
         0x1125a0 => ao::set_mode(m, AI, a1),
         0x1125c8 => ao::create_handlers(m, AI, a1),
@@ -226,7 +230,7 @@ fn race_object_glue_matches_the_original() {
         HIDE_OVERLAYS, RESET_SKIN, LOAD_RIDER, DEFAULT_REQUEST, REQUEST_RIDER, SEED_GAME, MAIN_PATH, GET_PATH,
         RESTART_POINT, GET_CAMERA, FOCUS_RIDER, IS_TUTORIAL, VALIDATE_ALL, OPEN_BIG, SCENE_SETUP, SCENE_ANIMS,
         RESET_RENDERS, REPLAY_MODE, HAS_START_GATE, RUN_SCRIPT, GET_RIDER, FLUSH_CLIPS, ANIM_LAYERS, UPDATE_POSE,
-        BROADPHASE, LOOK_BACK, RESET_RENDER, LAUNCH, DRAIN_METER, FINISH, FINISHED, PAIR_DISTANCES, PLACINGS, TIME_UP,
+        BROADPHASE, LOOK_BACK, ARCHIVE_CLOSE_BIG, ARCHIVE_DELETE, TRICK_INFO_DTOR, RESET_RENDER, LAUNCH, DRAIN_METER, FINISH, FINISHED, PAIR_DISTANCES, PLACINGS, TIME_UP,
         MUSIC_STATE, STORE_ATTITUDES, BDR_REQUEST, SLOT_READY, BIND_TEXTURES, FREE_SLOT, ANIM_POLL, SPEECH_READY,
         HUD_HIDE, HUD_SHOW,
     ];
@@ -259,8 +263,8 @@ fn race_object_glue_matches_the_original() {
     r.mem.read(COURSES.0, &mut courses).unwrap();
     let mut g = Rng(0x64b0_0000_0000_0001);
     let mut riders = [0u32; 7];
-    for case in 0..28000u32 {
-        let func = FUNCS[(case % 28) as usize];
+    for case in 0..30000u32 {
+        let func = FUNCS[(case % 30) as usize];
         testing.set(func);
         let heap = if func == 0x110bf8 { HEAP.1 } else { 0x100 };
         let mut regions = vec![
@@ -354,6 +358,12 @@ fn race_object_glue_matches_the_original() {
                 m.w32(AI + 0x4fc, { let x = g.below(6); g.pick(&[0xffff_fffe, 0xffff_fffe, u32::MAX, x]) });
                 m.w32(AI + 0x500, { let x = g.below(4); g.pick(&[u32::MAX, x]) });
             }
+            0x14b520 => {
+                for at in [0x46c, 0xa8] {
+                    let o = g.next() & !0x0100_0000;
+                    m.w32(AI + at, g.pick(&[0, o]));
+                }
+            }
             0x1148d0 => m.w32(ao::GAME_MODE, { let x = g.below(12); g.pick(&[6, x]) }),
             0x1148e8 => {
                 m.w32(AI + 0x7c, { let x = g.below(5); g.pick(&[0, 0xffff_fffe, x]) });
@@ -411,6 +421,7 @@ fn race_object_glue_matches_the_original() {
                 (g.pick(&v), 0)
             }
             0x1148e8 => (g.pick(&[0, 1, 2, 3, u32::MAX, 0x80]), 0),
+            0x14f550 => (g.pick(&[0, 1, 2, 3, 0xffff_fffe]), 0),
             _ => (g.next(), 0),
         };
         // (the handlers: a0 the handler, a1 the race)
