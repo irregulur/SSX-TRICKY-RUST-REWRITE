@@ -376,3 +376,155 @@ fn memory_card_driver_matches_the_original() {
     println!("{processed} states handed on");
     assert!(processed > 2000);
 }
+
+fn p_arity(func: u32) -> usize {
+    match func {
+        mc::MC_GET_DIR => 6,
+        mc::MC_GET_INFO => 5,
+        mc::MC_OPEN | mc::SPRINTF => 4,
+        mc::MC_MKDIR | mc::MC_READ | mc::MC_WRITE | mc::MC_DELETE | mc::ASCII_TO_SJIS => 3,
+        mc::ASYNC_LOAD => 2,
+        f if f == vf(0x1c8) => 2,
+        _ => 1,
+    }
+}
+fn p_standin(io: &mut dyn Io, func: u32, w: &[u32], ans: &Answers) -> (u32, Call) {
+    let mut log = w[..p_arity(func)].to_vec();
+    if func == mc::SPRINTF {
+        for s in [w[2], w[3]] {
+            for k in 0..0x60 {
+                let c = io.r8(s + k);
+                log.push(c as u32);
+                if c == 0 {
+                    break;
+                }
+            }
+        }
+    }
+    let r = ans.next();
+    let v = match func {
+        mc::MC_OPEN | mc::MC_CLOSE | mc::MC_MKDIR | mc::MC_READ | mc::MC_WRITE | mc::MC_DELETE | mc::MC_GET_DIR
+        | mc::MC_GET_INFO => [0, 0, 1, u32::MAX, (-5i32) as u32][(r % 5) as usize],
+        f if f == vf(0x1c8) => [0, 0, 0, 1][(r % 4) as usize],
+        _ => r,
+    };
+    (v, Call(func, log))
+}
+struct PEnv<'a> {
+    log: Vec<Call>,
+    ans: &'a Answers,
+}
+impl FeEnv for PEnv<'_> {
+    fn call(&mut self, m: &mut Mem, func: u32, args: &[u32]) -> u32 {
+        let mut w = args.to_vec();
+        w.resize(8, 0);
+        let (v, c) = p_standin(m, func, &w, self.ans);
+        self.log.push(c);
+        v
+    }
+}
+
+/// `MemCard_Process` (row E12f2) on every state, with the `sceMc*` calls answering 0, 1 or an error.
+#[test]
+fn memory_card_process_matches_the_original() {
+    let Some(mut r) = Runner::from_env() else { return };
+    for f in [mc::PROCESS, 0x23e928, 0x23ed60, 0x2cc808, 0x2ce114, 0x2fd14c, 0x2fd260] {
+        r.allow(f);
+    }
+    let stubs = [
+        mc::MC_OPEN, mc::MC_CLOSE, mc::MC_MKDIR, mc::MC_READ, mc::MC_WRITE, mc::MC_DELETE, mc::MC_GET_DIR,
+        mc::MC_GET_INFO, mc::SPRINTF, mc::ASYNC_LOAD, mc::ASCII_TO_SJIS, mc::EA_FREE, vf(0x1c8),
+    ];
+    let log: Rc<RefCell<Vec<Call>>> = Rc::default();
+    let ans = Rc::new(Answers { seed: Cell::new(0), n: Cell::new(0) });
+    for func in stubs {
+        let (l, a) = (log.clone(), ans.clone());
+        r.stub(func, move |c, mem| {
+            let w: Vec<u32> = (4..12).map(|k| c.gpr(k) as u32).collect();
+            let (v, call) = p_standin(mem, func, &w, &a);
+            l.borrow_mut().push(call);
+            c.set_gpr(2, v as i32 as i64 as u64);
+        });
+    }
+    const GLOBALS2: (u32, u32) = (0x345000, 0x2000);
+    let read = |r: &mut Runner, (at, n): (u32, u32)| {
+        let mut b = vec![0u8; n as usize];
+        r.mem.read(at, &mut b).unwrap();
+        b
+    };
+    let (globals, rodata) = (read(&mut r, GLOBALS2), read(&mut r, RODATA));
+    let mut g = Rng(0x9e0c_0000_0000_0001);
+    let mut calls = 0usize;
+    for case in 0..0x40 * 150u32 {
+        let state = if case % 0x40 == 0x3f { g.next() } else { case % 0x40 };
+        let mut m = Mem {
+            regions: vec![
+                (GLOBALS2.0, globals.clone()),
+                (RODATA.0, rodata.clone()),
+                (ARENA, vec![0; SIZE as usize]),
+                (STACK.0, vec![0; STACK.1 as usize]),
+            ],
+        };
+        for k in 0..SIZE / 4 {
+            m.w32(ARENA + 4 * k, g.next());
+        }
+        m.w32(mc::RESULT, g.pick(&[0, u32::MAX, 3]));
+        m.w32(C, VT);
+        m.w16(VT + 0x1c8, g.pick(&[0u16, 8]));
+        m.w32(VT + 0x1cc, vf(0x1c8));
+        let cnum = g.next();
+        m.w32(C + 0xc, g.pick(&[0, 5, 0x10002, cnum]));
+        m.w32(C + 0x10, g.below(2));
+        m.w32(C + 0x14, g.pick(&[4, 4, 0, 2, u32::MAX]));
+        m.w32(C + 0x18, g.pick(&[u32::MAX, 0, 3]));
+        m.w32(C + 0x28, g.below(4));
+        for at in [0x3c, 0x30] {
+            let v = g.next();
+            m.w32(C + at, g.pick(&[0, 1, v]));
+        }
+        for at in [0x50u32, 0x71, 0xb1, 0xf1, 0x131, 0x4c0] {
+            let (n, v) = (g.below(30), g.next());
+            put_str(&mut m, C + at, n, v);
+        }
+        for i in 0..4 {
+            let (n, v) = (g.pick(&[0, 1, 5, 20]), g.next());
+            put_str(&mut m, C + 0x70 * i + 0x1a8, n, v);
+        }
+        // three different icon names
+        for k in 0..3 {
+            let v = g.next();
+            put_str(&mut m, STRS + 0x20 * k, 3 + k, v);
+            m.w32(mc::ICONS + 4 * k, STRS + 0x20 * k);
+        }
+        let seed = g.next() as u64 | (g.next() as u64) << 32;
+        ans.seed.set(seed);
+        ans.n.set(0);
+        let before = m.regions.clone();
+        let mut env = PEnv { log: vec![], ans: &ans };
+        mc::process_state(&mut m, &mut env, C, state, TOP);
+        calls += env.log.len();
+        ans.n.set(0);
+        log.borrow_mut().clear();
+        for (at, b) in &before {
+            r.mem.write(*at, b).unwrap();
+        }
+        r.cpu.set_gpr(4, C as u64);
+        r.cpu.set_gpr(5, state as i32 as i64 as u64);
+        r.call(mc::PROCESS).unwrap_or_else(|e| panic!("case {case} state {state:#x}: {e}"));
+        assert_eq!(*log.borrow(), env.log, "case {case} state {state:#x}: the calls");
+        for (at, b) in &m.regions {
+            if *at == STACK.0 {
+                continue;
+            }
+            let mut th = vec![0u8; b.len()];
+            r.mem.read(*at, &mut th).unwrap();
+            if &th != b {
+                let i = th.iter().zip(b).position(|(x, y)| x != y).unwrap() & !3;
+                let w = |v: &[u8]| u32::from_le_bytes(v[i..i + 4].try_into().unwrap());
+                panic!("case {case} state {state:#x}: memory at {:#x}: theirs {:#x} ours {:#x}", at + i as u32, w(&th), w(b));
+            }
+        }
+    }
+    println!("{calls} calls");
+    assert!(calls > 5000);
+}

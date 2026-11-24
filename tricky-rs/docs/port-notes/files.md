@@ -956,3 +956,12 @@ A save of n bytes takes `ceil(n/1024) + 0x83` blocks (vf18). Five starters and h
 index (0x23dc50 entry read, 0x23dd18 `sceMcFormat`, 0x23dfc0 load begin, 0x23ebf0 port changed, 0x23ec08 the
 port's line, 0x23ecf0 a file's name copied); ported and checked with the rest. Not yet: `MemCard_Process`, vf2
 0x23edc8, vf13 0x23fb60, vf53 0x23ffe0, `MemCard_CheckRoomForFiles` 0x23fcb8, the SJIS converters (row E12f2).
+
+`MemCard_Process` 0x23e0d0 (row E12f2a, proven; `memcard::process_state`, second test in `tests/memcard.rs`: every
+state 0..0x3f and random ones, 19 of 21 mutants, 2 equivalent on the ELF's data): jump table 0x3a42c0. Every
+open and close leaves the handle (+0x18) at -1 whatever the result (the handle comes later, from the sync in vf2);
+an error goes to state 1, except while reading the directory (8, 9, 0xb..0xf go to 0x10, a failed read 0xa to
+0xf, a failed open 8 or read marks the file, +0x1a0). 0x1c and 0x1d treat any nonzero answer as an error. State
+0x26 builds the icon.sys block at 0x346010 ("PS2D", the title in SJIS from +0x50, its length +0xc or 2·strlen,
+0x60, the colours and lights from 0x345f60..0x346010, the three icon names) and writes its 0x3c4 bytes.
+

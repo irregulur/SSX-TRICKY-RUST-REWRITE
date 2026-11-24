@@ -552,3 +552,265 @@ pub fn current_error(m: &Mem, c: u32) -> u32 {
 pub fn current_changed(m: &Mem, c: u32) -> u32 {
     changed(m, c, m.r32(c + 0x10))
 }
+
+pub const MC_OPEN: u32 = 0x2f1428;
+pub const MC_CLOSE: u32 = 0x2f1598;
+pub const MC_MKDIR: u32 = 0x2f1560;
+pub const MC_READ: u32 = 0x2f17b8;
+pub const MC_WRITE: u32 = 0x2f18d8;
+pub const MC_DELETE: u32 = 0x2f2180;
+pub const ASYNC_LOAD: u32 = 0x2c5e20;
+pub const ASCII_TO_SJIS: u32 = 0x23d628;
+/// The icon file names (three pointers, 0x345f40), "icon.sys" (0x3a49f0), the "%s/%s" pattern without the
+/// game's own (0x3a42b0), "PS2D" (0x3a42b8)
+pub const ICONS: u32 = 0x345f40;
+pub const ICON_SYS: u32 = 0x3a49f0;
+pub const SUB_FMT: u32 = 0x3a42b0;
+pub const PS2D: u32 = 0x3a42b8;
+/// The icon.sys block written (0x3c4 bytes at 0x346010) and its parts' sources
+pub const ICON_BLOCK: u32 = 0x346010;
+
+fn memcpy(m: &mut Mem, dst: u32, src: u32, n: u32) {
+    let b: Vec<u8> = (0..n).map(|k| m.r8(src + k)).collect();
+    for (k, x) in b.into_iter().enumerate() {
+        m.w8(dst + k as u32, x);
+    }
+}
+fn icon(m: &Mem, state: u32, one: u32, two: u32) -> u32 {
+    let k = if state == one { 1 } else if state == two { 2 } else { 0 };
+    m.r32(ICONS + 4 * k)
+}
+
+/// `MemCard_Process` 0x23e0d0(c, state) (`sp` the stack pointer on entry): the state kept at +4, then its step:
+/// the `sceMc*` call it starts (open, close, read, write, mkdir, delete, getdir), its result kept in [`RESULT`],
+/// the file handle (+0x18) back to -1 once a call is under way, and on an error the state it falls to (1, or
+/// 0x10 / 0xf while reading the directory). State 1 records the result as the port's, frees the buffer and
+/// closes the file (state 2 when that worked); 7 looks for the first file the driver's vf +0x1c8 wants; 0x26
+/// builds and writes the icon.sys block; 0x28 / 0x2c / 0x30 load an icon file. States out of the table and the
+/// waiting ones (5, 0x11, 0x13, 0x14, 0x1a, 0x20..0x22) restart the card info unless it is pending; 2, 4, 6, 0x10,
+/// 0x12, 0x15, 0x19, 0x1b, 0x1f, 0x23, 0x34, 0x35 only set the state.
+pub fn process_state(m: &mut Mem, e: &mut dyn FeEnv, c: u32, state: u32, sp: u32) {
+    let frame = sp - 0x90;
+    m.w32(c + 4, state);
+    let port_no = |m: &Mem| m.r32(c + 0x10);
+    let fd = |m: &Mem| m.r32(c + 0x18);
+    let name_i = |m: &Mem| file(c, m.r32(c + 0x28)) + 0x1a8;
+    // the ends the cases share: the result kept; ≥ 0 done, else state 1 (`fail`)
+    macro_rules! keep {
+        ($r:expr) => {{
+            let r: u32 = $r;
+            m.w32(RESULT, r);
+            r
+        }};
+    }
+    macro_rules! or_fail {
+        ($r:expr) => {{
+            if ($r as i32) < 0 {
+                process_state(m, e, c, 1, frame);
+            }
+        }};
+    }
+    // an open or close: either way the handle is -1 after; on an error state 1
+    macro_rules! handle_call {
+        ($r:expr) => {{
+            let r = keep!($r);
+            m.w32(c + 0x18, u32::MAX);
+            or_fail!(r);
+        }};
+    }
+    match state {
+        1 => {
+            let p = port(c, port_no(m));
+            let res = m.r32(RESULT);
+            m.w32(p + 0x17c, res);
+            let buf = m.r32(c + 0x30);
+            if buf != 0 {
+                e.call(m, EA_FREE, &[buf]);
+                m.w32(c + 0x30, 0);
+            }
+            if (fd(m) as i32) >= 0 {
+                let r = keep!(e.call(m, MC_CLOSE, &[fd(m)]));
+                if (r as i32) >= 0 {
+                    process_state(m, e, c, 2, frame);
+                }
+                m.w32(c + 0x18, u32::MAX);
+            }
+            m.w32(c + 0x20, 0);
+            m.w32(c + 0x1c, u32::MAX);
+            m.w32(c + 0x2c, 0);
+        }
+        3 => start_get_info(m, e, c),
+        7 => {
+            m.w32(c + 0x28, 0);
+            if (m.r32(c + 0x14) as i32) > 0 {
+                loop {
+                    let i = m.r32(c + 0x28);
+                    if vcall(m, e, c, 0x1c8, &[i]) != 0 {
+                        let n = name_i(m);
+                        e.call(m, SPRINTF, &[c + 0x71, PATH_FMT, n, ICON_SYS]);
+                        process_state(m, e, c, 8, frame);
+                        return;
+                    }
+                    let i = m.r32(c + 0x28).wrapping_add(1);
+                    m.w32(c + 0x28, i);
+                    if (i as i32) >= (m.r32(c + 0x14) as i32) {
+                        break;
+                    }
+                }
+            }
+        }
+        8 => {
+            let r = keep!(e.call(m, MC_OPEN, &[port_no(m), 0, c + 0x71, 1]));
+            m.w32(c + 0x18, u32::MAX);
+            if (r as i32) < 0 {
+                let i = m.r32(c + 0x28);
+                flag_file(m, c, i, 0x1a0);
+                process_state(m, e, c, 0x10, frame);
+            }
+        }
+        9 => {
+            let r = keep!(e.call(m, MC_CLOSE, &[fd(m)]));
+            if (r as i32) >= 0 {
+                m.w32(c + 0x18, u32::MAX);
+            } else {
+                process_state(m, e, c, 0x10, frame);
+            }
+        }
+        0xa => {
+            let r = keep!(e.call(m, MC_READ, &[fd(m), ICON_BLOCK, 0x3c4]));
+            if (r as i32) < 0 {
+                let i = m.r32(c + 0x28);
+                flag_file(m, c, i, 0x1a0);
+                process_state(m, e, c, 0xf, frame);
+            }
+        }
+        0xb | 0xc | 0xd | 0xe => {
+            let n = name_i(m);
+            let (dst, last) = if state == 0xb { (c + 0xf1, n) } else { (c + 0x71, icon(m, state, 0xd, 0xe)) };
+            e.call(m, SPRINTF, &[dst, PATH_FMT, n, last]);
+            memset(m, c + 0x380, 0x40);
+            let r = keep!(e.call(m, MC_GET_DIR, &[port_no(m), 0, dst, 0, 1, c + 0x380]));
+            if (r as i32) < 0 {
+                process_state(m, e, c, 0x10, frame);
+            }
+        }
+        0xf => {
+            let r = keep!(e.call(m, MC_CLOSE, &[fd(m)]));
+            m.w32(c + 0x18, u32::MAX);
+            if (r as i32) < 0 {
+                process_state(m, e, c, 0x10, frame);
+            }
+        }
+        0x16 => handle_call!(e.call(m, MC_OPEN, &[port_no(m), 0, c + 0xf1, 0x203])),
+        0x17 => {
+            let r = keep!(e.call(m, MC_WRITE, &[fd(m), m.r32(c + 0x2c), m.r32(c + 0x20)]));
+            m.w32(c + 0x2c, 0);
+            m.w32(c + 0x20, 0);
+            or_fail!(r);
+        }
+        0x18 | 0x1e => {
+            if (fd(m) as i32) < 0 {
+                process_state(m, e, c, state + 1, frame);
+            } else {
+                handle_call!(e.call(m, MC_CLOSE, &[fd(m)]));
+            }
+        }
+        0x1c => {
+            m.w32(c + 0x40, 0);
+            let r = keep!(e.call(m, MC_OPEN, &[port_no(m), 0, c + 0xf1, 1]));
+            m.w32(c + 0x18, u32::MAX);
+            if r != 0 {
+                process_state(m, e, c, 1, frame);
+            }
+        }
+        0x1d => {
+            let r = keep!(e.call(m, MC_READ, &[fd(m), m.r32(c + 0x2c), m.r32(c + 0x20)]));
+            if r != 0 {
+                process_state(m, e, c, 1, frame);
+            }
+        }
+        0x24 => {
+            m.w32(c + 0x44, 0);
+            let r = keep!(e.call(m, MC_MKDIR, &[port_no(m), 0, c + 0xf1]));
+            or_fail!(r);
+        }
+        0x25 => {
+            e.call(m, SPRINTF, &[c + 0x71, SUB_FMT, c + 0xf1, ICON_SYS]);
+            let r = keep!(e.call(m, MC_OPEN, &[port_no(m), 0, c + 0x71, 0x203]));
+            m.w32(c + 0x18, u32::MAX);
+            or_fail!(r);
+        }
+        0x26 => {
+            memset(m, ICON_BLOCK, 0x3c4);
+            let w = m.r32(PS2D);
+            let b = m.r8(PS2D + 4);
+            m.w32(ICON_BLOCK, w);
+            m.w8(ICON_BLOCK + 4, b);
+            e.call(m, ASCII_TO_SJIS, &[c, ICON_BLOCK + 0xc0, c + 0x50]);
+            let h = if (m.r32(c + 0xc) as i32) > 0 { m.r16(c + 0xc) } else { (strlen(m, c + 0x50) << 1) as u16 };
+            m.w16(ICON_BLOCK + 6, h);
+            m.w32(ICON_BLOCK + 0xc, 0x60);
+            memcpy(m, ICON_BLOCK + 0x10, 0x345f60, 0x40);
+            memcpy(m, ICON_BLOCK + 0x50, 0x345fa0, 0x30);
+            memcpy(m, ICON_BLOCK + 0x80, 0x345fd0, 0x30);
+            memcpy(m, ICON_BLOCK + 0xb0, 0x346000, 0x10);
+            for k in 0..3 {
+                let s = m.r32(ICONS + 4 * k);
+                strcpy(m, ICON_BLOCK + 0x104 + 0x40 * k, s);
+            }
+            let r = keep!(e.call(m, MC_WRITE, &[fd(m), ICON_BLOCK, 0x3c4]));
+            or_fail!(r);
+        }
+        0x27 => handle_call!(e.call(m, MC_CLOSE, &[fd(m)])),
+        0x28 | 0x2c | 0x30 => {
+            let buf = m.r32(c + 0x30);
+            if buf != 0 {
+                e.call(m, EA_FREE, &[buf]);
+                m.w32(c + 0x30, 0);
+            }
+            let ic = icon(m, m.r32(c + 4), 0x2c, 0x30);
+            e.call(m, SPRINTF, &[frame, SUB_FMT, c + 0x4c0, ic]);
+            let h = e.call(m, ASYNC_LOAD, &[frame, 0x10]);
+            m.w32(c + 0x38, h);
+        }
+        0x29 | 0x2d | 0x31 => {
+            let ic = icon(m, m.r32(c + 4), 0x2d, 0x31);
+            e.call(m, SPRINTF, &[c + 0x71, PATH_FMT, c + 0xb1, ic]);
+            handle_call!(e.call(m, MC_OPEN, &[port_no(m), 0, c + 0x71, 0x203]));
+        }
+        0x2a | 0x2e | 0x32 => {
+            let r = keep!(e.call(m, MC_WRITE, &[fd(m), m.r32(c + 0x30), m.r32(c + 0x34)]));
+            or_fail!(r);
+        }
+        0x2b | 0x2f | 0x33 => {
+            let buf = m.r32(c + 0x30);
+            if buf != 0 {
+                e.call(m, EA_FREE, &[buf]);
+                m.w32(c + 0x30, 0);
+            }
+            handle_call!(e.call(m, MC_CLOSE, &[fd(m)]));
+        }
+        0x36..=0x3b => {
+            let path = match state {
+                0x36 => {
+                    m.w32(port(c, port_no(m)) + 0x17c, 0);
+                    c + 0xf1
+                }
+                0x3b => c + 0xb1,
+                _ => {
+                    let last = if state == 0x3a { ICON_SYS } else { icon(m, m.r32(c + 4), 0x38, 0x39) };
+                    e.call(m, SPRINTF, &[c + 0x71, PATH_FMT, c + 0xb1, last]);
+                    c + 0x71
+                }
+            };
+            let r = keep!(e.call(m, MC_DELETE, &[port_no(m), 0, path]));
+            or_fail!(r);
+        }
+        2 | 4 | 6 | 0x10 | 0x12 | 0x15 | 0x19 | 0x1b | 0x1f | 0x23 | 0x34 | 0x35 => {}
+        _ => {
+            if m.r32(c + 0x3c) == 0 {
+                start_get_info(m, e, c);
+            }
+        }
+    }
+}
