@@ -98,6 +98,7 @@ matches the original.
 | X1 | No stand-ins left: `grep -rn STANDIN tricky-rs` is empty | any | F8 | | [est] |
 | X2 | Function index at 100% ported (every function either ported or marked not needed, with a reason, e.g. PS2 hardware glue) | any | F1 | | [est] |
 | X3 | Function index at 100% checked | any | F4, X2 | | [est] |
+| E10d | Gap of E10b: the pad config's game-bytes helpers in `tricky-rs/game/src/input.rs`: the pair parsers `Pad_ParseButtonPair` 0x179fb0, `Pad_ParseButtonPair2` 0x17a038, `Pad_ParseAxisPair` 0x17a0a0, the six `PadCfg_*` getters 0x17a018..0x17a138, `cPadDevice`'s constructor 0x17aa08, empty virtuals 0x17aa58..0x17aa90 and destructor 0x17ab58; checked in the runner | any | E10b | irregulur/lynx (2026-11-24) | Gap of E10b |
 | X4 | Full playthrough of World Circuit, race and show-off, every course, gold everywhere, on our code | any | C1–C16 | | [est] |
 | X5 | 100% completion: every rider maxed, every trick book chapter, every unlock | any | X4 | | [est] |
 | X6 | Runs from the player's own disc only: no SSX-Library, no Python export step, no vgmstream | any | E2–E5, G10 | | [est] |
@@ -1836,3 +1837,4 @@ matches the original.
 - 2026-11-24 irregulur/neon: E9b2 done (unified List-3 descending `sort_id` order in `CellHost`, `World_FindScript` 0x260dd8 / `World_DeleteScriptObject` 0x13bbc0 / `World_RunScript` 0x13bad8, engine starters `RaceMode`/`ShowoffMode`/`FreerideMode`/`NoCountdown`/`StartCountdown`/`EndCountdown`, area wake, contact event 1, controller goal event 4 streaming `ScriptEvent`s into `WorldAnim` & `trick_only_ramps`).
 - 2026-11-24 irregulur/lynx: added X2c (copied small helpers).
 - 2026-11-24 irregulur/lynx: X2c done.
+- 2026-11-24 irregulur/lynx: added E10d (pad config helpers).
