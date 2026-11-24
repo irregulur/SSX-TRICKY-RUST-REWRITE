@@ -178,3 +178,19 @@ Part of the port notes (index: [README.md](README.md)); units and wording as des
   +0x64 = 1; `Score_TrickBookCheck` calls it when the book's trick is landed.
 - `Career_ResetCircuitHeat` 0x161838: career+0x3220 (the circuit setup at +0x320c, its +0x14) = 0.
 - Not settled: `Score_LandTrick` 0x155cc8 (empty in retail, see above).
+
+## The app's trick book on the career block (board row C15b)
+
+- `Rider::show` (`tricky-rs/game/src/rider.rs`) now queues `ScoreCall::TrickBook(id)` (`Score_TrickBookCheck`
+  `0x1579e0`) onto `Rider::trick_book_checks` for human riders before the finish line.
+- `tricky-rs/src/book.rs` replaces the name-based `tricky-book.json` book with `Book::check_career` driving
+  `Career::trick_book_check` (`0x1579e0`) through a `BookEnv` over `DATA/TUTORIAL/TRICKDEF.DAT` (`Trick_GetInfo`
+  `0x154638` / `0x31e210`), supporting the mode and tutorial lesson gates (`mode_allows`, `lesson_trick`),
+  pushing `Scoring_PushMessage(1.2, score, 0x11, 0, 0)` (`0x157330`), and emitting `RiderSpeech::TrickBookDone`.
+- `tricky-rs/src/ui.rs` (`ui::trick_book`, `ui::menus`, `ui::hud`) reads/writes trick-book completion directly on
+  the career block (`rec + 0x14`: `+4 | +8`, persisted in `tricky-career.sav`), and `tricky-rs/src/racespeech.rs`
+  runs `sndqueue::on_trick_book_done` (`Sfx_OnTrickBookDone` `0x2190f0`: three chimes at 250 / 500 / 750 ms,
+  program `0x5f`, vol `0x7f` on `BankHost` slot 4).
+- Verified against real `TRICKY_DISC` (`DATA/TUTORIAL/TRICKDEF.DAT` + `CareerFile`) in
+  `book::tests::career_trick_book_check_uses_trickdef_and_lesson_gate` (lesson gate, mode gate, chapter-order
+  gating, chapter completion, score message `0x11`, and chapter 2 unlocking).

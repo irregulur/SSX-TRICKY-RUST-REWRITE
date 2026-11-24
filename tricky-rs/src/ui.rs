@@ -576,14 +576,44 @@ pub fn setup_ui(mut commands: Commands) {
         });
 }
 
-/// The trick book: each trick the player lands is checked against the rider's current chapter.
-pub fn trick_book(mut rider: ResMut<RiderRes>, lib: Res<CharLib>, mut book: ResMut<crate::book::Book>, game: Res<Game>) {
-    if rider.0.landed.is_empty() { return; }
-    let landed: Vec<String> = std::mem::take(&mut rider.0.landed);
+/// The trick book (`Score_TrickBookCheck` 0x1579e0, row C15b): checks landed `ScoreCall::TrickBook(id)`
+/// entries directly against the career block via `Career::trick_book_check` and `DATA/TUTORIAL/TRICKDEF.DAT`
+/// (`Trick_GetInfo` `0x154638`), pushing score message `0x11` and `RiderSpeech::TrickBookDone` (`Sfx_OnTrickBookDone`
+/// `0x2190f0`), and saving the career. Falls back to `book.check_fallback` when `TRICKY_DISC` is absent.
+pub fn trick_book(mut rider: ResMut<RiderRes>, lib: Res<CharLib>, mut book: ResMut<crate::book::Book>, game: Res<Game>, mut career: ResMut<CareerRes>) {
     let me = lib.chars.get(lib.player).map(|c| c.name.clone()).unwrap_or_default();
     let tb = game.text.trick_book();
+    if book.defs.is_some() {
+        rider.0.landed.clear();
+        if rider.0.trick_book_checks.is_empty() { return; }
+        let ids: Vec<[u32; 2]> = std::mem::take(&mut rider.0.trick_book_checks);
+        career.ensure_player(CareerRes::character(&me));
+        let mut changed = false;
+        for id in ids {
+            let r = &mut rider.0;
+            let out = book.check_career(&mut career.0, &mut r.sc, id, true, None);
+            if out.book_done {
+                changed = true;
+                r.speech.push(tricky_game::rider::RiderSpeech::TrickBookDone);
+                let name = out.ticked_names.join(", ");
+                r.last_trick = match out.finished_chapter {
+                    Some(6) => format!("{}\n{tb}: {name}\n{}", r.last_trick, game.text.trick_book_completed()),
+                    Some(c) => format!("{}\n{tb}: {name}\n{} {}", r.last_trick, game.text.chapter(c), game.text.chapter_completed()),
+                    None => format!("{}\n{tb}: {name}", r.last_trick),
+                };
+                r.trick_timer = r.trick_timer.max(3.0);
+            }
+        }
+        if changed {
+            career.save();
+        }
+        return;
+    }
+    rider.0.trick_book_checks.clear();
+    if rider.0.landed.is_empty() { return; }
+    let landed: Vec<String> = std::mem::take(&mut rider.0.landed);
     for t in landed {
-        if let Some((name, chapter)) = book.check(&me, &t) {
+        if let Some((name, chapter)) = book.check_fallback(&me, &t) {
             let r = &mut rider.0;
             r.last_trick = match chapter {
                 Some(6) => format!("{}\n{tb}: {name}\n{}", r.last_trick, game.text.trick_book_completed()),
@@ -611,9 +641,9 @@ pub fn menus(keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, time: Res<T
             let master = game.master;
             let event = event_of(game.flow.choices.game_mode);
             for (k, d) in crate::trickdata::RIDERS.iter().enumerate() { game.flow.locked_riders[k] = !master && !career.char_open(d.name); }
-            // the boards by career points, the uber board also by our trick book (row C15b)
+            // the boards by career points, the uber board also by the career trick book (row C15b)
             let who = crate::trickdata::RIDERS[(game.flow.choices.rider[(game.flow.player().max(0) as usize).min(1)] as usize).min(11)].name;
-            for (k, l) in game.flow.locked_boards.iter_mut().enumerate().take(12) { *l = !master && !(career.board_open(k) || (k == 11 && book.complete(who))); }
+            for (k, l) in game.flow.locked_boards.iter_mut().enumerate().take(12) { *l = !master && !(career.board_open(k) || (k == 11 && book.complete_in_career(&career.0, who))); }
             for c in tricky_game::courses::COURSES.iter() {
                 let open = course_dir(&list, c.number).is_some_and(|i| master || career.course_open(event, &list.dirs[i].file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()));
                 game.flow.locked_courses[c.number as usize] = !open;
@@ -826,7 +856,7 @@ pub fn hud(
                     let [l_edging, l_speed, l_stability, l_tricks] = game.text.stat_labels();
                     let status = if game.master { game.text.status_name(240) } else { format!("{} ({}/240)", game.text.status_name(game.points), game.points) };
                     format!("{menu}\n{l_edging} {:.0}  {l_speed} {:.0}  {l_stability} {:.0}  {l_tricks} {:.0}\n{best}\n{} {}\n{}\n\nUp / Down, Enter    Esc    M: {status}",
-                        st.edging * 100.0, st.speed * 100.0, st.stability * 100.0, st.tricks * 100.0, game.text.points_label(), career.points(), book.summary(&me, &game.text))
+                        st.edging * 100.0, st.speed * 100.0, st.stability * 100.0, st.tricks * 100.0, game.text.points_label(), career.points(), book.summary(&career.0, &me, &game.text))
                 }
                 Screen::Playing => String::new(),
                 Screen::Paused => {

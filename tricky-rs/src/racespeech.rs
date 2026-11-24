@@ -94,6 +94,8 @@ pub struct RaceSpeech {
     course: Option<usize>,
     /// the bank sounds playing, by `SND_PlayBankSound` handle
     bank: HashMap<u32, Entity>,
+    /// scheduled `Sfx_OnTrickBookDone` (`0x2190f0`, row C15b) chimes (seconds remaining)
+    trick_book_timers: Vec<f32>,
 }
 
 #[derive(Component)]
@@ -806,6 +808,17 @@ pub fn race_speech(
                     let mut w = Wipeout { announcer: &rs.announcer, env: &mut env, rider: &who, crowd: &mut rs.crowd, log: std::env::var("TRICKY_SPEECHLOG").is_ok() };
                     sndqueue::on_wipeout(level, rider_id(k) as i64, &air, &mut w);
                 }
+                RiderSpeech::TrickBookDone => {
+                    struct TbEnv<'a>(&'a mut Vec<f32>);
+                    impl sndqueue::TrickBookEnv for TbEnv<'_> {
+                        fn get_slot(&mut self) -> u32 { BankHost::slot_addr(4) }
+                        fn global(&mut self) -> u64 { 0 }
+                        fn schedule(&mut self, delay: u32, _global: u64, _slot: u32) {
+                            self.0.push(delay as f32 / 1000.0);
+                        }
+                    }
+                    sndqueue::on_trick_book_done(&mut TbEnv(&mut rs.trick_book_timers));
+                }
             }
         }
     }
@@ -834,6 +847,28 @@ pub fn race_speech(
     }
     for e in bank.stops {
         commands.entity(e).try_despawn();
+    }
+    // Fire due `Sfx_OnTrickBookDone` (`0x2190f0`, row C15b) fanfare chimes (`0x5f`, vol `0x7f`, slot 4) on `BankHost`.
+    let dt_tb = time.delta_secs();
+    let mut tb_fire = 0usize;
+    rs.trick_book_timers.retain_mut(|t| {
+        *t -= dt_tb;
+        if *t <= 0.0 {
+            tb_fire += 1;
+            false
+        } else {
+            true
+        }
+    });
+    for _ in 0..tb_fire {
+        let i = sndqueue::queue_begin(&mut rs.queue, 0, 0x5f, Some(0x7f));
+        rs.queue.a40[i] = BankHost::slot_addr(4);
+        let (_, play) = rs.banks.play_from_queue(&mut rs.queue, &channel_slots);
+        if let Some(play) = play {
+            if let Some(e) = spawn_bank_play(&play, &rs.banks, &mut rs.bank_wavs, vol, &mut audio, &mut commands) {
+                rs.bank.insert(play.voice_handle, e);
+            }
+        }
     }
     // `Boarder_GatherWorldEmitters` 0x1166f0 -> `WorldEmitter_UpdateAll` 0x22d370 -> `WorldEmitter_Update` 0x22bf60
     // (keys `0x61..=0x63` -> `CrowdBox_StartSound` / `Audio_SetVoiceVolume` / `CrowdBox_StopSlot`, row E1b2g7d3b7c),

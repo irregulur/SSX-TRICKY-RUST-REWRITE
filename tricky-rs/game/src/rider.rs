@@ -255,6 +255,8 @@ pub enum RiderSpeech {
     /// 0x234d00(the other, this rider, `which`: not a shove, `crash`: knocked down), and for a knock-down
     /// `Speech_OnRiderHit` 0x233858(this rider, the other)
     Hit { by: u32, which: bool, crash: bool },
+    /// `Sfx_OnTrickBookDone` 0x2190f0 from `Score_TrickBookCheck` 0x1579e0 (row C15b): three chimes at 250/500/750 ms.
+    TrickBookDone,
 }
 
 #[derive(Clone)]
@@ -335,8 +337,10 @@ pub struct Rider {
     pub fin: Option<(u8, f32, bool)>,
     /// a show-off event: the course's pickups (multipliers, boost, time) only work in show-off
     pub showoff: bool,
-    /// tricks landed since the trick book last looked (a human rider's only)
+    /// tricks landed since the trick book last looked (a human rider's only; fallback names when no `TRICKDEF.DAT`)
     pub landed: Vec<String>,
+    /// `ScoreCall::TrickBook(id)` (`Score_TrickBookCheck` 0x1579e0, row C15b) queued for the app's career check
+    pub trick_book_checks: Vec<[u32; 2]>,
     /// how the last wipe-out went (0 forwards, 1 backwards, 2 / 3 to a side) and how the last
     /// landing came down (0 clean, 1 / 2 crooked to a side, 3 tilted)
     pub crash_kind: u8,
@@ -604,7 +608,7 @@ impl Rider {
     pub fn new(pos: Vec3, yaw: f32) -> Self {
         let mut r = Self { pos, vel: Vec3::ZERO, yaw, grounded: false, normal: Vec3::Y, charge: 0.0, air_time: 0.0,
                spawn: (pos, yaw), safe: (pos, yaw), safe_timer: 0.0, safe_external: false, safe_heading: None, respawns: 0, rail: None, rail_cooldown: 0.0, input: Input::default(),
-               spin: 0.0, flip: 0.0, flip_dir: 0.0, wind: 0.0, wind_flip: 0.0, cap: SPEED_CAP, steer: 0.0, grab: 0, grab_hold: 0.0, grab_out: None, grab_done: [false; 16], grab_tweaked: [false; 16], ubers_done: 0, switch_takeoff: false, from_rail: false, uber_timer: 0.0, stats: Stats::default(), data: &RIDERS[0], surface: 1, prev_surface: 1, motion: 1, grind_time: 0.0, rail_twist: 0.0, rail_spun: 0.0, rail_side: 0.0, rail_entry: 0.0, rail_goal: 0.0, rail_held: false, rail_side_signed: 0.0, shove: 0.0, shove_side: 1.0, taunt: -1.0, taunt_clip: String::new(), fin: None, showoff: false, landed: Vec::new(), crash_kind: 0, land_kind: 0, switch: false, score: 0, boost: 0.0, boosting: false, body_height: 0.0,
+               spin: 0.0, flip: 0.0, flip_dir: 0.0, wind: 0.0, wind_flip: 0.0, cap: SPEED_CAP, steer: 0.0, grab: 0, grab_hold: 0.0, grab_out: None, grab_done: [false; 16], grab_tweaked: [false; 16], ubers_done: 0, switch_takeoff: false, from_rail: false, uber_timer: 0.0, stats: Stats::default(), data: &RIDERS[0], surface: 1, prev_surface: 1, motion: 1, grind_time: 0.0, rail_twist: 0.0, rail_spun: 0.0, rail_side: 0.0, rail_entry: 0.0, rail_goal: 0.0, rail_held: false, rail_side_signed: 0.0, shove: 0.0, shove_side: 1.0, taunt: -1.0, taunt_clip: String::new(), fin: None, showoff: false, landed: Vec::new(), trick_book_checks: Vec::new(), crash_kind: 0, land_kind: 0, switch: false, score: 0, boost: 0.0, boosting: false, body_height: 0.0,
                last_trick: String::new(), trick_timer: 0.0, crashed: 0.0, hard_land: 0.0, crouch_v: 0.0, brake_v: 0.0, jump_c: 0.0, jump_delay: 0.0, height: 0.0,
                course_dir: None, course_pts: None, wipe: None, crash_at: None, gm: None, crash_spray: None, land_puffs_vn: None, lean: [0.0; 3], up: [0.0, 0.0, 1.0, 0.0], recover: None, ai: false, down_t: 0.0, getup: -1.0, stumble: 0.0, wall_hit: None, speed_timer: 0.0, spin_timer: 0.0, spin_used: false, tube_class: u8::MAX, gate_p: 0.0, gate_hi: 0.0, gate_lo: 0.0, gate_still: 0.0, gate_target: 0.0, gate_speed: 0.0, gate_state: 8, gate_rock_dir: 0, band: (0.005, 0.0250417), spin_base: 0.0, flip_base: 0.0, late: false, cause: "", spin_ax: Axis::default(), flip_ax: Axis::default(), air_mode2: false, rail_off: 0.0, rail_time: 0.0, rail_halves: 0, boost_was: false, chain: 0,
                ubers: Vec::new(), uber: 0.0, uber_id: 0, uber_scored: false, letters: 0, multiplier: 1,
@@ -972,6 +976,11 @@ impl Rider {
                 }
             }
             match *c {
+                ScoreCall::TrickBook(id) => {
+                    if !self.ai && self.fin.is_none() {
+                        self.trick_book_checks.push(id);
+                    }
+                }
                 ScoreCall::Announce(id, _) => {
                     let def = tricky_data::trickdef::TrickDef { words: id, flip: 0, spin: 0, rail: 0, plus: [0; 2], slot: [0; 2] };
                     let name = def.name().split_whitespace().collect::<Vec<_>>().join(" ");
