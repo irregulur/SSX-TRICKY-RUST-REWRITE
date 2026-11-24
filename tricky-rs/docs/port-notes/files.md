@@ -965,3 +965,9 @@ an error goes to state 1, except while reading the directory (8, 9, 0xb..0xf go 
 0x26 builds the icon.sys block at 0x346010 ("PS2D", the title in SJIS from +0x50, its length +0xc or 2·strlen,
 0x60, the colours and lights from 0x345f60..0x346010, the three icon names) and writes its 0x3c4 bytes.
 
+The SJIS converters (row E12f2b, proven; third test in `tests/memcard.rs`, 5 of 5 mutants): `Ascii_ToSjis`
+0x23d770 maps space and punctuation (0x20..0x2f, 0x3a..0x40, 0x5b..0x60, 0x7b..0x7e) through the table 0x345e98
+(index `c − (k + 0x1f)` with k 1, 0xb, 0x25, 0x3f) and digits / upper / lower case by the group starts at 0x345e88,
+answering the code byte-swapped (as stored) and sign-extended; `Sjis_ToAscii` 0x23d868 reverses the 0x81 row
+(0x345ee8 − 0x40) and the 0x82 row's three groups (0x345ee0). `MemCard_AsciiToSjis` / `MemCard_SjisToAscii`
+(0x23d628 / 0x23d680) run them over a string.

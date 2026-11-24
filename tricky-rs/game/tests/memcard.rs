@@ -528,3 +528,80 @@ fn memory_card_process_matches_the_original() {
     println!("{calls} calls");
     assert!(calls > 5000);
 }
+
+/// The SJIS converters (row E12f2b): every byte and random halfwords through the character converters, random
+/// strings through the string ones.
+#[test]
+fn sjis_converters_match_the_original() {
+    let Some(mut r) = Runner::from_env() else { return };
+    for f in [0x23d628u32, 0x23d680, 0x23d770, 0x23d868] {
+        r.allow(f);
+    }
+    const GLOBALS2: (u32, u32) = (0x345000, 0x2000);
+    let mut globals = vec![0u8; GLOBALS2.1 as usize];
+    r.mem.read(GLOBALS2.0, &mut globals).unwrap();
+    let mut g = Rng(0x5_1150_0000_0001);
+    for case in 0..6000u32 {
+        let func = [0x23d770u32, 0x23d868, 0x23d628, 0x23d680][(case % 4) as usize];
+        let mut m = Mem { regions: vec![(GLOBALS2.0, globals.clone()), (ARENA, vec![0; SIZE as usize])] };
+        for k in 0..SIZE / 4 {
+            m.w32(ARENA + 4 * k, g.next());
+        }
+        let (src, dst) = (ARENA + 0x100, ARENA + 0x400);
+        let n = g.below(40);
+        if func == 0x23d628 {
+            for k in 0..n {
+                let (x, y) = (g.below(0x60) as u8 + 0x20, (g.below(255) + 1) as u8);
+                let c = g.pick(&[x, y]);
+                m.w8(src + k, c);
+            }
+            m.w8(src + n, 0);
+        } else if func == 0x23d680 {
+            for k in 0..n {
+                let (hi, any) = (g.below(0xc0) + 0x40, g.below(255) + 1);
+                let h = hi << 8 | g.pick(&[0x81, 0x82, 0x82, any]);
+                m.w16(src + 2 * k, h as u16);
+            }
+            m.w16(src + 2 * n, 0);
+        }
+        let a1 = match func {
+            0x23d770 => {
+                let v = g.next();
+                g.pick(&[case / 4 % 256, v])
+            }
+            0x23d868 => {
+                let hi = g.below(0xc0) + 0x40;
+                let v = g.next();
+                g.pick(&[hi << 8 | 0x81, hi << 8 | 0x82, (((hi << 8) | 0x82) as u16 as i16) as i32 as u32, v])
+            }
+            _ => 0,
+        };
+        let before = m.regions.clone();
+        let ours = match func {
+            0x23d770 => mc::ascii_to_sjis(&m, a1),
+            0x23d868 => mc::sjis_to_ascii(&m, a1 & 0xffff | if a1 & 0x8000 != 0 { 0xffff_0000 } else { 0 }),
+            0x23d628 => { mc::ascii_string_to_sjis(&mut m, dst, src); 0 }
+            _ => { mc::sjis_string_to_ascii(&mut m, dst, src); 0 }
+        };
+        for (at, b) in &before {
+            r.mem.write(*at, b).unwrap();
+        }
+        let a0 = if func >= 0x23d770 {
+            if func == 0x23d868 { (a1 & 0xffff) as u16 as i16 as i32 as u32 } else { a1 }
+        } else {
+            ARENA
+        };
+        r.cpu.set_gpr(4, a0 as i32 as i64 as u64);
+        r.cpu.set_gpr(5, dst as u64);
+        r.cpu.set_gpr(6, src as u64);
+        r.call(func).unwrap_or_else(|e| panic!("case {case} {func:#x}: {e}"));
+        if func >= 0x23d770 {
+            assert_eq!(r.cpu.gpr(2) as u32, ours, "case {case} {func:#x}({a0:#x}): the answer");
+        }
+        for (at, b) in &m.regions {
+            let mut th = vec![0u8; b.len()];
+            r.mem.read(*at, &mut th).unwrap();
+            assert!(&th == b, "case {case} {func:#x}: memory");
+        }
+    }
+}

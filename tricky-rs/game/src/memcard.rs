@@ -814,3 +814,89 @@ pub fn process_state(m: &mut Mem, e: &mut dyn FeEnv, c: u32, state: u32, sp: u32
         }
     }
 }
+
+/// The SJIS tables: per letter group (0x345e88: SJIS start, ASCII start), the punctuation's codes (0x345e98),
+/// back: the 0x81 row's ASCII (0x345ee8 - 0x40) and per group (0x345ee0: SJIS start, ASCII start)
+pub const SJIS_GROUPS: u32 = 0x345e88;
+pub const SJIS_PUNCT: u32 = 0x345e98;
+pub const ASCII_GROUPS: u32 = 0x345ee0;
+pub const ASCII_81: u32 = 0x345ee8;
+
+/// `Ascii_ToSjis` 0x23d770(c): the full-width SJIS code of an ASCII character (space and punctuation from the
+/// table, digits and letters by group), its two bytes swapped as they are stored; 0 for anything else
+pub fn ascii_to_sjis(m: &Mem, ch: u32) -> u32 {
+    let c = ch & 0xff;
+    let (punct, group) = if c.wrapping_sub(0x20) < 0x10 {
+        (1, 0)
+    } else if c.wrapping_sub(0x30) < 10 {
+        (0, 0)
+    } else if c.wrapping_sub(0x3a) < 7 {
+        (0xb, 0)
+    } else if c.wrapping_sub(0x41) < 26 {
+        (0, 1)
+    } else if c.wrapping_sub(0x5b) < 6 {
+        (0x25, 0)
+    } else if c.wrapping_sub(0x61) < 26 {
+        (0, 2)
+    } else if c.wrapping_sub(0x7b) < 4 {
+        (0x3f, 0)
+    } else {
+        return 0;
+    };
+    let v = if punct != 0 {
+        m.r16(SJIS_PUNCT + 2 * c.wrapping_sub(punct + 0x1f)) as u32
+    } else {
+        let t = SJIS_GROUPS + 4 * group;
+        (m.r16(t) as u32).wrapping_add(c).wrapping_sub(m.r16(t + 2) as u32) & 0xffff
+    };
+    (((v << 8) | (v >> 8)) as u16 as i16) as i32 as u32
+}
+
+/// `Sjis_ToAscii` 0x23d868(h): a stored SJIS character (first byte low) back to ASCII; 0 when it is not in the
+/// 0x81 or 0x82 rows
+pub fn sjis_to_ascii(m: &Mem, h: u32) -> u32 {
+    let hi = (h >> 8) & 0xff;
+    let lo = h & 0xff;
+    if lo == 0x81 {
+        return m.r8(ASCII_81 + hi - 0x40) as u32;
+    }
+    if lo != 0x82 {
+        return 0;
+    }
+    let k = if hi.wrapping_sub(0x4f) < 10 {
+        0
+    } else if hi.wrapping_sub(0x60) < 26 {
+        1
+    } else if (hi + 0x7f) & 0xff > 0x19 {
+        0
+    } else {
+        2
+    };
+    let t = ASCII_GROUPS + 2 * k;
+    (m.r8(t + 1) as u32).wrapping_add(hi.wrapping_sub(m.r8(t) as u32)) & 0xff
+}
+
+/// `MemCard_AsciiToSjis` 0x23d628(_, dst, src): each character of `src` as a halfword, then a 0 halfword
+pub fn ascii_string_to_sjis(m: &mut Mem, dst: u32, src: u32) {
+    let (mut d, mut s) = (dst, src);
+    while m.r8(s) != 0 {
+        let v = ascii_to_sjis(m, m.r8(s) as u32);
+        s += 1;
+        m.w16(d, v as u16);
+        d += 2;
+    }
+    m.w16(d, 0);
+}
+
+/// `MemCard_SjisToAscii` 0x23d680(_, dst, src): each halfword of `src` (up to a 0) as a byte, then a 0
+pub fn sjis_string_to_ascii(m: &mut Mem, dst: u32, src: u32) {
+    let (mut d, mut s) = (dst, src);
+    while m.r16(s) != 0 {
+        let h = m.r16(s) as i16 as i32 as u32;
+        s += 2;
+        let b = sjis_to_ascii(m, h);
+        m.w8(d, b as u8);
+        d += 1;
+    }
+    m.w8(d, 0);
+}

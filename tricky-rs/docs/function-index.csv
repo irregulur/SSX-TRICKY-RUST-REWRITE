@@ -4318,12 +4318,12 @@ address,size,name,system,status
 0x23d5c0,16,Rand_LoadGameSnapshot,common,checked
 0x23d5d0,40,Debug_Printf,common,ported
 0x23d5f8,44,StaticInit_MemCard,save,not started
-0x23d628,84,MemCard_AsciiToSjis,save,not started
-0x23d680,88,MemCard_SjisToAscii,save,not started
+0x23d628,84,MemCard_AsciiToSjis,save,checked
+0x23d680,88,MemCard_SjisToAscii,save,checked
 0x23d6e0,84,MemCard_Create,save,ported
 0x23d738,52,Object_Delete,common,ported
-0x23d770,248,Ascii_ToSjis,save,not started
-0x23d868,160,Sjis_ToAscii,save,not started
+0x23d770,248,Ascii_ToSjis,save,checked
+0x23d868,160,Sjis_ToAscii,save,checked
 0x23d908,52,cPS2MemCard::cPS2MemCard,save,checked
 0x23d940,88,cPS2MemCard::~cPS2MemCard,save,checked
 0x23d998,364,cPS2MemCard::vf1_23d998,save,checked
