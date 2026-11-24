@@ -245,6 +245,16 @@ for the six riders a race has):
   reset, the race scene set up from the roster and its animations opened (1, `quick` ^ 1, the list and the count it
   wrote on the stack), then mode 1. Last `Race_ResetRiderRenders`.
 
+Row G4k4 (proven, same test, 11 of 11 mutants): `cStartRaceHandler::Enter` 0x113478 moves the game's replay (game
++0x40, if any) on with `Replay_SetMode11From10`; its Update 0x1134a0 puts the race in mode 3 (its +0x50); its Exit
+0x1134d0, on a course without a start gate (`Race_HasStartGate`), runs the "NoCountdown" world script and the race's
++0x68. `cCountdownHandler::Exit` 0x113738 is empty. The two world nodes around the riders' AI: `cPreAI` vf1 0x1146b0
+flushes each rider's ended clips (`Race_GetRider`, `Boarder_FlushEndedClips`); `cPostAI` vf1 0x114730 updates each
+rider's animation layers, its pose when +0x46b0 is set, its broad phase, copies +0x16c to +0x42c, and ends with the
+race's `Race_UpdateLookBack`; the count (race +0x88) and the game are read anew each turn. Their destructors (0x114b08
+table 0x3646e8, 0x114a68 table 0x364698) put the table back and end in the node's. Their constructors (0x114b20,
+0x114a80: the node's, then the table) have no function in the index (Ghidra made none) and are not ported.
+
 ## Rank catch-up: the unchecked list walk
 
 Proven on the PS2: `Race_UpdatePlacingsAndRubberBand` 0x115100 runs every 6 ticks (`race+0x18 % 6`), over

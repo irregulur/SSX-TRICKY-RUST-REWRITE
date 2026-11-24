@@ -165,12 +165,12 @@ address,size,name,system,status
 0x112b88,388,cPreRaceHandler::Enter,race,checked
 0x112d10,1876,cPreRaceHandler::Update,race,checked
 0x113468,16,cPreRaceHandler::Exit,race,checked
-0x113478,68,cStartRaceHandler::Enter,game,not started
-0x1134a0,48,cStartRaceHandler::Update,game,not started
-0x1134d0,80,cStartRaceHandler::Exit,game,not started
+0x113478,68,cStartRaceHandler::Enter,game,checked
+0x1134a0,48,cStartRaceHandler::Update,game,checked
+0x1134d0,80,cStartRaceHandler::Exit,game,checked
 0x113520,224,cCountdownHandler::Enter,game,checked
 0x113600,312,cCountdownHandler::Update,game,checked
-0x113738,8,cCountdownHandler::Exit,game,not started
+0x113738,8,cCountdownHandler::Exit,game,checked
 0x113740,224,cRaceHandler::Enter,race,ported
 0x113820,612,cRaceHandler::Update,race,ported
 0x113a88,292,Race_UpdateLookBack,race,checked
@@ -185,15 +185,15 @@ address,size,name,system,status
 0x113e10,932,cEndRaceHandler::Enter,race,checked
 0x1141e0,1224,cEndRaceHandler::Update,race,checked
 0x1146a8,8,cEndRaceHandler::Exit,race,checked
-0x1146b0,128,cPreAI::vf1_1146b0,ai,not started
-0x114730,196,cPostAI::vf1_114730,ai,not started
+0x1146b0,128,cPreAI::vf1_1146b0,ai,checked
+0x114730,196,cPostAI::vf1_114730,ai,checked
 0x1147f8,212,Replay_RefreshRiders,replay,checked
 0x1148d0,20,Game_IsTutorial,game,ported
 0x1148e8,96,Race_FindRiderByPlayer,race,ported
 0x114948,284,StaticInit_PostAI,ai,not started
-0x114a68,20,cPostAI::~cPostAI,ai,not started
+0x114a68,20,cPostAI::~cPostAI,ai,checked
 0x114ab8,80,cPostAI::__tf,runtime,host
-0x114b08,20,cPreAI::~cPreAI,ai,not started
+0x114b08,20,cPreAI::~cPreAI,ai,checked
 0x114b58,80,cPreAI::__tf,runtime,host
 0x114c00,208,cAI::cAI,ai,checked
 0x114cd0,92,cAI::__tf,runtime,host

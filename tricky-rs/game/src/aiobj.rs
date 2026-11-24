@@ -427,3 +427,88 @@ pub fn restart(m: &mut Mem, e: &mut dyn FeEnv, ai: u32) {
     m.w32(ai + 0xe0, 0);
     vcall_at(m, e, ai, 8, 0x78, &[0, 0]);
 }
+
+/// `Replay_SetMode11From10` 0x191278, `Race_HasStartGate` 0x112848, `World_RunScript` 0x13bad8 with "NoCountdown"
+/// (0x364628), `Race_GetRider` 0x1814a8, `Boarder_FlushEndedClips` 0x117190, `Boarder_UpdateAnimLayers` 0x117180,
+/// `Boarder_UpdatePose` 0x129628, `Boarder_UpdateBroadphase` 0x126748, `Race_UpdateLookBack` 0x113a88
+pub const REPLAY_MODE: u32 = 0x191278;
+pub const HAS_START_GATE: u32 = 0x112848;
+pub const RUN_SCRIPT: u32 = 0x13bad8;
+pub const NO_COUNTDOWN: u32 = 0x364628;
+pub const GET_RIDER: u32 = 0x1814a8;
+pub const FLUSH_CLIPS: u32 = 0x117190;
+pub const ANIM_LAYERS: u32 = 0x117180;
+pub const UPDATE_POSE: u32 = 0x129628;
+pub const BROADPHASE: u32 = 0x126748;
+pub const LOOK_BACK: u32 = 0x113a88;
+/// `cPreAI`'s table (0x3646e8) and `cPostAI`'s (0x364698)
+pub const PRE_AI_VT: u32 = 0x3646e8;
+pub const POST_AI_VT: u32 = 0x364698;
+
+/// `cStartRaceHandler::Enter` 0x113478: the game's replay (game +0x40), if any, moved on from mode 10
+/// (`Replay_SetMode11From10`)
+pub fn start_race_enter(m: &mut Mem, e: &mut dyn FeEnv) {
+    let replay = m.r32(m.r32(m.r32(GAPP) + 0x730) + 0x40);
+    if replay != 0 {
+        e.call(m, REPLAY_MODE, &[replay]);
+    }
+}
+
+/// `cStartRaceHandler::Update` 0x1134a0(handler, ai): on to the countdown (the race's +0x50 with 3)
+pub fn start_race_update(m: &mut Mem, e: &mut dyn FeEnv, ai: u32) {
+    vcall_at(m, e, ai, 8, 0x50, &[3]);
+}
+
+/// `cStartRaceHandler::Exit` 0x1134d0(handler, ai): on a course without a start gate the "NoCountdown" world script
+/// run and the race's +0x68
+pub fn start_race_exit(m: &mut Mem, e: &mut dyn FeEnv, ai: u32) {
+    if e.call(m, HAS_START_GATE, &[ai]) == 0 {
+        e.call(m, RUN_SCRIPT, &[NO_COUNTDOWN]);
+        vcall_at(m, e, ai, 8, 0x68, &[]);
+    }
+}
+
+/// `cCountdownHandler::Exit` 0x113738: nothing
+pub fn countdown_exit() {}
+
+/// The game's race object (gApp+0x730 → +0x1c) and its rider count (+0x88), read anew each time as the game does
+fn race_riders(m: &Mem) -> i32 {
+    m.r32(m.r32(m.r32(m.r32(GAPP) + 0x730) + 0x1c) + 0x88) as i32
+}
+
+/// `cPreAI` vf1 0x1146b0, before the riders' AI: each rider's ended clips flushed
+pub fn pre_ai_tick(m: &mut Mem, e: &mut dyn FeEnv) {
+    let mut k = 0u32;
+    while (k as i32) < race_riders(m) {
+        let game = m.r32(m.r32(GAPP) + 0x730);
+        let b = e.call(m, GET_RIDER, &[game, k]);
+        e.call(m, FLUSH_CLIPS, &[b]);
+        k += 1;
+    }
+}
+
+/// `cPostAI` vf1 0x114730, after the riders' AI: each rider's animation layers updated, its pose when it has one
+/// (+0x46b0), its broad phase, and +0x42c = +0x16c; then the race's look-back (`Race_UpdateLookBack` on the race)
+pub fn post_ai_tick(m: &mut Mem, e: &mut dyn FeEnv) {
+    let mut k = 0u32;
+    while (k as i32) < race_riders(m) {
+        let game = m.r32(m.r32(GAPP) + 0x730);
+        let b = e.call(m, GET_RIDER, &[game, k]);
+        e.call(m, ANIM_LAYERS, &[b]);
+        if m.r32(b + 0x46b0) != 0 {
+            e.call(m, UPDATE_POSE, &[b]);
+        }
+        e.call(m, BROADPHASE, &[b]);
+        m.w32(b + 0x42c, m.r32(b + 0x16c));
+        k += 1;
+    }
+    let race = m.r32(m.r32(m.r32(GAPP) + 0x730) + 0x1c);
+    e.call(m, LOOK_BACK, &[race]);
+}
+
+/// `cPreAI::~cPreAI` 0x114b08 and `cPostAI::~cPostAI` 0x114a68(node, how): the class's table back at +8, then the
+/// node's destructor with `how`
+pub fn ai_node_destruct(m: &mut Mem, e: &mut dyn FeEnv, node: u32, vt: u32, how: u32) {
+    m.w32(node + 8, vt);
+    e.call(m, NODE_DTOR, &[node, how]);
+}
