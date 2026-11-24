@@ -97,7 +97,6 @@ matches the original.
 | C14 | Single event, freeride and practice modes | unowned | C0, G9 | | [est] |
 | C15b | The app's trick book on the career block: `src/book.rs` (name-based, `tricky-book.json`) replaced by `Career::trick_book_check` with a `BookEnv` over the race object, the `Trick_GetInfo` table (0x31e210) and the HUD message / sound; the lesson gate | any | C15, E12d | | Gap of C15 |
 | C16 | Unlockables: characters, outfits, boards, the hidden ones, and the button cheats | unowned | C12, E10 | | [repo] |
-| C11b5 | Practice Enter's write of 0 to byte +0x5a70 of the game's player object (`Env` has no call for it; find what reads it), and the lesson's start-up (`LessonMan_Init` 0x14aaa0: the rider's `.big` shapes, the lesson pad map, `Pad_LoadButtonMap`) as `Lesson::new`'s real inputs | any | C11b4, C11c2 | irregulur/lynx (2026-11-23) | Gap of C11b4 |
 | C11d | The tutorial screens: `cLessonOverlay` / `cLessonControllerOverlay` (0x1be4a0, 0x1be540), the page tabs and trick pictures (`tb_<rider><n>` textures), `Results_BuildLessonPage` 0x1b1aa8 (done in G9v3), the `Speech_LessonLine` lines; and the loading screen `cTrickTutorialLoad` 0x250068 | any | C11, E5 | | Gap of C11 |
 | C11e | The tutorial in the app: game mode 6 on the `trick` course (the course's level files from the disc, E3a4, the mode switch in `main.rs`), the pad map swap at start and exit, and the lessons' effect on the trick book (C15) | any | C11b, C11c, C11d, E3a4 | | Gap of C11 |
 
@@ -125,6 +124,7 @@ matches the original.
 
 | ID | Task | Section | Who | Date | Commit |
 |---|---|---|---|---|---|
+| C11b5 | The practice's write to rider+0x5a70 is the score's trick name (+0x5820 +0x250, `Score_GetTrickName` 0x157978) cleared, so only a trick named during the practice counts as seen: `lesson::Env::clear_trick_text`, checked in `tests/lesson.rs` (the name in the rider's memory compared each step); the lesson's start-up `Lesson::start` (`LessonMan_Init` 0x14aaa0: the rider, the six picture sheets and the archive by the rider's short name, the pad maps, 20.0s, the recording) checked against the real function (`tests/lesson_pads.rs`); `lesson::recording_path` | P3 | irregulur/lynx | 2026-11-23 | 88ae606 |
 | C11c2 | The lesson archives `data/tutorial/<rider>.big` read on the disc: each a `C0FB` archive of exactly the rider's 30 RefPack-packed `.inp` recordings (nothing else); `tricky_data::inp` checked on all 360 (`tricky-rs/data/tests/inp_disc.rs`: whole buffer, word 0 the count, the pad state at record +12 proven by the button chain, sticks in 1/255); the lesson's pad maps (`input::LessonPads`: `Pad_GetConfig` 0x17a290 / `Pad_SetConfig` 0x17a2f8, `LessonMan_Init` 0x14aaa0's binding of the default map, the preview's swap) checked against the real `LessonMan_Init` in the runner (`tests/lesson_pads.rs`, 600 cases); `<board>` in the notes corrected to the rider's short name | P3 | irregulur/lynx | 2026-11-23 | 39ccc6b |
 | G5 | Animation: the game's own animation state machine, bank, pose blending, skeleton IK, facial morphs, and app wiring (all parts done: G5a, G5b, G5c, G5d); **needs a play test** | P2 | irregulur/neon | 2026-11-23 | e273ecb |
 | G5d | The app's rider animation on G5a..c, replacing its own choice of clip (all parts done: G5d1, G5d2, G5d3, G5d4, G5d5); **needs a play test** | P2 | irregulur/neon | 2026-11-23 | e273ecb |
@@ -1785,3 +1785,4 @@ matches the original.
 - 2026-11-23 irregulur/lynx: G4k done (cAI vf10, vf11, vf13, vf16 checked in the runner).
 - 2026-11-23 irregulur/neon: G5d5 done (facial morph vertex-delta blending via `MpfMesh::triangles_with_morphs` + `skin_part_anim_morphed` matching `vf91_1df478`/VU1 `0x002`, pre-/post-race scene clips loaded on demand & played through `AnimHost` under `control_tick::SCRIPTED` state 1 / stationary motion 4 with live `PoseBlend_EvalCurves` weights; verified on real disc Eddie `Face3000` + `scrEdd_WIN_1`), and umbrellas G5d & G5 closed (every part done; needs a play test).
 - 2026-11-23 irregulur/lynx: C11c2 done (lesson archives on the disc, the pad swap).
+- 2026-11-23 irregulur/lynx: C11b5 done.
