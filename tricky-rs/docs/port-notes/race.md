@@ -254,6 +254,7 @@ rider's animation layers, its pose when +0x46b0 is set, its broad phase, copies 
 race's `Race_UpdateLookBack`; the count (race +0x88) and the game are read anew each turn. Their destructors (0x114b08
 table 0x3646e8, 0x114a68 table 0x364698) put the table back and end in the node's. Their constructors (0x114b20,
 0x114a80: the node's, then the table) have no function in the index (Ghidra made none) and are not ported.
+`cAIWorld::~cAIWorld` 0x116650 is the same shape (table 0x365798), checked with them (2026-11-24, irregulur/lynx).
 
 Row G4k5 (proven, same test, 19,000 cases over the 19 functions, 12 of 12 mutants): the race object's mode machine on
 the game's bytes (`aiobj::tick`, `set_mode`, `create_handlers`). `Race_CreateHandlers` 0x1125c8 maps modes 1..11

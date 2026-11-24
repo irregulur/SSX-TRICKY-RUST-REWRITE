@@ -60,10 +60,10 @@ fn slot(off: u32) -> u32 {
 }
 /// the objects' virtuals: the boarder's destructor +8, the +0x64 object's +0x10, the race's +0x60 and +0x78
 const SLOTS: [u32; 9] = [8, 0x10, 0x60, 0x78, 0xa0, 0x48, 0x50, 0x68, 0x18];
-const FUNCS: [u32; 27] = [
+const FUNCS: [u32; 28] = [
     0x1108f0, 0x110bf8, 0x110fa0, 0x111560, 0x114c00, 0x114d30, 0x111108, 0x1114d0, 0x113478, 0x1134a0, 0x1134d0,
     0x113738, 0x1146b0, 0x114730, 0x114b08, 0x114a68, 0x1126f0, 0x1125a0, 0x1125c8, 0x1117f0, 0x1128b8, 0x1148d0,
-    0x1148e8, 0x114f70, 0x113740, 0x113820, 0x112920,
+    0x1148e8, 0x114f70, 0x113740, 0x113820, 0x112920, 0x116650,
 ];
 /// the courses' records (read from the ELF) and the speech system's pointer
 const COURSES: (u32, u32) = (ao::COURSE_TABLE, 13 * 0x1c);
@@ -186,6 +186,7 @@ fn ours(m: &mut Mem, e: &mut dyn FeEnv, f: u32, a1: u32, a2: u32) -> u32 {
         0x114730 => ao::post_ai_tick(m, e),
         0x114b08 => ao::ai_node_destruct(m, e, AI, ao::PRE_AI_VT, a1),
         0x114a68 => ao::ai_node_destruct(m, e, AI, ao::POST_AI_VT, a1),
+        0x116650 => ao::ai_node_destruct(m, e, AI, ao::AI_WORLD_VT, a1),
         0x1126f0 => ao::tick(m, e, AI),
         0x1125a0 => ao::set_mode(m, AI, a1),
         0x1125c8 => ao::create_handlers(m, AI, a1),
@@ -258,8 +259,8 @@ fn race_object_glue_matches_the_original() {
     r.mem.read(COURSES.0, &mut courses).unwrap();
     let mut g = Rng(0x64b0_0000_0000_0001);
     let mut riders = [0u32; 7];
-    for case in 0..27000u32 {
-        let func = FUNCS[(case % 27) as usize];
+    for case in 0..28000u32 {
+        let func = FUNCS[(case % 28) as usize];
         testing.set(func);
         let heap = if func == 0x110bf8 { HEAP.1 } else { 0x100 };
         let mut regions = vec![

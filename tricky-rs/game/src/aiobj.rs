@@ -445,6 +445,8 @@ pub const LOOK_BACK: u32 = 0x113a88;
 /// `cPreAI`'s table (0x3646e8) and `cPostAI`'s (0x364698)
 pub const PRE_AI_VT: u32 = 0x3646e8;
 pub const POST_AI_VT: u32 = 0x364698;
+/// `cAIWorld`'s table (0x365798; its destructor 0x116650 is [`ai_node_destruct`] too)
+pub const AI_WORLD_VT: u32 = 0x365798;
 
 /// `cStartRaceHandler::Enter` 0x113478: the game's replay (game +0x40), if any, moved on from mode 10
 /// (`Replay_SetMode11From10`)
@@ -507,7 +509,7 @@ pub fn post_ai_tick(m: &mut Mem, e: &mut dyn FeEnv) {
     e.call(m, LOOK_BACK, &[race]);
 }
 
-/// `cPreAI::~cPreAI` 0x114b08 and `cPostAI::~cPostAI` 0x114a68(node, how): the class's table back at +8, then the
+/// `cPreAI::~cPreAI` 0x114b08, `cPostAI::~cPostAI` 0x114a68 and `cAIWorld::~cAIWorld` 0x116650(node, how): the class's table back at +8, then the
 /// node's destructor with `how`
 pub fn ai_node_destruct(m: &mut Mem, e: &mut dyn FeEnv, node: u32, vt: u32, how: u32) {
     m.w32(node + 8, vt);

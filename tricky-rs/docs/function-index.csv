@@ -233,7 +233,7 @@ address,size,name,system,status
 0x1164d8,236,cAIWorld::vf8_1164d8,ai,checked
 0x1165c8,124,StaticInit_AIWorld,ai,checked
 0x116648,8,thunk_FUN_00115dc0,runtime,ported
-0x116650,20,cAIWorld::~cAIWorld,ai,not started
+0x116650,20,cAIWorld::~cAIWorld,ai,checked
 0x1166a0,80,cAIWorld::__tf,runtime,host
 0x1166f0,184,Boarder_GatherWorldEmitters,boarder,checked
 0x1167a8,124,StaticInit_AIWorld2,ai,checked
