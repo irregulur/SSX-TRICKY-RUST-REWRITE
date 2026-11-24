@@ -114,8 +114,24 @@ impl TickEnv for Glue<'_> {
             g.r.score_ticks(g.dt, drain);
         });
     }
-    /// STANDIN (row G5d): no idle clip is picked, the app's animation is its own
-    fn pick_idle_clip(&mut self, _: &mut TickRider) {}
+    /// `Boarder_PickIdleClip` 0x11d4e8 (`boarder_misc::pick_idle_clip`, row G5d2): every 18th tick picks the
+    /// layer-2 idle/wind clip (`0x2f0..=0x2f8`) when `AnimHost` is attached.
+    fn pick_idle_clip(&mut self, t: &mut TickRider) {
+        let Some(a) = &self.r.anim else { return };
+        let bf = self.r.board_frame();
+        let kind = super::RIDERS.iter().position(|r| r.name == self.r.data.name).unwrap_or(0) as i32;
+        let ir = crate::boarder_misc::IdleRider {
+            state: t.state,
+            vel: t.vel,
+            fwd: bf[0],
+            side: bf[1],
+            up: bf[2],
+            kind,
+        };
+        if let Some(clip) = crate::boarder_misc::pick_idle_clip(&ir, self.r.anim_tick, &mut |layer| a.clip(layer) as i64) {
+            a.play_clip(clip, 0, 5, &mut crate::rand::rand_game);
+        }
+    }
     /// the host's (`main.rs` runs `Boarder_RiderCollisions` 0x123fc8 over every pair of riders)
     fn rider_collisions(&mut self, _: &mut TickRider) {}
     /// the host's (`rivals`)

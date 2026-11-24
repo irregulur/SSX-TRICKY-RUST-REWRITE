@@ -14,6 +14,7 @@
 //!    0x15f7c8 into each rider's `PoseBlend` objects at `rider+0x7c0`).
 
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use crate::aictl;
 use crate::animctl::{self as ctl, CLIP_STARTED, CLIP_TABLE, GET_CLIP_ID, GET_MARKER_FRAME, GET_MARKER_PHASE, IDS_INIT, MARKER_SOUND, MODES, NONE, RESOLVE, SET_MARKER};
@@ -25,6 +26,7 @@ use crate::animpose::{self as pose, MATRIX};
 use crate::animseq::{self as seq, DELETE, POOL_ALLOC, SKEL_ANIM_CREATE, SeqEnv};
 use crate::pf::Mem;
 use crate::ps2f::F;
+use crate::spin;
 
 /// Static ELF data slice mapped verbatim from `/SLUS_203.26` (`file_off = addr - 0xff000`):
 /// covers `BIG_PATH` (0x321190), `AnimData` bank (0x3211a8), clip/file name tables (0x3242a0/0x3258b0),
@@ -105,6 +107,50 @@ pub struct AnimRiderInputs {
     pub dir_y: f32,
     /// `rider+0x420`: board class (`0` BX, `1` FR, `2` EX)
     pub board_class: u32,
+}
+
+/// Scoring / sound callbacks emitted by `SpinState_UpdateTrickClips` 0x1272e8 (`crate::spin::update_trick_clips`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TrickClipCall {
+    /// `Score_StartGrab` 0x155ee8(score, clip)
+    StartGrab(u32),
+    /// `Scoring_OnTrickEvent` 0x156148(score, clip, duration_secs)
+    TrickEvent { clip: u32, duration: f32 },
+    /// `SpinState_SetTrickClipRate` 0x156050(score, clip)
+    SetTrickClipRate(u32),
+}
+
+/// `Takeoff_PlayLaunchClip` 0x126fc0: jump table at `0x368bf0` mapping layer-0 prewind clip (`0x219..=0x26d`) to
+/// its launch clip (`0x226..=0x22d`, `0x270..=0x277`); `None` for any other clip.
+pub fn takeoff_launch_clip(clip: u32) -> Option<u32> {
+    Some(match clip {
+        0x219 | 0x265 => 0x226,
+        0x21a | 0x264 => 0x227,
+        0x21b => 0x228,
+        0x21c => 0x229,
+        0x21d => 0x22a,
+        0x21e => 0x22b,
+        0x21f | 0x263 => 0x22c,
+        0x220 | 0x262 => 0x22d,
+        0x266 => 0x272,
+        0x267 => 0x273,
+        0x268 => 0x270,
+        0x269 => 0x271,
+        0x26a => 0x276,
+        0x26b => 0x277,
+        0x26c => 0x274,
+        0x26d => 0x275,
+        _ => return None,
+    })
+}
+
+/// `Boarder_PlayTakeoffClip` 0x127298: chooses takeoff clip from `rider+0x1dc` (`3 => 0x26e`, `4 => 0x26f`, else `0x223`).
+pub fn takeoff_clip_for_row(row_1dc: u32) -> u32 {
+    match row_1dc {
+        3 => 0x26e,
+        4 => 0x26f,
+        _ => 0x223,
+    }
 }
 
 /// Sound / clip events emitted by `AnimCtl_FireClipSounds` 0x15f300 and `AnimCtl_PlayClip` 0x15fcf8.
@@ -271,6 +317,33 @@ impl<R: FnMut() -> u32> SeqEnv for RuntimeEnv<'_, R> {
     }
 }
 
+struct TrickEnv<'a, R: FnMut() -> u32> {
+    inner: RuntimeEnv<'a, R>,
+    calls: Vec<TrickClipCall>,
+}
+
+impl<R: FnMut() -> u32> SeqEnv for TrickEnv<'_, R> {
+    fn call(&mut self, m: &mut Mem, func: u32, args: &[u32]) -> u32 {
+        match func {
+            spin::PLAY_CLIP => ctl::play_clip(m, &mut self.inner, args[0], args[1], args[2], args[3]),
+            spin::START_GRAB => {
+                self.calls.push(TrickClipCall::StartGrab(args[1]));
+                0
+            }
+            spin::TRICK_EVENT => {
+                self.calls.push(TrickClipCall::TrickEvent { clip: args[1], duration: f32::from_bits(args[2]) });
+                0
+            }
+            spin::SET_TRICK_CLIP_RATE => {
+                self.calls.push(TrickClipCall::SetTrickClipRate(args[1]));
+                0
+            }
+            spin::SFX_GRAB_HELD | spin::SFX_TRICK_STOP | spin::SFX_TRICK_START => 0,
+            _ => self.inner.call(m, func, args),
+        }
+    }
+}
+
 struct SyncLoadEnv<'a, L: FnMut(&str) -> Option<Vec<u8>>> {
     alloc: &'a mut AllocState,
     loader: &'a mut L,
@@ -425,12 +498,15 @@ impl AnimHost {
         for k in 0..RIDER_STRIDE {
             self.mem.w8(base + k, 0);
         }
-        // Stats stub (`+0x3c` character id, `+0x60` body scale).
+        // Stats stub (`+0x3c` character id, `+0x44` board class, `+0x5c` character id, `+0x60` body scale).
         let stats_ptr = base + RIDER_STATS_OFF;
         self.mem.w32(stats_ptr + 0x3c, character);
+        self.mem.w32(stats_ptr + 0x44, board_class);
+        self.mem.w32(stats_ptr + 0x5c, character);
         self.mem.w32(stats_ptr + 0x60, scale.to_bits());
         self.mem.w32(base + 0x464, stats_ptr);
         self.mem.w32(base + 0x420, board_class);
+        self.mem.w32(base + 0x1e4, 0x1a);
         self.mem.w32(ctl_ptr + 0x24, base);
 
         // Bind `PoseBlend` objects at `rider+0x7c0 + k * 0x394` (`RiderSkin_Init` 0x206f80 + `RiderSkin_Bind`
@@ -660,9 +736,184 @@ impl AnimHost {
         self.mem.r32(BANK + 8)
     }
 
+    /// Write the rider's 16 stat bytes (`stats+0x0e..+0x1d`), character id (`+0x3c`/`+0x5c`), board class (`+0x44`),
+    /// and body scale (`+0x60`) into `slot`'s stats stub (used by `SpinState_UpdateTrickClips` 0x1272e8 and
+    /// `SpinState_PlayExitClip` 0x102800).
+    pub fn set_stats(&mut self, slot: usize, character: u32, board_class: u32, scale: f32, bytes: [u8; 16]) {
+        let base = Self::rider_addr(slot);
+        let stats_ptr = base + RIDER_STATS_OFF;
+        for (i, &b) in bytes.iter().enumerate() {
+            self.mem.w8(stats_ptr + 0x0e + i as u32, b);
+        }
+        self.mem.w32(stats_ptr + 0x3c, character);
+        self.mem.w32(stats_ptr + 0x44, board_class);
+        self.mem.w32(stats_ptr + 0x5c, character);
+        self.mem.w32(stats_ptr + 0x60, scale.to_bits());
+        self.mem.w32(base + 0x420, board_class);
+    }
+
+    /// Reset `SpinState_UpdateTrickClips` rider state (`+0x1e4 = 0x1a`, `+0x1e8 = 0`, `+0x1ec = 0`).
+    pub fn reset_trick_clips(&mut self, slot: usize) {
+        let base = Self::rider_addr(slot);
+        self.mem.w32(base + 0x1e4, 0x1a);
+        self.mem.w32(base + 0x1e8, 0);
+        self.mem.w32(base + 0x1ec, 0);
+    }
+
+    /// `Takeoff_PlayLaunchClip` 0x126fc0: plays the launch clip corresponding to layer 0's current prewind clip.
+    pub fn play_launch_clip(&mut self, slot: usize, rand_game: &mut dyn FnMut() -> u32) -> Option<u32> {
+        let cur = self.clip(slot, 0);
+        let next = takeoff_launch_clip(cur)?;
+        Some(self.play_clip(slot, next, 0, 5, rand_game))
+    }
+
+    /// `Boarder_PlayTakeoffClip` 0x127298: plays `0x26e` (row 3), `0x26f` (row 4), or `0x223`.
+    pub fn play_takeoff_clip(&mut self, slot: usize, row_1dc: u32, rand_game: &mut dyn FnMut() -> u32) -> u32 {
+        self.play_clip(slot, takeoff_clip_for_row(row_1dc), 0, 5, rand_game)
+    }
+
+    /// `SpinState_PlayExitClip` 0x102800 via `crate::spin::play_exit_clip`.
+    pub fn play_exit_clip(&mut self, slot: usize, rand_game: &mut dyn FnMut() -> u32) {
+        let base = Self::rider_addr(slot);
+        let mut r = || rand_game();
+        let mut env = TrickEnv { inner: RuntimeEnv { alloc: &mut self.alloc, rand_game: &mut r }, calls: Vec::new() };
+        spin::play_exit_clip(&mut self.mem, &mut env, base);
+    }
+
+    /// `SpinState_UpdateTrickClips` 0x1272e8 via `crate::spin::update_trick_clips` directly on `AnimHost`'s
+    /// live `AnimCtl` and `/SLUS_203.26` `TRICK_TABLE` (`0x333098`).
+    pub fn update_trick_clips(
+        &mut self,
+        slot: usize,
+        held: u32,
+        trick: u32,
+        uber_timer: f32,
+        vel_z: f32,
+        rand_game: &mut dyn FnMut() -> u32,
+    ) -> (u32, Vec<TrickClipCall>) {
+        let base = Self::rider_addr(slot);
+        self.mem.w32(base + 0x24, uber_timer.to_bits());
+        self.mem.w32(base + 0x158, vel_z.to_bits());
+        let mut r = || rand_game();
+        let mut env = TrickEnv { inner: RuntimeEnv { alloc: &mut self.alloc, rand_game: &mut r }, calls: Vec::new() };
+        let ans = spin::update_trick_clips(&mut self.mem, &mut env, base, held, trick);
+        (ans, env.calls)
+    }
+
+    /// Active trick-clip state `(trick_id +0x1e4, stage +0x1e8, hold_ticks +0x1ec)`.
+    pub fn trick_state(&self, slot: usize) -> (u32, u32, u32) {
+        let base = Self::rider_addr(slot);
+        (self.mem.r32(base + 0x1e4), self.mem.r32(base + 0x1e8), self.mem.r32(base + 0x1ec))
+    }
+
     /// Row `clip` of `CLIP_TABLE` 0x325fa8 (`[category, lookup_mode, update_mode, end_action, layer, blend_in, blend_out]`).
     pub fn clip_table_row(&self, clip: u32) -> [u32; 7] {
         let r = CLIP_TABLE + 0x1c * clip;
         std::array::from_fn(|k| self.mem.r32(r + 4 * k as u32))
+    }
+}
+
+/// Shared handle to one rider's live `AnimCtl` + `PoseBlend` slot inside an [`AnimHost`].
+/// `Clone + Send + Sync` so [`crate::rider::Rider`] stays cheaply cloneable and usable inside Bevy resources.
+#[derive(Clone)]
+pub struct RiderAnim {
+    pub host: Arc<Mutex<AnimHost>>,
+    pub slot: usize,
+}
+
+impl RiderAnim {
+    pub fn new(host: Arc<Mutex<AnimHost>>, slot: usize) -> Self {
+        Self { host, slot }
+    }
+    fn lock(&self) -> std::sync::MutexGuard<'_, AnimHost> {
+        self.host.lock().unwrap_or_else(|e| e.into_inner())
+    }
+    pub fn set_stats(&self, character: u32, board_class: u32, scale: f32, bytes: [u8; 16]) {
+        self.lock().set_stats(self.slot, character, board_class, scale, bytes);
+    }
+    pub fn reset(&self) {
+        self.lock().reset_rider(self.slot);
+    }
+    pub fn reset_trick_clips(&self) {
+        self.lock().reset_trick_clips(self.slot);
+    }
+    pub fn sync_rider(&self, inp: &AnimRiderInputs) {
+        self.lock().sync_rider(self.slot, inp);
+    }
+    pub fn flush_ended(&self, rand_game: &mut dyn FnMut() -> u32) {
+        self.lock().flush_ended(self.slot, rand_game);
+    }
+    pub fn play_clip(&self, clip: u32, frame: u32, marker: u32, rand_game: &mut dyn FnMut() -> u32) -> u32 {
+        self.lock().play_clip(self.slot, clip, frame, marker, rand_game)
+    }
+    pub fn update_layers(&self, dt: f32, rand_game: &mut dyn FnMut() -> u32) {
+        self.lock().update_layers(self.slot, dt, rand_game);
+    }
+    pub fn clip(&self, layer: u32) -> u32 {
+        self.lock().clip(self.slot, layer)
+    }
+    pub fn clip_type(&self, layer: u32) -> u32 {
+        self.lock().clip_type(self.slot, layer)
+    }
+    pub fn at_end(&self, layer: u32) -> bool {
+        self.lock().at_end(self.slot, layer)
+    }
+    pub fn layer_phase(&self, layer: u32) -> f32 {
+        self.lock().layer_phase(self.slot, layer)
+    }
+    pub fn clip_duration(&self, layer: u32) -> f32 {
+        self.lock().clip_duration(self.slot, layer)
+    }
+    pub fn test_flag(&self, flag: u32, layer: u32) -> bool {
+        self.lock().test_flag(self.slot, flag, layer)
+    }
+    pub fn test_bit(&self, flag: u32, layer: u32) -> bool {
+        self.lock().test_bit(self.slot, flag, layer)
+    }
+    pub fn set_stance(&self, stance: u32) {
+        self.lock().set_stance(self.slot, stance);
+    }
+    pub fn set_all_layers_stance(&self, stance: u32) {
+        self.lock().set_all_layers_stance(self.slot, stance);
+    }
+    pub fn set_bone_mask(&self, mask: u32) {
+        self.lock().set_bone_mask(self.slot, mask);
+    }
+    pub fn turn_all_layers(&self, angle: f32) {
+        self.lock().turn_all_layers(self.slot, angle);
+    }
+    pub fn blend_out_all(&self) {
+        self.lock().blend_out_all(self.slot);
+    }
+    pub fn stop_category(&self, cat: u32) {
+        self.lock().stop_category(self.slot, cat);
+    }
+    pub fn clip_displacement(&self, layer: u32, rand_game: &mut dyn FnMut() -> u32) -> [f32; 4] {
+        self.lock().clip_displacement(self.slot, layer, rand_game)
+    }
+    pub fn play_launch_clip(&self, rand_game: &mut dyn FnMut() -> u32) -> Option<u32> {
+        self.lock().play_launch_clip(self.slot, rand_game)
+    }
+    pub fn play_takeoff_clip(&self, row_1dc: u32, rand_game: &mut dyn FnMut() -> u32) -> u32 {
+        self.lock().play_takeoff_clip(self.slot, row_1dc, rand_game)
+    }
+    pub fn play_exit_clip(&self, rand_game: &mut dyn FnMut() -> u32) {
+        self.lock().play_exit_clip(self.slot, rand_game);
+    }
+    pub fn update_trick_clips(
+        &self,
+        held: u32,
+        trick: u32,
+        uber_timer: f32,
+        vel_z: f32,
+        rand_game: &mut dyn FnMut() -> u32,
+    ) -> (u32, Vec<TrickClipCall>) {
+        self.lock().update_trick_clips(self.slot, held, trick, uber_timer, vel_z, rand_game)
+    }
+    pub fn trick_state(&self) -> (u32, u32, u32) {
+        self.lock().trick_state(self.slot)
+    }
+    pub fn read_pose(&self, part_idx: usize) -> Option<BlendedPose> {
+        self.lock().read_pose(self.slot, part_idx)
     }
 }

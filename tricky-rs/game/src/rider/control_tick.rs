@@ -201,8 +201,10 @@ struct Env<'a> {
     boost_level: &'a mut f32,
     tricky: bool,
     speech: &'a mut Vec<RiderSpeech>,
-    /// layer-0 clip id answered to `LandHardControl_Update` 0x104800 (`0x1ff` when done, else `0x23e`)
+    /// layer-0 clip id answered to `LandHardControl_Update` 0x104800 (`0x1ff` when done, else `0x23e`) without AnimHost
     clip_id: i32,
+    /// live animation controller when attached (row G5d2)
+    anim: Option<&'a crate::animhost::RiderAnim>,
     /// `Boarder_SetState`'s new state, `Jump_ApplyImpulse` asked
     state: Option<u32>,
     jumped: bool,
@@ -238,21 +240,37 @@ fn unfin(f: &finish::Rider, r: &mut control::Rider) {
 }
 
 impl ControlEnv for Env<'_> {
-    // STANDIN (row G5d): no animation controller yet; `clip_id` carries `0x1ff` once a hard-landing clip ends
-    fn clip(&mut self, _layer: u32) -> i32 {
-        self.clip_id
+    fn clip(&mut self, layer: u32) -> i32 {
+        match self.anim {
+            Some(a) => a.clip(layer) as i32,
+            None => self.clip_id,
+        }
     }
-    fn clip_type(&mut self, _layer: u32) -> i32 {
-        0
+    fn clip_type(&mut self, layer: u32) -> i32 {
+        match self.anim {
+            Some(a) => a.clip_type(layer) as i32,
+            None => 0,
+        }
     }
-    fn clip_at_end(&mut self, _layer: u32) -> bool {
-        true
+    fn clip_at_end(&mut self, layer: u32) -> bool {
+        match self.anim {
+            Some(a) => a.at_end(layer),
+            None => true,
+        }
     }
-    fn layer_phase(&mut self, _layer: u32) -> f32 {
-        0.0
+    fn layer_phase(&mut self, layer: u32) -> f32 {
+        match self.anim {
+            Some(a) => a.layer_phase(layer),
+            None => 0.0,
+        }
     }
-    // STANDIN (row G5d): the clips the states play are not played
-    fn play_clip(&mut self, _r: &mut control::Rider, _clip: i32) {}
+    fn play_clip(&mut self, _r: &mut control::Rider, clip: i32) {
+        if let Some(a) = self.anim {
+            if clip >= 0 {
+                a.play_clip(clip as u32, 0, 5, &mut crate::rand::rand_game);
+            }
+        }
+    }
     fn set_state(&mut self, _r: &mut control::Rider, s: u32) {
         self.state = Some(s);
     }
@@ -394,6 +412,10 @@ impl Rider {
                 self.rec.steer[1..].copy_from_slice(&[r, 0.0]);
                 self.rec.brake[1..].copy_from_slice(&[r, 0.0]);
                 self.prewind_started = 0;
+                if let Some(a) = &self.anim {
+                    a.blend_out_all();
+                    a.play_clip(0x217, 0, 5, &mut crate::rand::rand_game);
+                }
             }
             NATURAL_AIR => {
                 self.records_from_port();
@@ -416,6 +438,11 @@ impl Rider {
                     } else if self.rail_kind == 2 {
                         self.rail_kind = 1;
                     }
+                }
+                if let Some(a) = &self.anim {
+                    a.blend_out_all();
+                    let clip = match self.rail_kind { 4 => 0x257, 3 => 0x256, 2 => 0x255, _ => 0x254 };
+                    a.play_clip(clip, 0, 5, &mut crate::rand::rand_game);
                 }
             }
             SPIN => {
@@ -514,7 +541,8 @@ impl Rider {
         let tricky = self.tricky();
         let (mut meter, mut level) = (self.boost, self.boost_lvl);
         let mut speech = std::mem::take(&mut self.speech);
-        let mut env = Env { meter: &mut meter, boost_level: &mut level, tricky, speech: &mut speech, clip_id: 0, state: None, jumped: false, reset: None };
+        let anim = self.anim.clone();
+        let mut env = Env { meter: &mut meter, boost_level: &mut level, tricky, speech: &mut speech, clip_id: 0, anim: anim.as_ref(), state: None, jumped: false, reset: None };
         let mut cr = self.control_rider();
         let mut na = self.natural_air_ctl;
         na.update(&mut env, pad, &mut cr);
@@ -773,7 +801,8 @@ impl Rider {
         let (mut meter, mut level) = (self.boost, self.boost_lvl);
         let mut speech = std::mem::take(&mut self.speech);
         let clip_id = if self.ctl == LAND_HARD && self.hard_land <= 0.0 { 0x1ff } else { 0x23e };
-        let mut env = Env { meter: &mut meter, boost_level: &mut level, tricky, speech: &mut speech, clip_id, state: None, jumped: false, reset: None };
+        let anim = self.anim.clone();
+        let mut env = Env { meter: &mut meter, boost_level: &mut level, tricky, speech: &mut speech, clip_id, anim: anim.as_ref(), state: None, jumped: false, reset: None };
         let mut cr = self.control_rider();
         match self.ctl {
             CRUISE => {
@@ -829,7 +858,11 @@ impl Rider {
                     PrewindCall::Boost(boarder::Call::BoostEmpty) => self.speech.push(RiderSpeech::BoostEmpty),
                     // `Boarder_RequestReset` after `PrewindState_Update`'s store of +0x304 (0x105580)
                     PrewindCall::Reset => self.reset_req = Some(Some(p.x304)),
-                    // STANDIN: the clips (row G5d)
+                    PrewindCall::Clip(clip) => {
+                        if let Some(a) = &self.anim {
+                            a.play_clip(clip, 0, 5, &mut crate::rand::rand_game);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -885,7 +918,10 @@ impl Rider {
         }
         let mut rc = self.rail_ctl;
         let mut rr = self.rail_rider();
-        let turn_done = self.rail_turn_t <= 0.0;
+        let turn_done = match &self.anim {
+            Some(a) => a.at_end(0),
+            None => self.rail_turn_t <= 0.0,
+        };
         let calls = rail_control::update(&mut rc, &mut rr, pad, &mut || turn_done);
         self.rail_ctl = rc;
         self.from_rail_rider(&rr);
@@ -910,14 +946,28 @@ impl Rider {
                 }
                 RailCall::Prewind => next_state = Some(PREWIND),
                 RailCall::TurnLayers(bits) => {
-                    self.rail_goal += f32::from_bits(bits);
-                    // STANDIN (row G5d): 15-frame quarter-turn clip duration (28 game ticks)
+                    let angle = f32::from_bits(bits);
+                    self.rail_goal += angle;
+                    if let Some(a) = &self.anim {
+                        a.turn_all_layers(angle);
+                    }
                     self.rail_turn_t = 28.0 / 60.0;
                 }
                 RailCall::ScoreSpin(deg) => self.sc.update_spin(deg),
                 // `RailSlideControl_Update` does not write +0x304 before `Boarder_RequestReset`
                 RailCall::Reset => self.reset_req = Some(None),
-                RailCall::ClipAtEnd | RailCall::OnClipQueued | RailCall::Anim15ef48 | RailCall::PlayClip(_) => {}
+                RailCall::Anim15ef48 => {
+                    if let Some(a) = &self.anim {
+                        a.set_stance(0);
+                        a.set_all_layers_stance(0);
+                    }
+                }
+                RailCall::PlayClip(clip) => {
+                    if let Some(a) = &self.anim {
+                        a.play_clip(clip, 0, 5, &mut crate::rand::rand_game);
+                    }
+                }
+                RailCall::ClipAtEnd | RailCall::OnClipQueued => {}
             }
         }
         self.port_from_records();
@@ -950,7 +1000,8 @@ impl Rider {
         let (mut meter, mut level) = (self.boost, self.boost_lvl);
         let mut speech = std::mem::take(&mut self.speech);
         let clip_id = self.wipe.as_ref().map_or(0x1ff, |w| w.clip as i32);
-        let mut env = Env { meter: &mut meter, boost_level: &mut level, tricky, speech: &mut speech, clip_id, state: None, jumped: false, reset: None };
+        let anim = self.anim.clone();
+        let mut env = Env { meter: &mut meter, boost_level: &mut level, tricky, speech: &mut speech, clip_id, anim: anim.as_ref(), state: None, jumped: false, reset: None };
         let mut cr = self.control_rider();
         if self.ctl == GET_UP {
             control::get_up_state(&mut env, pad, &mut cr);

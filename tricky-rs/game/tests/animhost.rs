@@ -12,16 +12,21 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
+use glam::Vec3;
 use r5900::Runner;
 use tricky_data::big::Files;
 use tricky_data::character::CharModel;
 use tricky_data::disc::Disc;
 use tricky_game::animctl as ctl;
 use tricky_game::animdata as data;
-use tricky_game::animhost::{skel_anim_create_tree, AnimHost, AnimRiderInputs, RosterEntry, ELF_DATA_END, ELF_DATA_START};
+use tricky_game::animhost::{skel_anim_create_tree, AnimHost, AnimRiderInputs, RiderAnim, RosterEntry, ELF_DATA_END, ELF_DATA_START};
 use tricky_game::animseq::{self as seq, SeqEnv};
+use tricky_game::collide::CollisionWorld;
 use tricky_game::pf::Mem;
+use tricky_game::rails::Rails;
+use tricky_game::rider::{control_tick, Input, Rider};
 
 fn disc_and_elf() -> Option<(Vec<u8>, Files)> {
     let iso = std::env::var("TRICKY_DISC").ok()?;
@@ -256,4 +261,111 @@ fn live_disc_animhost_clips_modes_and_runner_pose_match() {
     assert!(ELF_DATA_END > ELF_DATA_START);
     let events = host.drain_events();
     assert!(!events.is_empty(), "expected ClipStarted / MarkerSound events");
+}
+
+#[test]
+fn rider_step_drives_live_animhost_across_states() {
+    let Some((elf, mut files)) = disc_and_elf() else { return };
+    let body_model = CharModel::rider_from_disc(&mut files, "mac").expect("load mac");
+    let board_model = CharModel::board_from_disc(&mut files, Some("Fr")).expect("load Fr board");
+    let body_bones = body_model.slot_raw_bones(0);
+    let board_bones = board_model.slot_raw_bones(1);
+
+    let roster = [RosterEntry { character: 2, board_class: 1, load_uber: true }];
+    let mut host = AnimHost::from_disc(&elf, &mut files, &roster).expect("init AnimHost");
+    let slot = host.add_rider(2, 1, 1.0, &[(0, &body_bones), (1, &board_bones)]);
+    let anim = RiderAnim::new(Arc::new(Mutex::new(host)), slot);
+
+    // Flat groomed-snow plane (surface 1)
+    let mut world = CollisionWorld::default();
+    world.add_ex([Vec3::new(-200.0, 0.0, 200.0), Vec3::new(200.0, 0.0, 200.0), Vec3::new(-200.0, 0.0, -200.0)], None, true, 1, false);
+    world.add_ex([Vec3::new(200.0, 0.0, 200.0), Vec3::new(200.0, 0.0, -200.0), Vec3::new(-200.0, 0.0, -200.0)], None, true, 1, false);
+    let rails = Rails::default();
+    let dt = 1.0 / 60.0;
+
+    let mut r = Rider::new(Vec3::new(0.0, 0.05, 0.0), 0.0);
+    r.grounded = true;
+    r.motion = 2;
+    r.ctl = control_tick::CRUISE;
+    r.vel = Vec3::new(0.0, 0.0, -15.0);
+    r.data = &tricky_game::trickdata::RIDERS[2]; // Mac
+    r.stats.kind = 1;
+    r.attach_anim(anim.clone());
+    assert_eq!(anim.clip(0), 0x1ff, "attached grounded rider starts on base ride clip 0x1ff");
+
+    // 1. Cruise ticks: layer 2 idle clip picked by Boarder_PickIdleClip on tick 0/18, pose updates every tick.
+    let idle = Input::default();
+    for _ in 0..20 {
+        r.pos.z = 0.0;
+        r.grounded = true;
+        r.motion = 2;
+        r.step(&world, &rails, idle, dt);
+    }
+    let layer2 = anim.clip(2);
+    assert!((0x2f0..=0x2f8).contains(&layer2), "Boarder_PickIdleClip should play layer-2 clip 0x2f0..=0x2f8, got {layer2:#x}");
+    let body_pose = anim.read_pose(0).expect("blended body pose");
+    assert_eq!(body_pose.rot.len(), 19);
+
+    // 2. Prewind: holding jump enters PREWIND (0xe) and plays clip 0x217 (WindUpBlend mode 10).
+    let prewind_in = Input { jump: true, steer: 1.0, ..Default::default() };
+    for _ in 0..10 {
+        r.pos.z = 0.0;
+        r.step(&world, &rails, prewind_in, dt);
+    }
+    assert_eq!(r.ctl, control_tick::PREWIND);
+    assert_eq!(anim.clip(0), 0x217, "PrewindControl_Enter should play clip 0x217");
+
+    // 3. Spin + Grab in air: put rider high in air in SPIN, hold L1 grab, verify real disc marker 2 & 4 gate!
+    r.pos = Vec3::new(0.0, 40.0, 0.0);
+    r.vel = Vec3::new(0.0, 12.0, -15.0);
+    r.grounded = false;
+    r.motion = 1;
+    r.set_control(control_tick::SPIN);
+    // Hold L1 grab (bit 0 -> grab = 1) until grab reaches hold marker 2.
+    let grab_in = Input { grab: 1, ..Default::default() };
+    let mut saw_grab_clip = false;
+    let mut saw_unsafe = false;
+    for _ in 0..35 {
+        r.step(&world, &rails, grab_in, dt);
+        if anim.clip_type(0) == 0xe {
+            saw_grab_clip = true;
+            if !r.grab_safe() {
+                saw_unsafe = true;
+            }
+        }
+    }
+    assert!(saw_grab_clip, "SpinState_UpdateTrickClips should play a real grab clip (type 0xe) on AnimHost");
+    assert!(saw_unsafe, "held grab clip before marker 4 must report grab_safe() == false");
+
+    // Release grab: clip plays past its real disc marker 4, making grab_safe() == true!
+    let mut became_safe = false;
+    for _ in 0..60 {
+        r.step(&world, &rails, idle, dt);
+        if r.grab_safe() {
+            became_safe = true;
+            break;
+        }
+    }
+    assert!(became_safe, "releasing grab must advance past real disc marker 4 and set grab_safe() == true");
+
+    // 4. Hard landing clip (0x23e) holds LAND_HARD until AnimCtl_FlushEndedClips chains back to 0x1ff -> CRUISE!
+    r.pos = Vec3::new(0.0, 0.05, 0.0);
+    r.vel = Vec3::new(0.0, 0.0, -15.0);
+    r.grounded = true;
+    r.motion = 2;
+    r.set_control(control_tick::LAND_HARD);
+    r.hard_land = 99.0; // deliberately large so only real AnimCtl clip end (not timer stand-in!) exits LAND_HARD
+    anim.play_clip(0x23e, 0, 5, &mut tricky_game::rand::rand_game);
+    let mut exited_hard_land = false;
+    for _ in 0..120 {
+        r.pos.z = 0.0;
+        r.grounded = true;
+        r.motion = 2;
+        r.step(&world, &rails, idle, dt);
+        if r.ctl == control_tick::CRUISE {
+            exited_hard_land = true;
+            break;
+        }
+    }
+    assert!(exited_hard_land, "LandHardControl_Update should transition back to CRUISE when real AnimCtl clip 0x23e chains to 0x1ff");
 }

@@ -561,6 +561,10 @@ pub struct Rider {
     /// `Boarder_AddSpeedSample` 0x155dc8 (`score+0xdc` sum, `score+0xe0` count)
     pub speed_sum: f32,
     pub speed_samples: f32,
+    /// Live `AnimCtl` + `PoseBlend` host handle (`rider+0x46c0`, rows G5d1–G5d2); `None` when running without disc `.afl`s
+    pub anim: Option<crate::animhost::RiderAnim>,
+    /// Per-rider tick counter for `Boarder_PickIdleClip` 0x11d4e8 (`tick % 18 == 0`)
+    pub anim_tick: i32,
 }
 
 /// The race as `Boarder_RequestReset` 0x118f10 reads it for a rider: `AIP_CanResetAt` 0x196858 on its path at its
@@ -594,10 +598,42 @@ impl Rider {
                course_dir: None, course_pts: None, wipe: None, crash_at: None, gm: None, crash_spray: None, land_puffs_vn: None, lean: [0.0; 3], up: [0.0, 0.0, 1.0, 0.0], recover: None, ai: false, down_t: 0.0, getup: -1.0, stumble: 0.0, wall_hit: None, speed_timer: 0.0, spin_timer: 0.0, spin_used: false, tube_class: u8::MAX, gate_p: 0.0, gate_hi: 0.0, gate_lo: 0.0, gate_still: 0.0, gate_target: 0.0, gate_speed: 0.0, gate_state: 8, gate_rock_dir: 0, band: (0.005, 0.0250417), spin_base: 0.0, flip_base: 0.0, late: false, cause: "", spin_ax: Axis::default(), flip_ax: Axis::default(), air_mode2: false, rail_off: 0.0, rail_time: 0.0, rail_halves: 0, boost_was: false, chain: 0,
                ubers: Vec::new(), uber: 0.0, uber_id: 0, uber_done: false, letters: 0, multiplier: 1,
                sc: new_score(), tick_acc: 0.0, full_count: 0, rail_kind: 0, rail_lean: 0.0, rail_goal0: 0.0, rail_committed: 0.0, show_parts: Vec::new(), speech: Vec::new(), hit_by: u32::MAX, grab_scored: false, grab_tw: false, hit_wait: 0, att: None, last_hit: Default::default(), impact: 0.0, impact_n: [0.0; 4], knocks: 0.0, slot: 0, place_ray: None, hit_kind: 0, land_time: 0.0, takeoffs: 0, rail_blend: 0.0, rail_word: 0, rail_grid: false, rail_hit: [0.0; 4], spin_st: None, pad_dev: Default::default(), pad_from_host: false, pad_cfg: None, vibration: Default::default(), pad_rumble: Default::default(), rumble_muted: false, land_point: [0.0; 4], land_vel: [0.0; 4], land_word: u32::MAX, land_normal: [0.0, 0.0, 1.0, 0.0], takeoff_wind: (0.0, 0.0), ctl: control_tick::CRUISE, cruise: Default::default(), land_normal_ctl: Default::default(), natural_air_ctl: Default::default(), rail_ctl: Default::default(), rail_turn_t: 0.0, prewind_started: 0, trick_ctl: Default::default(), rec: Default::default(), boost_lvl: 0.0, reset_flag: 0, reset_req: None, reset: None, reset_acc: 0.0, fade: (1.0, 0.0), reset_ctx: ResetCtx::default(),
-               vf7: crate::boarder_tick::TickRider { active: 1, time_scale: 1.0, speed_limit: SPEED_CAP * 100.0, ..Default::default() }, speed_sum: 0.0, speed_samples: 0.0 };
+               vf7: crate::boarder_tick::TickRider { active: 1, time_scale: 1.0, speed_limit: SPEED_CAP * 100.0, ..Default::default() }, speed_sum: 0.0, speed_samples: 0.0, anim: None, anim_tick: 0 };
         // the start line's `Boarder_PlaceAt` 0x11cae8 (`cBoarder::vf8` 0x116ab8: heading from the path's direction)
         r.att = Some((orient::placed_attitude(placed_heading(yaw), None), yaw));
         r
+    }
+
+    /// Attach a live [`crate::animhost::RiderAnim`] (`AnimCtl` + `PoseBlend`, row G5d2), syncing stats & stance and
+    /// starting layer 0 on the appropriate base clip (`0x1ff` on snow, `0x223` in air).
+    pub fn attach_anim(&mut self, anim: crate::animhost::RiderAnim) {
+        let ch = RIDERS.iter().position(|r| r.name == self.data.name).unwrap_or(0) as u32;
+        anim.set_stats(ch, self.stats.kind as u32, self.stats.scale, self.stats.bytes);
+        anim.reset();
+        anim.reset_trick_clips();
+        anim.set_stance(self.switch as u32);
+        let init_clip = if self.grounded { 0x1ff } else { 0x223 };
+        anim.play_clip(init_clip, 0, 5, &mut crate::rand::rand_game);
+        self.anim = Some(anim);
+    }
+
+    /// Build the `AnimMode_*` (4..11) rider inputs from the rider's current state.
+    pub(crate) fn anim_inputs(&self) -> crate::animhost::AnimRiderInputs {
+        crate::animhost::AnimRiderInputs {
+            switch: self.switch,
+            row: if self.rail.is_some() { self.rail_kind } else { 0 },
+            x1f0: self.vf7.eases[0][0],
+            brake: self.rec.brake[0],
+            crouch: self.rec.crouch[0],
+            steer: self.rec.steer[0],
+            spin_windup: self.rec.spin[0],
+            flip_windup: self.rec.flip[0],
+            gate_lean: self.gate_p,
+            side: self.vf7.eases[4][0],
+            dir_x: self.vf7.x27c,
+            dir_y: self.vf7.x280,
+            board_class: self.stats.kind as u32,
+        }
     }
     /// `Boarder_Respawn`: dropped a metre above the snow, already moving down the course at 30 km/h.
     pub fn respawn(&mut self, at: (Vec3, f32)) {
@@ -707,6 +743,12 @@ impl Rider {
         self.recover = None;
         self.stumble = 0.0;
         self.grounded = false;
+        if let Some(a) = &self.anim {
+            a.reset();
+            a.reset_trick_clips();
+            a.set_stance(0);
+            a.play_clip(0x1ff, 0, 5, &mut crate::rand::rand_game);
+        }
         self.set_motion(1);
         self.set_control(control_tick::NATURAL_AIR);
         self.charge = 0.0;
@@ -1038,6 +1080,10 @@ impl Rider {
             self.switch = switch;
             self.steer = -self.steer;
             self.lean[0] = -self.lean[0];
+            if let Some(a) = &self.anim {
+                a.set_stance(switch as u32);
+                a.set_all_layers_stance(switch as u32);
+            }
         }
     }
 
@@ -1080,7 +1126,9 @@ impl Rider {
         let k = |b: u32| f32::from_bits(b);
         // `AirMotion_SetFallScale` 0x1049a0: crouch target for `cLandNormalControl` (+8)
         self.land_normal_ctl.crouch = (vn * 100.0 * -0.000_450_000_02).clamp(0.25, 1.0);
-        let (clip_type, clip_flag4) = if self.trick_ctl.clip_type != 8 {
+        let (clip_type, clip_flag4) = if let Some(a) = &self.anim {
+            (a.clip_type(0) as i64, a.test_flag(4, 0))
+        } else if self.trick_ctl.clip_type != 8 {
             (self.trick_ctl.clip_type as i64, self.trick_ctl.flag(4))
         } else if !self.grab_safe() || (self.uber > 0.0 && !self.uber_done) {
             (0xe, false)
@@ -1126,6 +1174,10 @@ impl Rider {
         let deg25 = 25f32.to_radians();
         self.land_kind = if deg25 < l.roll.abs() { 3 } else if deg25 < l.pitch.abs() && l.pitch.abs() < PI - deg25 { 1 } else { 0 };
         self.hard_land = if c.state == 0xb { crate::rider::wipeout::clip_frames(c.clip as u16, self.stats.kind as u8) / 30.0 } else { 0.0 };
+        if let Some(a) = &self.anim {
+            a.reset_trick_clips();
+            a.play_clip(c.clip, 0, 5, &mut crate::rand::rand_game);
+        }
         // `Landing_ChooseState` 0x109308: grab-clip landing snaps crouch to 1 and zeroes brake/steer before entering 0xc
         if c.state == 0xc && clip_type == 0xe {
             self.rec.crouch = [1.0, 0.0, 1.0];
@@ -1408,7 +1460,18 @@ impl Rider {
                 self.rail_cooldown = (self.rail_cooldown - dt).max(0.0);
             }
         }
+        // `cPreAI::vf1` 0x1146f8 -> `Boarder_FlushEndedClips` 0x117190 (`AnimCtl_FlushEndedClips` 0x15f700, row G5d2)
+        if let Some(a) = &self.anim {
+            a.flush_ended(&mut crate::rand::rand_game);
+        }
         vf7::tick(self, world, rails, input, ctl_input, dt, resetting);
+        // `cPostAI::vf1` 0x114780 -> `Boarder_UpdateAnimLayers` 0x117180 (`AnimCtl_UpdateLayers` 0x15f390 -> `AnimCtl_BlendPose` 0x15f7c8)
+        if let Some(a) = self.anim.clone() {
+            let inp = self.anim_inputs();
+            a.sync_rider(&inp);
+            a.update_layers(dt * 60.0, &mut crate::rand::rand_game);
+        }
+        self.anim_tick = self.anim_tick.wrapping_add(1);
         // `cPlayer::vf7` 0x153390: after `cBoarder::vf7` 0x117198, update the player's vibration object
         // (`Rumble_Update` 0x150d18, row E10c3).
         if !self.ai {
@@ -1928,8 +1991,9 @@ impl Rider {
             Some((o, _)) => *o,
             None => orient::placed_attitude(placed_heading(self.yaw), None),
         };
+        let layer0_clip = self.anim.as_ref().map_or(0, |a| a.clip(0) as i64);
         let t = crate::jump::takeoff_spin_rates(&crate::jump::TakeoffState {
-            clip: 0,
+            clip: layer0_clip,
             x208: self.crouch_v,
             tricks_stat: self.stats.bytes[12],
             wind_spin: self.takeoff_wind.0,
@@ -1947,9 +2011,20 @@ impl Rider {
             ..Default::default()
         };
         let a = crate::spin::AlignRider { slope_kind: self.land_word, slope: self.land_normal, fwd: o.fwd, quat: o.q, class: self.stats.kind as u32 };
-        // STANDIN (row G5): the launch clip (`Takeoff_PlayLaunchClip`) taken as of type 0xb when the take-off has a
-        // spin or flip, so the state starts on the stick (mode 0) as after the game's launch clips
-        let clip_type = if t.launch_clip && (t.spin != 0.0 || t.flip != 0.0) { 0xb } else { 0 };
+        let clip_type = if let Some(anim) = &self.anim {
+            anim.reset_trick_clips();
+            if t.launch_clip {
+                anim.play_launch_clip(&mut crate::rand::rand_game);
+            } else {
+                anim.play_takeoff_clip(if self.rail.is_some() { self.rail_kind } else { 0 }, &mut crate::rand::rand_game);
+            }
+            anim.clip_type(0)
+        } else if t.launch_clip && (t.spin != 0.0 || t.flip != 0.0) {
+            // STANDIN (without AnimHost): launch clip taken as type 0xb when spinning or flipping
+            0xb
+        } else {
+            0
+        };
         crate::spin::spin_enter(&mut st, &mut e, &a, clip_type);
         self.spin_st = Some(st);
         self.att = Some((o, self.yaw));
@@ -2111,28 +2186,99 @@ impl Rider {
             ..Default::default()
         };
         let before = self.spin;
-        // `AnimClip_Advance` 0x15a030 + `SpinState_UpdateTrickClips` 0x1272e8 (row G1i2a)
-        self.trick_ctl.advance(dt);
-        let tc = if st.owed == 0.0 {
-            self.trick_clips_step((word >> 9) & 1, word & 0xff)
+        // `SpinState_UpdateTrickClips` 0x1272e8: run directly on live `AnimHost` when attached (row G5d2),
+        // falling back to `Rider::trick_ctl` when running without disc `.afl`s.
+        let (tc, anim) = if let Some(a) = self.anim.clone() {
+            let (clip_before, type_before) = (a.clip(0), a.clip_type(0));
+            let tc = if st.owed == 0.0 {
+                let (ans, tcalls) = a.update_trick_clips(
+                    (word >> 9) & 1,
+                    word & 0xff,
+                    self.uber_timer,
+                    self.vel.y * 100.0,
+                    &mut crate::rand::rand_game,
+                );
+                let ch = RIDERS.iter().position(|r| r.name == self.data.name).unwrap_or(0);
+                let rows = &tricky_data::trick_slots::TRICK_SLOTS[ch][(self.stats.kind as usize).min(2)];
+                for c in tcalls {
+                    match c {
+                        crate::animhost::TrickClipCall::StartGrab(clip) => {
+                            self.sc.start_grab(clip);
+                            if let Some(i) = rows.iter().position(|r| r[1] as u32 == clip) {
+                                self.grab_done[i] = true;
+                            }
+                        }
+                        crate::animhost::TrickClipCall::TrickEvent { clip, duration } => {
+                            self.sc.end_grab(duration, clip);
+                            if (0x2ac..=0x2db).contains(&clip) {
+                                self.ubers_done = self.ubers_done.saturating_add(1);
+                            }
+                        }
+                        crate::animhost::TrickClipCall::SetTrickClipRate(clip) => {
+                            if let Some(rate) = crate::score::grab_rate(clip) {
+                                self.sc.grab_rate = rate;
+                            }
+                            if let Some(i) = rows.iter().position(|r| r[2] as u32 == clip) {
+                                self.grab_tweaked[i] = true;
+                            }
+                        }
+                    }
+                }
+                ans
+            } else {
+                0
+            };
+            let (clip_after, type_after) = (a.clip(0), a.clip_type(0));
+            let start = crate::jump::spin_start_from_stick(word, self.stats.bytes[12], self.switch != self.data.goofy);
+            let anim = crate::spin::Anim {
+                clip: clip_before,
+                clip_type: type_before,
+                phase: a.layer_phase(0),
+                trick_clips: tc,
+                start_from_stick: start.is_some() as u32,
+                trick_clip: (clip_after != clip_before || type_after != type_before).then_some((clip_after, type_after)),
+                ..Default::default()
+            };
+            (start, anim)
         } else {
-            0
+            self.trick_ctl.advance(dt);
+            let tc = if st.owed == 0.0 {
+                self.trick_clips_step((word >> 9) & 1, word & 0xff)
+            } else {
+                0
+            };
+            let start = crate::jump::spin_start_from_stick(word, self.stats.bytes[12], self.switch != self.data.goofy);
+            let anim = crate::spin::Anim {
+                clip: if self.trick_ctl.clip == 0x300 { 0 } else { self.trick_ctl.clip },
+                clip_type: if self.trick_ctl.clip == 0x300 { 0 } else { self.trick_ctl.clip_type },
+                trick_clips: tc,
+                start_from_stick: start.is_some() as u32,
+                ..Default::default()
+            };
+            (start, anim)
         };
-        // `SpinState_StartFromStick` 0x102158's answer, for the state to ask (row G1a5b3b2)
-        let start = crate::jump::spin_start_from_stick(word, self.stats.bytes[12], self.switch != self.data.goofy);
-        let anim = crate::spin::Anim {
-            clip: if self.trick_ctl.clip == 0x300 { 0 } else { self.trick_ctl.clip },
-            clip_type: if self.trick_ctl.clip == 0x300 { 0 } else { self.trick_ctl.clip_type },
-            trick_clips: tc,
-            start_from_stick: start.is_some() as u32,
-            ..Default::default()
-        };
+        let start = tc;
         let calls = crate::spin::spin_update(word, &mut st, &mut r, &anim);
         let started = start.filter(|_| calls.contains(&crate::spin::SpinCall::StartFromStick));
         for c in calls {
             match c {
                 crate::spin::SpinCall::ScoreSpin(d) => self.sc.update_spin(d),
                 crate::spin::SpinCall::ScoreFlip(d) => self.sc.update_flip(d),
+                crate::spin::SpinCall::PlayClip(clip) => {
+                    if let Some(a) = &self.anim {
+                        a.play_clip(clip, 0, 5, &mut crate::rand::rand_game);
+                    }
+                }
+                crate::spin::SpinCall::TurnLayers(bits) => {
+                    if let Some(a) = &self.anim {
+                        a.turn_all_layers(f32::from_bits(bits));
+                    }
+                }
+                crate::spin::SpinCall::ExitClip => {
+                    if let Some(a) = &self.anim {
+                        a.play_exit_clip(&mut crate::rand::rand_game);
+                    }
+                }
                 // the reset button (pad bit 8): `Boarder_RequestReset`, no store of +0x304
                 crate::spin::SpinCall::Reset(_) => self.reset_req = Some(None),
                 _ => {}
@@ -2187,7 +2333,15 @@ impl Rider {
             ..Default::default()
         };
         let a = crate::spin::AlignRider { slope_kind: self.land_word, slope: self.land_normal, fwd: o.fwd, quat: o.q, class: self.stats.kind as u32 };
-        crate::spin::spin_enter(&mut st, &mut e, &a, 0xb);
+        let clip_type = if let Some(anim) = &self.anim {
+            if let Some(c) = s.clip {
+                anim.play_clip(c, 0, 5, &mut crate::rand::rand_game);
+            }
+            anim.clip_type(0)
+        } else {
+            0xb
+        };
+        crate::spin::spin_enter(&mut st, &mut e, &a, clip_type);
         self.spin_st = Some(st);
     }
 
@@ -2253,6 +2407,10 @@ impl Rider {
     pub fn capture_gated(&self) -> bool { !self.grab_safe() || (self.uber > 0.0 && !self.uber_done) }
     /// Is the board free to land (no grab, tweak or uber clip short of its safe marker 4)?
     pub fn grab_safe(&self) -> bool {
+        if let Some(a) = &self.anim {
+            let t = a.clip_type(0);
+            return !(matches!(t, 0xe..=0x10) && !a.test_flag(4, 0));
+        }
         if self.trick_ctl.clip_type != 8 {
             return !self.trick_ctl.is_unsafe();
         }

@@ -122,6 +122,7 @@ struct Glue<'a> {
     k: f32,
     lean: f32,
     who: Who,
+    anim: Option<&'a crate::animhost::RiderAnim>,
 }
 
 /// The cast's record as the motion reads it: +0x34 the surface, +0x38 the object (index + 1, 0 none).
@@ -281,20 +282,36 @@ impl RagEnv for Glue<'_> {
 
 impl WipeEnv for Glue<'_> {
     fn clip(&self) -> u32 {
-        self.s.clip as u32
+        match self.anim {
+            Some(a) => a.clip(0),
+            None => self.s.clip as u32,
+        }
     }
-    /// The clip's type: 0x11 the curled ones (category 17), else 0x12.
+    /// The clip's type: live `AnimCtl_GetClipType(0)` when attached, else 0x11 curled / 0x12 stretched.
     fn clip_type(&self) -> u32 {
-        if category(self.s.clip) == 17 { 0x11 } else { 0x12 }
+        match self.anim {
+            Some(a) => a.clip_type(0),
+            None => if category(self.s.clip) == 17 { 0x11 } else { 0x12 },
+        }
     }
     fn play_clip(&mut self, clip: u32) {
         self.s.clip = clip as u16;
         self.s.clip_t = 0.0;
+        if let Some(a) = self.anim {
+            a.play_clip(clip, 0, 5, &mut crate::rand::rand_game);
+        }
     }
-    fn blend_out_all(&mut self) {}
-    /// STANDIN: no displacement, for the clip's (`AnimCtl_GetClipDisplacement`, row G5).
+    fn blend_out_all(&mut self) {
+        if let Some(a) = self.anim {
+            a.blend_out_all();
+        }
+    }
+    /// `AnimCtl_GetClipDisplacement` 0x15fa40 when `AnimHost` is attached (row G5d2); zero otherwise.
     fn displacement(&mut self) -> V4 {
-        [0.0; 4]
+        match self.anim {
+            Some(a) => a.clip_displacement(0, &mut crate::rand::rand_game),
+            None => [0.0; 4],
+        }
     }
     /// `Boarder_ProbeGround` 0x128ae8 (`probe::probe`) down `probe::line`, a `cWorldLine`(0.5, from, to, 2) through
     /// the rider's last-hit record (rider+0x430).
@@ -527,7 +544,7 @@ impl Wipe {
         self.rag.vel = vel;
     }
     /// One game tick of motion 5 or 6.
-    fn tick(&mut self, world: &CollisionWorld, last: &mut LastHit, k: f32, lean: f32, kind: u8, who: Who) -> Out {
+    fn tick(&mut self, world: &CollisionWorld, last: &mut LastHit, k: f32, lean: f32, kind: u8, who: Who, anim: Option<&crate::animhost::RiderAnim>) -> Out {
         let was = self.s.motion;
         self.s.speed = dot(self.rag.vel, self.rag.vel).sqrt();
         // the rollers among the rider's broadphase pairs, for `Ragdoll_Contacts`. STANDIN: those whose boxes meet
@@ -538,7 +555,7 @@ impl Wipe {
         let (lo, hi) = ([c[0] - rad, c[1] - rad, c[2] - rad, 0.0], [c[0] + rad, c[1] + rad, c[2] + rad, 0.0]);
         let near: Vec<usize> = (0..all.len()).filter(|&i| crate::knockables::overlap(all[i].body.lo, all[i].body.hi, lo, hi)).collect();
         let mut pairs: Vec<(u32, crate::roller::RollerBody)> = near.iter().map(|&i| (all[i].object, all[i].body.clone())).collect();
-        let mut glue = Glue { world, last, s: &mut self.s, k, lean, who };
+        let mut glue = Glue { world, last, s: &mut self.s, k, lean, who, anim };
         if was == 5 {
             self.motion.update(&mut self.rag, &mut self.wr, &mut pairs, &mut glue);
         } else {
@@ -571,12 +588,14 @@ impl Wipe {
         // `CollBody_UpdateFromBones` 0x2361b0 on the animated skeleton (row G5)
         self.rag.body = bind_body_at(self.rag.pos, self.wr.fwd, self.rag.up, k);
         self.s.clip_t += TICK;
+        let getup_done = match anim {
+            Some(a) => matches!(a.clip(0), 0x1ff | 0x202) || a.at_end(0),
+            None => self.s.clip_t >= (2.0 * clip_frames(self.s.clip, kind) - 1.0) / 60.0,
+        };
         match now {
             1 => Out::Air(self.s.clip),
             2 => Out::Ride(self.s.clip),
-            // STANDIN: the get-up ends with its clip, 2n − 1 ticks for an n-frame clip, for the animation's end
-            // action (row G5)
-            6 if self.s.clip_t >= (2.0 * clip_frames(self.s.clip, kind) - 1.0) / 60.0 => Out::Ride(0),
+            6 if getup_done => Out::Ride(0),
             _ => Out::Down,
         }
     }
@@ -643,7 +662,8 @@ impl Rider {
         (motion.rag.crash_at, motion.rag.crash_n) = (to_game(at, 100.0, 1.0), to_game(n, 1.0, 0.0));
         let mut s = State { motion: 5, state: 0x13, clip: CLIP_CRUNCH, fwd: o.fwd, side: o.side, yaw: o.yaw, probe_side: o.side, impact_n: self.impact_n, knocks: self.knocks, ..Default::default() };
         let who = self.who();
-        let mut glue = Glue { world, last: &mut self.last_hit, s: &mut s, k, lean: self.lean[0], who };
+        let anim = self.anim.clone();
+        let mut glue = Glue { world, last: &mut self.last_hit, s: &mut s, k, lean: self.lean[0], who, anim: anim.as_ref() };
         motion.enter(&mut rag, &mut wr, &mut glue);
         self.switch = false;
         self.clear_air();
@@ -661,14 +681,15 @@ impl Rider {
         };
         self.down_t += dt;
         w.t += dt;
-        // STANDIN: clips that end chain on (end actions 5 and 6: impacts → crunch cycle, crunch-to-stretch →
-        // falling), for the animation controller (row G5)
-        if w.s.motion == 5 && w.s.clip_t >= (clip_frames(w.s.clip, self.stats.kind) - 1.0) / 30.0 {
+        if self.anim.is_none() && w.s.motion == 5 && w.s.clip_t >= (clip_frames(w.s.clip, self.stats.kind) - 1.0) / 30.0 {
             match w.s.clip {
                 0x2e1..=0x2ed => (w.s.clip, w.s.clip_t) = (CLIP_CRUNCH, 0.0),
                 CLIP_CRUNCH2STRETCH => (w.s.clip, w.s.clip_t) = (CLIP_FALLING, 0.0),
                 _ => {}
             }
+        }
+        if let Some(a) = &self.anim {
+            w.s.clip = a.clip(0) as u16;
         }
         if let Some((near, ahead)) = self.course_pts {
             (w.rag.course, w.wr.course8) = (to_game(near, 100.0, 1.0), to_game(ahead, 100.0, 1.0));
@@ -681,7 +702,8 @@ impl Rider {
             w.acc -= TICK;
             let was = w.s.clip;
             let who = self.who();
-            out = w.tick(world, &mut self.last_hit, self.stats.scale, self.lean[0], self.stats.kind, who);
+            let anim = self.anim.clone();
+            out = w.tick(world, &mut self.last_hit, self.stats.scale, self.lean[0], self.stats.kind, who, anim.as_ref());
             for c in std::mem::take(&mut w.s.calls) {
                 self.wipe_call(c);
             }
@@ -764,6 +786,10 @@ impl Rider {
         }
         self.cap = SPEED_CAP.max(self.vel.length());
         self.recover = if clip != 0 { Some((clip, 0.0)) } else { None };
+        if let Some(a) = &self.anim {
+            let next = if clip != 0 { clip as u32 } else if on_snow { 0x1ff } else { 0x223 };
+            a.play_clip(next, 0, 5, &mut crate::rand::rand_game);
+        }
     }
 }
 

@@ -1846,3 +1846,27 @@ Proven (`SLUS_203.26`):
   `AnimMode_BrakeBlend` + `AnimCtl_BlendPose` + `PoseBlend_BlendSkeleton` on real disc `.afl` curves and Mac's 19
   body + 1 board `.mpf` bones) match `SLUS_203.26` bit-for-bit in `r5900::Runner`; switch mirroring, hard landing
   `0x23e -> 0x1ff` auto-chain, grab `0x278` real disc markers 2 & 4, and layer-2 idle `0x2f0` verified.
+
+## `Rider` states and tick wired onto `AnimHost` (row G5d2; checked: `tests/animhost.rs`)
+
+- **Ported (`animhost.rs`, `rider.rs`, `rider/control_tick.rs`, `rider/vf7.rs`, `rider/wipeout.rs`)**:
+  - `RiderAnim` (`Arc<Mutex<AnimHost>>` + `slot`, `Clone + Send + Sync`) attached to `Rider::anim` via
+    `Rider::attach_anim` (syncs 16 stat bytes `stats+0x0e..+0x1d`, `+0x3c/+0x44/+0x5c/+0x60`, stance, resets
+    trick clips, starts layer 0 on `0x1ff`/`0x223`).
+  - Exact per-tick order in `Rider::step`: `Boarder_FlushEndedClips` 0x117190 (`cPreAI::vf1`) before `vf7::tick`,
+    `Boarder_UpdateAnimLayers` 0x117180 (`cPostAI::vf1`, `sync_rider` + `AnimCtl_UpdateLayers(ctl, dt*60)`) after.
+  - `ControlEnv` (`control_tick.rs`) delegates `clip`, `clip_type`, `clip_at_end`, `layer_phase`, and `play_clip`
+    to `RiderAnim`; `PrewindControl_Enter` plays `0x217`, `PrewindCall::Clip` plays prewind clips; `RailSlideControl`
+    plays enter clips `0x254..=0x257`, uses real `AnimCtl_IsClipAtEnd(0)` for quarter-turns, and executes
+    `TurnLayers`, `Anim15ef48` (`SetAllLayersStance(0)`), and `PlayClip`.
+  - Takeoff & spin (`rider.rs`): `Takeoff_PlayLaunchClip` 0x126fc0 (exact 20-entry jump table at `0x368bf0`),
+    `Boarder_PlayTakeoffClip` 0x127298 (`3 -> 0x26e`, `4 -> 0x26f`, else `0x223`), `SpinState_UpdateTrickClips`
+    0x1272e8 (`spin::update_trick_clips` directly on `AnimHost` + `TRICK_TABLE` `0x333098`), `SpinState_PlayExitClip`
+    0x102800 (`spin::play_exit_clip`), `SpinCall::{PlayClip, TurnLayers, ExitClip}`, `late_start` clip play, and
+    real `AnimCtl_GetClipType(0)` / `AnimCtl_TestClipFlag(4, 0)` for `Landing_CheckAngles` and `Rider::grab_safe`.
+  - `vf7.rs` runs `Boarder_PickIdleClip` 0x11d4e8 on layer 2 every 18th tick (`0x2f0..=0x2f8`).
+  - `wipeout.rs` routes `WipeEnv::{clip, clip_type, play_clip, blend_out_all, displacement}` (`AnimCtl_GetClipDisplacement`
+    0x15fa40) and get-up completion (`0x1ff`/`0x202` or `at_end(0)`) through `RiderAnim`.
+- **Verified**: 81 tests across 8 suites (`animhost`, `control_tick`, `spin_air`, `landing_game`, `rail_capture`,
+  `physics`, `boarder_tick`, `--lib`) pass against `TRICKY_DISC` + `TRICKY_ELF`, including end-to-end
+  `rider_step_drives_live_animhost_across_states`.
