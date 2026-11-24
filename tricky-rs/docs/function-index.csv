@@ -222,13 +222,13 @@ address,size,name,system,status
 0x115dc0,40,Game_ResetWorld,game,ported
 0x115de8,8,thunk_FUN_00115df0,runtime,ported
 0x115df0,56,AIWorld_ClearSlots,ai,ported
-0x115e28,444,cAIWorld::vf1_115e28,ai,ported
+0x115e28,444,cAIWorld::vf1_115e28,ai,checked
 0x115fe8,272,World_ResetInstances,world,ported
-0x1160f8,452,AIWorld_MarkCellsAround,ai,ported
-0x1162c0,52,AIWorld_AgeActiveCells,ai,ported
-0x1162f8,164,AIWorld_UpdateActiveCells,ai,ported
-0x1163a0,128,AIWorld_ReleaseActiveCells,ai,ported
-0x116420,160,AIWorld_MarkCellActive,ai,ported
+0x1160f8,452,AIWorld_MarkCellsAround,ai,checked
+0x1162c0,52,AIWorld_AgeActiveCells,ai,checked
+0x1162f8,164,AIWorld_UpdateActiveCells,ai,checked
+0x1163a0,128,AIWorld_ReleaseActiveCells,ai,checked
+0x116420,160,AIWorld_MarkCellActive,ai,checked
 0x1164c0,20,cAIWorld::SaveSnapshot,ai,checked
 0x1164d8,236,cAIWorld::vf8_1164d8,ai,checked
 0x1165c8,124,StaticInit_AIWorld,ai,not started
@@ -289,7 +289,7 @@ address,size,name,system,status
 0x11d038,812,Boarder_UpdateBoost,boarder,checked
 0x11d368,108,AIComputer_RandomTrick,ai,ported
 0x11d3d8,92,AIComputer_RandomEasyTrick,ai,ported
-0x11d438,172,Boarder_UpdateGridCell,boarder,ported
+0x11d438,172,Boarder_UpdateGridCell,boarder,checked
 0x11d4e8,708,Boarder_PickIdleClip,boarder,ported
 0x11d7b0,124,Boarder_GetSpeedStat,boarder,ported
 0x11d830,360,Boarder_Wipeout,boarder,ported
@@ -4561,7 +4561,7 @@ address,size,name,system,status
 0x251bc8,88,cBxCache::~cBxCache,world,not started
 0x251c20,244,CacheBuffer_Init,world,not started
 0x251d18,88,CacheBuffer_Free,world,not started
-0x251d70,72,PatchCache_Age,world,ported
+0x251d70,72,PatchCache_Age,world,checked
 0x251db8,168,CacheBuffer_Evict,world,not started
 0x251e60,68,CacheBuffer_Touch,world,not started
 0x251ea8,52,cAIFwdDiffCache::cAIFwdDiffCache,ai,not started
@@ -4713,10 +4713,10 @@ address,size,name,system,status
 0x25f498,252,Course_Unload,race,ported
 0x25f598,1960,Course_LoadSphereTrees,race,ported
 0x25fd40,308,Course_FreeCollision,race,not started
-0x25fe78,64,Instance_GetEventScript,world,ported
+0x25fe78,64,Instance_GetEventScript,world,checked
 0x25feb8,20,Course_GetEffectHeader,race,ported
-0x25fed0,400,World_CellActivate_RunPersistant,world,ported
-0x260108,368,World_CellDeactivate,world,ported
+0x25fed0,400,World_CellActivate_RunPersistant,world,checked
+0x260108,368,World_CellDeactivate,world,checked
 0x260278,480,World_VisitCellsNear,world,checked
 0x260458,668,World_CullVisibility,world,checked
 0x2606f8,412,Course_RemapTextures,race,ported
