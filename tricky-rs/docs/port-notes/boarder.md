@@ -1870,3 +1870,20 @@ Proven (`SLUS_203.26`):
 - **Verified**: 81 tests across 8 suites (`animhost`, `control_tick`, `spin_air`, `landing_game`, `rail_capture`,
   `physics`, `boarder_tick`, `--lib`) pass against `TRICKY_DISC` + `TRICKY_ELF`, including end-to-end
   `rider_step_drives_live_animhost_across_states`.
+
+## App rider skinning wired onto `AnimCtl_BlendPose` (row G5d3; checked: `tests/animhost.rs`, `tricky-rs` bin tests)
+
+- **Ported (`tricky-data/src/character.rs`, `tricky-rs/src/main.rs`)**:
+  - `CharModel::skin_pose` and `CharModel::skin_board_pose` skin body (19 bones + extra head/hair/goggles bind
+    bones) and board directly from `AnimCtl_BlendPose` / `PoseBlend_BlendSkeleton` 0x202b00 local translations (cm)
+    and Euler rotations (rad, `EulerRot::ZYX` `(-rz, -ry, -rx)`, proven from `RiderSkin_Bind` 0x207450).
+  - `CharLib::disc_elf` keeps `/SLUS_203.26` + disc path loaded in `load_chars`; `attach_rider_anims` (called from
+    `sync_visuals` on startup, lineup change, or level switch) constructs a shared `AnimHost` for the active roster
+    and attaches `RiderAnim` slots (using each model's verbatim `slot_raw_bones(0)` / `slot_raw_bones(1)`) to both
+    the player (`RiderRes`) and all opponents (`Opponents`).
+  - `animate_visuals` poses and skins every rider directly from `r.anim.read_pose(0)` / `read_pose(1)` without the
+    legacy vertex X-mirror hack (`PoseBlend_BlendSkeleton` already applies real `.mpf` stance mirroring); the legacy
+    `animate()` clip picker remains only as fallback when `TRICKY_DISC` is absent or during pre-race scenes (G5d4).
+- **Verified**: `tests/animhost.rs` skins real disc `PoseBlend` output (regular & switch stance) through `skin_pose` /
+  `skin_board_pose` / `skin_part_anim` with valid finite body & board bounds; `tricky-rs` bin tests pass. **Needs a
+  play test.**

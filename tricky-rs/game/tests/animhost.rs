@@ -304,7 +304,47 @@ fn rider_step_drives_live_animhost_across_states() {
     let layer2 = anim.clip(2);
     assert!((0x2f0..=0x2f8).contains(&layer2), "Boarder_PickIdleClip should play layer-2 clip 0x2f0..=0x2f8, got {layer2:#x}");
     let body_pose = anim.read_pose(0).expect("blended body pose");
+    let board_pose = anim.read_pose(1).expect("blended board pose");
     assert_eq!(body_pose.rot.len(), 19);
+    assert_eq!(board_pose.rot.len(), 1);
+    // Verify `CharModel::skin_pose` / `skin_board_pose` + `skin_part_anim` (row G5d3) on real disc `PoseBlend` output
+    let body_mats = body_model.skin_pose(&body_pose.trans, &body_pose.rot);
+    let board_mats = board_model.skin_board_pose(board_pose.trans[0], board_pose.rot[0]);
+    let (mut pos, mut nrm) = (Vec::new(), Vec::new());
+    tricky_data::character::skin_part_anim(&body_model.parts[0], &body_mats, &mut pos, &mut nrm);
+    assert!(!pos.is_empty());
+    let (mut min_y, mut max_y) = (f32::INFINITY, f32::NEG_INFINITY);
+    for p in &pos {
+        assert!(p.iter().all(|v| v.is_finite()), "non-finite body vertex {p:?}");
+        min_y = min_y.min(p[1]);
+        max_y = max_y.max(p[1]);
+    }
+    assert!(min_y > -0.25 && max_y > 0.8 && max_y < 2.4, "unexpected skinned body Y bounds [{min_y:.3}, {max_y:.3}]");
+    tricky_data::character::skin_part_anim(&board_model.parts[0], &board_mats, &mut pos, &mut nrm);
+    assert!(!pos.is_empty());
+    for p in &pos {
+        assert!(p.iter().all(|v| v.is_finite()), "non-finite board vertex {p:?}");
+        assert!(p[1].abs() < 0.5, "board vertex too far from board plane: {p:?}");
+    }
+    // Verify switch stance (`PoseBlend_BlendSkeleton` bone mirroring) also produces valid finite bounds
+    anim.set_stance(1);
+    anim.set_all_layers_stance(1);
+    r.switch = true;
+    r.pos.z = 0.0;
+    r.step(&world, &rails, idle, dt);
+    let body_sw = anim.read_pose(0).expect("switch body pose");
+    let sw_mats = body_model.skin_pose(&body_sw.trans, &body_sw.rot);
+    tricky_data::character::skin_part_anim(&body_model.parts[0], &sw_mats, &mut pos, &mut nrm);
+    let (mut sw_min_y, mut sw_max_y) = (f32::INFINITY, f32::NEG_INFINITY);
+    for p in &pos {
+        assert!(p.iter().all(|v| v.is_finite()), "non-finite switch vertex {p:?}");
+        sw_min_y = sw_min_y.min(p[1]);
+        sw_max_y = sw_max_y.max(p[1]);
+    }
+    assert!(sw_min_y > -0.25 && sw_max_y > 0.8 && sw_max_y < 2.4, "unexpected switch body Y bounds [{sw_min_y:.3}, {sw_max_y:.3}]");
+    anim.set_stance(0);
+    anim.set_all_layers_stance(0);
+    r.switch = false;
 
     // 2. Prewind: holding jump enters PREWIND (0xe) and plays clip 0x217 (WindUpBlend mode 10).
     let prewind_in = Input { jump: true, steer: 1.0, ..Default::default() };

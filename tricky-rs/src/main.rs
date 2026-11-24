@@ -216,6 +216,8 @@ struct CharLib { chars: Vec<CharEntry>, board: Option<CharModel>,
     scenes: Option<AnimSet>,
     /// the freestyle (fr) and alpine (ex) boards' own riding sets, and the shared wipe-out set (cm)
     fr: Option<AnimSet>, ex: Option<AnimSet>, cm: Option<AnimSet>,
+    /// `/SLUS_203.26` bytes and `TRICKY_DISC` path for live `AnimHost` (`AnimCtl` + `PoseBlend`, rows G5d1–G5d3)
+    disc_elf: Option<(Vec<u8>, String)>,
     /// where the characters were found (the trick book lives there too)
     dir: PathBuf }
 /// Root of a rider's body. Holds the smoothed pose so it moves fluidly.
@@ -2353,9 +2355,55 @@ fn ride(
     }
 }
 
+/// Attach live `AnimHost` (`AnimCtl` + `PoseBlend`, rows G5d1–G5d3) to the player and all opponents when
+/// `TRICKY_DISC` was loaded into `CharLib`.
+fn attach_rider_anims(lib: &CharLib, rider: &mut Rider, opponents: &mut Opponents, game: &ui::Game) {
+    let Some((elf, disc_path)) = lib.disc_elf.as_ref() else { return };
+    let Ok(disc) = tricky_data::disc::Disc::open(disc_path) else { return };
+    let mut files = tricky_data::big::Files::new(disc);
+    if files.mount_game_archives().is_err() { return; }
+
+    let mut lineup: Vec<(usize, usize, bool, f32)> = Vec::with_capacity(1 + opponents.0.len());
+    lineup.push((lib.player, game.board.min(11), true, rider.stats.scale));
+    for o in &opponents.0 {
+        lineup.push((o.character, if game.master { 11 } else { 0 }, false, o.rider.stats.scale));
+    }
+    let roster: Vec<tricky_game::animhost::RosterEntry> = lineup.iter().filter_map(|&(ch_idx, brd, human, _)| {
+        let entry = lib.chars.get(ch_idx)?;
+        let info = &trickdata::BOARDS[entry.data][brd.min(11)];
+        Some(tricky_game::animhost::RosterEntry { character: entry.data as u32, board_class: info.kind as u32, load_uber: human })
+    }).collect();
+    let Ok(mut host) = tricky_game::animhost::AnimHost::from_disc(elf, &mut files, &roster) else { return };
+
+    let mut slots: Vec<Option<usize>> = Vec::with_capacity(lineup.len());
+    for &(ch_idx, brd, _, scale) in &lineup {
+        let Some(entry) = lib.chars.get(ch_idx) else { slots.push(None); continue };
+        let info = &trickdata::BOARDS[entry.data][brd.min(11)];
+        let shape = (info.kind as usize).min(2) * 2;
+        let board_model = lib.shapes.get(shape).and_then(|s| s.as_ref()).or(lib.board.as_ref());
+        let body_bones = entry.model.slot_raw_bones(0);
+        let board_bones = board_model.map_or_else(Vec::new, |b| b.slot_raw_bones(1));
+        if body_bones.is_empty() || board_bones.is_empty() {
+            slots.push(None);
+            continue;
+        }
+        let s = host.add_rider(entry.data as u32, info.kind as u32, scale, &[(0, &body_bones), (1, &board_bones)]);
+        slots.push(Some(s));
+    }
+    let shared = std::sync::Arc::new(std::sync::Mutex::new(host));
+    if let Some(Some(s)) = slots.first() {
+        rider.attach_anim(tricky_game::animhost::RiderAnim::new(shared.clone(), *s));
+    }
+    for (o, s) in opponents.0.iter_mut().zip(slots.iter().skip(1)) {
+        if let Some(s) = s {
+            o.rider.attach_anim(tricky_game::animhost::RiderAnim::new(shared.clone(), *s));
+        }
+    }
+}
+
 /// Keep exactly one body per rider, of the right character.
 fn sync_visuals(
-    mut commands: Commands, lib: Res<CharLib>, opponents: Res<Opponents>, game: Res<ui::Game>,
+    mut commands: Commands, lib: Res<CharLib>, mut rider: ResMut<RiderRes>, mut opponents: ResMut<Opponents>, game: Res<ui::Game>,
     existing: Query<(Entity, &RiderVisual)>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     if lib.chars.is_empty() { return; }
@@ -2366,9 +2414,16 @@ fn sync_visuals(
     let key = |w: &(Who, usize, usize)| (match w.0 { Who::Player => 0, Who::Ai(i) => i + 1 }, w.1, w.2);
     want.sort_by_key(key);
     have.sort_by_key(key);
-    if want == have { return; }
+    let need_anims = lib.disc_elf.is_some() && (rider.0.anim.is_none() || opponents.0.iter().any(|o| o.rider.anim.is_none()));
+    if want == have {
+        if need_anims {
+            attach_rider_anims(&lib, &mut rider.0, &mut opponents, &game);
+        }
+        return;
+    }
     for (e, _) in &existing { commands.entity(e).despawn(); }
     for (who, character, board) in want { spawn_visual(&mut commands, who, character, board, &lib, &mut meshes, &mut materials); }
+    attach_rider_anims(&lib, &mut rider.0, &mut opponents, &game);
 }
 
 /// The characters' folder (riders, boards, and global textures such as the crowd's).
@@ -2382,8 +2437,13 @@ fn chars_dir(level_dir: &Path) -> Option<PathBuf> {
 
 fn load_chars(level_dir: &Path, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>) -> CharLib {
     // the player's disc (TRICKY_DISC: an image or a drive, rows E2-E2b): the models come from it (row E4a)
+    let mut disc_elf: Option<(Vec<u8>, String)> = None;
     let mut disc = std::env::var("TRICKY_DISC").ok().and_then(|p| {
-        let mut f = tricky_data::big::Files::new(tricky_data::disc::Disc::open(&p).map_err(|e| eprintln!("disc {p}: {e}")).ok()?);
+        let mut raw = tricky_data::disc::Disc::open(&p).map_err(|e| eprintln!("disc {p}: {e}")).ok()?;
+        if let Ok(Some(elf)) = raw.read_path("/SLUS_203.26") {
+            disc_elf = Some((elf, p.clone()));
+        }
+        let mut f = tricky_data::big::Files::new(raw);
         f.mount_game_archives().map_err(|e| eprintln!("disc {p}: {e}")).ok()?;
         println!("models, animations and textures from the disc {p}");
         Some(f)
@@ -2391,7 +2451,7 @@ fn load_chars(level_dir: &Path, images: &mut Assets<Image>, materials: &mut Asse
     // with the disc the exported characters' folder is only a fallback: without it the riders still come from the disc
     let Some(dir) = chars_dir(level_dir).or_else(|| disc.is_some().then(|| PathBuf::from("chars"))) else { return CharLib::default() };
     let board = disc.as_mut().and_then(|f| CharModel::board_from_disc(f, None).map_err(|e| eprintln!("{e}")).ok());
-    let mut lib = CharLib { board: board.or_else(|| CharModel::load(&dir.join("board.json")).ok()), dir: dir.clone(), ..default() };
+    let mut lib = CharLib { board: board.or_else(|| CharModel::load(&dir.join("board.json")).ok()), dir: dir.clone(), disc_elf, ..default() };
     lib.shapes = [("bx", "Bx"), ("bx_goofy", "BxGoofy"), ("fr", "Fr"), ("fr_goofy", "FrGoofy"), ("al", "Al"), ("al_goofy", "AlGoofy")].iter()
         .map(|(n, part)| disc.as_mut().and_then(|f| CharModel::board_from_disc(f, Some(part)).map_err(|e| eprintln!("{e}")).ok())
             .or_else(|| CharModel::load(&dir.join(format!("board_{n}.json"))).ok()))
@@ -2564,20 +2624,37 @@ fn animate_visuals(
         };
         // standing up once stopped over the line (finish state 2)
         let finished = r.fin.is_some_and(|f| f.0 >= 2);
-        // the game's own animation if we have it, the code-built pose otherwise
-        // each board type has its own set of riding clips (bx / fr / ex), wipe-outs share one (cm)
-        let kind_set = match r.stats.kind { 1 => lib.fr.as_ref().map(|s| (s, "fr")), 2 => lib.ex.as_ref().map(|s| (s, "ex")), _ => None };
-        let mut sample = lib.anims.as_ref().and_then(|set| animate(set, kind_set, lib.cm.as_ref(), entry.ubers[(r.stats.kind as usize).min(2)].as_ref().or(entry.ubers[0].as_ref()), gate, finished, r, &mut vis, on_snow, dt));
-        // in a pre-race scene each rider loops the scene's clip for them
+        // the game's own `AnimCtl_BlendPose` / `PoseBlend_BlendSkeleton` (row G5d3) when disc animations are live,
+        // falling back to the legacy clip picker (`animate`) without `TRICKY_DISC` or during pre-race scenes (G5d4).
         let k = match vis.who { Who::Player => 0, Who::Ai(i) => i + 1 };
-        if let (Some(sc), Some(set)) = (race.0.scene.as_ref().filter(|s| !s.ended), lib.scenes.as_ref()) {
-            if let Some(c) = sc.slot(k).and_then(|i| sc.clips.get(i)).and_then(|n| set.get(n)) {
-                sample = Some(c.at((sc.t * character::ANIM_FPS) % c.len().max(1.0), true));
-            }
-        }
-        let (mats, lift) = match &sample { Some(sm) => (entry.model.skin_sample(sm), 0.0), None => entry.model.skin(&vis.pose) };
+        let scene_sample = race.0.scene.as_ref().filter(|s| !s.ended).and_then(|sc| {
+            let set = lib.scenes.as_ref()?;
+            let c = sc.slot(k).and_then(|i| sc.clips.get(i)).and_then(|n| set.get(n))?;
+            Some(c.at((sc.t * character::ANIM_FPS) % c.len().max(1.0), true))
+        });
         let board_model = lib.shapes.get(vis.shape).and_then(|s| s.as_ref()).or(lib.board.as_ref());
-        let board_mats = match (&sample, board_model) { (Some(sm), Some(b)) => b.skin_board(sm), _ => vec![Mat4::IDENTITY] };
+        let blended = if scene_sample.is_none() {
+            r.anim.as_ref().and_then(|a| Some((a.read_pose(0)?, a.read_pose(1)?)))
+        } else {
+            None
+        };
+        let (use_anim_space, use_vertex_mirror, mats, lift, board_mats) = if let Some((body_p, board_p)) = blended {
+            let b_mats = entry.model.skin_pose(&body_p.trans, &body_p.rot);
+            let brd_mats = match (board_model, board_p.trans.first(), board_p.rot.first()) {
+                (Some(b), Some(&t), Some(&rot)) => b.skin_board_pose(t, rot),
+                _ => vec![Mat4::IDENTITY],
+            };
+            // `PoseBlend_BlendSkeleton` 0x202b00 already applies real `.mpf` stance mirroring on the bones.
+            (true, false, b_mats, 0.0, brd_mats)
+        } else {
+            let kind_set = match r.stats.kind { 1 => lib.fr.as_ref().map(|s| (s, "fr")), 2 => lib.ex.as_ref().map(|s| (s, "ex")), _ => None };
+            let sample = scene_sample.or_else(|| {
+                lib.anims.as_ref().and_then(|set| animate(set, kind_set, lib.cm.as_ref(), entry.ubers[(r.stats.kind as usize).min(2)].as_ref().or(entry.ubers[0].as_ref()), gate, finished, r, &mut vis, on_snow, dt))
+            });
+            let (m, l) = match &sample { Some(sm) => (entry.model.skin_sample(sm), 0.0), None => entry.model.skin(&vis.pose) };
+            let bm = match (&sample, board_model) { (Some(sm), Some(b)) => b.skin_board(sm), _ => vec![Mat4::IDENTITY] };
+            (sample.is_some(), mirror, m, l, bm)
+        };
         let sun = (tf.rotation.inverse() * Vec3::new(0.35, 0.8, 0.45)).normalize();
         for child in children.iter() {
             let Ok((part, mesh, mat_h)) = parts.get(child) else { continue };
@@ -2589,10 +2666,10 @@ fn animate_visuals(
             let (pos, nrm) = (&mut s.0, &mut s.1);
             let (model, mats) = if part.board { (board_model, &board_mats) } else { (Some(&entry.model), &mats) };
             let Some(p) = model.and_then(|m| m.parts.get(part.part)) else { continue };
-            if sample.is_some() { character::skin_part_anim(p, mats, pos, nrm); }
+            if use_anim_space { character::skin_part_anim(p, mats, pos, nrm); }
             else { character::skin_part(p, mats, if part.board { 0.0 } else { lift }, pos, nrm); }
-            // switch: mirrored across the board's long axis (local x is sideways; the materials draw both faces)
-            if mirror {
+            // legacy fallback switch mirror (unused when `PoseBlend_BlendSkeleton` posed the bones)
+            if use_vertex_mirror {
                 for v in pos.iter_mut().chain(nrm.iter_mut()) { v[0] = -v[0]; }
             }
             let col: Vec<[f32; 4]> = nrm.iter().map(|n| {

@@ -399,9 +399,30 @@ impl CharModel {
         }
         posed.iter().zip(&self.bones).map(|(p, b)| *p * b.inv_bind).collect()
     }
+    /// Skinning matrices directly from `AnimCtl_BlendPose` / `PoseBlend_BlendSkeleton` 0x202b00 output
+    /// (board row G5d3): per-bone local translations (cm) and Euler rotations (rad, already stance-mirrored and
+    /// blended across all three animation layers). Extra bones beyond `trans.len()` keep their bind `local`.
+    pub fn skin_pose(&self, trans: &[[f32; 3]], rot: &[[f32; 3]]) -> Vec<Mat4> {
+        let n = trans.len().min(rot.len());
+        let mut posed: Vec<Mat4> = Vec::with_capacity(self.bones.len());
+        for (i, b) in self.bones.iter().enumerate() {
+            let local = if i < n {
+                Mat4::from_rotation_translation(euler(&rot[i]), Vec3::from(trans[i]))
+            } else {
+                b.local
+            };
+            posed.push(if b.parent >= 0 { posed[b.parent as usize] * local } else { local });
+        }
+        posed.iter().zip(&self.bones).map(|(p, b)| *p * b.inv_bind).collect()
+    }
     /// The board follows its own animated node.
     pub fn skin_board(&self, s: &Sample) -> Vec<Mat4> {
         let m = Mat4::from_rotation_translation(s.board_rot, s.board_pos);
+        self.bones.iter().map(|b| m * b.inv_bind).collect()
+    }
+    /// Board skinning matrices directly from `AnimCtl_BlendPose` part 1 (`board` bone translation cm + Euler rad).
+    pub fn skin_board_pose(&self, trans: [f32; 3], rot: [f32; 3]) -> Vec<Mat4> {
+        let m = Mat4::from_rotation_translation(euler(&rot), Vec3::from(trans));
         self.bones.iter().map(|b| m * b.inv_bind).collect()
     }
 }
