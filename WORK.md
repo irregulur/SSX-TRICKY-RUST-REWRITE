@@ -56,6 +56,7 @@ state machine and the renderer are ours. Nothing has been checked against the or
 
 | ID | Task | Area | Needs | Who | Notes |
 |---|---|---|---|---|---|
+| G4k2 | The race object's (`cAI`) constructor 0x114c00, destructor 0x114d30 and the node's default virtuals it keeps (vf2..vf6 0x17dee0..0x17df00) on the game's bytes, checked in the runner with G4k's | any | G4k | irregulur/lynx (2026-11-23) | Gap of G4k |
 | G1 | Boarder state machine: every state (0x00–0x14) and motion (0–6), their enter/update/exit, `cBoarder` vtable, in the original's order per tick | unowned | F1 | | [repo] Many states ported one by one; the dispatch is ours |
 | G1a | Prewind, jump, takeoff, spin and flip control (`PrewindState_Update` 0x1050e8, `Jump_ApplyImpulse` 0x1284e0, `Takeoff_SetSpinRates` 0x126e30, `SpinState_Update` 0x100908, `SpinState_StartFromStick` 0x102158) checked | any | F4a | | [repo] Ported, unchecked Split: G1a1, G1a2 |
 | G1a5b | The rest of G1a5: `Rider::step` (`tricky-rs/game/src/rider.rs`) calls the exact prewind, jump, take-off, spin start and spin (`boarder::prewind_update`, `jump::jump_impulse`, `jump::takeoff_spin_rates`, `jump::spin_start_from_stick`, `spin::spin_update`, all checked) on the rider's own fields (cm, z up), replacing `Rider::air_rotation` and the hand-written prewind and jump | any | G1a5a | | Split of G1a5 (wiring; needs a play test). Split: G1a5b1, G1a5b2, G1a5b3 (the exact functions read the game's pad word, built per boarder state by `cPlayer::GetControls`) |
@@ -1786,3 +1787,4 @@ matches the original.
 - 2026-11-23 irregulur/neon: G5d5 done (facial morph vertex-delta blending via `MpfMesh::triangles_with_morphs` + `skin_part_anim_morphed` matching `vf91_1df478`/VU1 `0x002`, pre-/post-race scene clips loaded on demand & played through `AnimHost` under `control_tick::SCRIPTED` state 1 / stationary motion 4 with live `PoseBlend_EvalCurves` weights; verified on real disc Eddie `Face3000` + `scrEdd_WIN_1`), and umbrellas G5d & G5 closed (every part done; needs a play test).
 - 2026-11-23 irregulur/lynx: C11c2 done (lesson archives on the disc, the pad swap).
 - 2026-11-23 irregulur/lynx: C11b5 done.
+- 2026-11-23 irregulur/lynx: added G4k2 (gap of G4k).
