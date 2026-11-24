@@ -1964,3 +1964,13 @@ Proven (`SLUS_203.26`):
   `skin_child == true`, non-zero live `PoseBlend_EvalCurves` weights, and measurable finite vertex deformation of
   Eddie's `Face3000`); `tricky-data` (35), `tricky-game` (89 across 11 suites including `vu1mpf`), and `tricky-rs`
   binary tests pass. **Needs a visual play-test with `TRICKY_DISC` to sign off and close `G5d`.**
+
+### The pad config's game bytes (row E10d, proven)
+
+`tricky_game::input::bytes`, checked in the runner (`tests/pad_bytes.rs`, 10,000 cases; 8 of 9 mutants, the one
+left equivalent: `cPS2Device`'s table written before the pad device's destructor overwrites it). The parsed config:
+counts at +8 (buttons), +0xc (grabs), +0x10 (axes); pairs of words, 8 bytes a pair, from +0x14 (pressed, others),
++0x84 (grab pressed, others), +0xfc (axis mask, negate = whether the second list names anything). The pair parsers
+read the count again after each `Pad_ParseButtonNames(cfg, list)`. `cPadDevice` (table 0x385868 at +0x38): +0x30 =
+-1, +8 = 1, +0xc..+0x34 zero; its vf1 answers 0, vf2 0.0, vf3..vf7 nothing. `cPS2Device::~cPS2Device` closes its pad
+port (+0x3c, slot +0x40) first; its vf8 answers 0x2c.

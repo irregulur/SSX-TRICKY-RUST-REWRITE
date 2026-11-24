@@ -259,14 +259,3 @@ Checked: 20,000 predictions and 20,000 air ticks (all five outcomes) against the
   spray & `Rumble_Impact` (`0x1532c0` / `0x150a80`) and invoke `Boarder_Wipeout` (`0x11d830`) -> `Boarder_SetState(0x13)`
   -> `SpinControl_Exit` (`0x1029d0`, folding remaining `spin`/`flip` into `att` inside `Rider::set_control`).
   Verified by `tests/air_wall.rs`, `tests/air_motion.rs`, `tests/air_instances.rs`, `tests/walls.rs`, `tests/physics.rs`.
-
-
-### The pad config's game bytes (row E10d, proven)
-
-`tricky_game::input::bytes`, checked in the runner (`tests/pad_bytes.rs`, 10,000 cases; 8 of 9 mutants, the one
-left equivalent: `cPS2Device`'s table written before the pad device's destructor overwrites it). The parsed config:
-counts at +8 (buttons), +0xc (grabs), +0x10 (axes); pairs of words, 8 bytes a pair, from +0x14 (pressed, others),
-+0x84 (grab pressed, others), +0xfc (axis mask, negate = whether the second list names anything). The pair parsers
-read the count again after each `Pad_ParseButtonNames(cfg, list)`. `cPadDevice` (table 0x385868 at +0x38): +0x30 =
--1, +8 = 1, +0xc..+0x34 zero; its vf1 answers 0, vf2 0.0, vf3..vf7 nothing. `cPS2Device::~cPS2Device` closes its pad
-port (+0x3c, slot +0x40) first; its vf8 answers 0x2c.
