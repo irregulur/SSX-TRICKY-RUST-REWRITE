@@ -119,8 +119,10 @@ impl TexSet {
 }
 
 /// A bone (0x54 bytes): name, the parent as +0x10 slot and +0x12 index in that slot's part (-1, -1 for the
-/// root; slot 0 is the body), +0x18 position (cm) and +0x24 rotation (Euler angles of the inverse rotation,
-/// as the exports keep them).
+/// root; slot 0 is the body), +0x14 flags, +0x16 mirror bone index, +0x18 position (cm), +0x24 rotation
+/// (Euler angles of the inverse rotation, as the exports keep them), +0x30 mirror rotation offset, +0x3c
+/// mirror rotation scale, +0x48 mirror translation scale. `raw` holds the verbatim 0x54 bytes as `SkinPart_Load`
+/// 0x205080 keeps them for `RiderSkin_Bind` 0x207374 and `PoseBlend_BlendSkeleton` 0x202b00.
 #[derive(Clone, Debug)]
 pub struct MpfBone {
     pub name: String,
@@ -128,6 +130,18 @@ pub struct MpfBone {
     pub parent: i16,
     pub pos: [f32; 3],
     pub rot: [f32; 3],
+    pub raw: [u8; 0x54],
+}
+
+impl MpfBone {
+    /// Skeleton bone flags at +0x14 (1 = translation curves, 2 = rotation curves, 4 = bind translation, 8 = bind rotation).
+    pub fn flags(&self) -> u16 {
+        u16::from_le_bytes([self.raw[0x14], self.raw[0x15]])
+    }
+    /// Mirror bone index at +0x16 (used when stance != 0 in `PoseBlend_BlendSkeleton` 0x202b00).
+    pub fn mirror(&self) -> i16 {
+        i16::from_le_bytes([self.raw[0x16], self.raw[0x17]])
+    }
 }
 
 /// A vertex as the regular/face packets hold it (VU1 chain `0x318080`, `0x000` -> `0x096` / `0x00a` -> `0x163`).
@@ -259,7 +273,8 @@ impl MpfPart {
         for i in 0..bones_n {
             let at = bones_at + i * 0x54;
             let v = |o: usize| -> Result<[f32; 3], MpfError> { Ok([r.f32(at + o)?, r.f32(at + o + 4)?, r.f32(at + o + 8)?]) };
-            bones.push(MpfBone { name: cstr(r.bytes(at, 0x10)?), parent_slot: r.i16(at + 0x10)?, parent: r.i16(at + 0x12)?, pos: v(0x18)?, rot: v(0x24)? });
+            let raw: [u8; 0x54] = r.bytes(at, 0x54)?.try_into().unwrap();
+            bones.push(MpfBone { name: cstr(&raw[..0x10]), parent_slot: r.i16(at + 0x10)?, parent: r.i16(at + 0x12)?, pos: v(0x18)?, rot: v(0x24)?, raw });
         }
         let weights_at = e.u32(0x30) as usize;
         let mut weights = Vec::with_capacity(weights_n);

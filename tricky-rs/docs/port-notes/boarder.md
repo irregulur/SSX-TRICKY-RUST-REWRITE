@@ -1817,3 +1817,32 @@ Proven (`SLUS_203.26`):
 - Verified: 49 lib tests + 40 integration tests (`control_tick`, `physics`, `spin_air`, `rail_capture`, `landing_game`,
   `air_wall`, `placement`, `takeoff_attitude`, `rider_score`, `aiglue`, `boarder_tick`) pass against `TRICKY_DISC` +
   `TRICKY_ELF`, `cargo check` across `tricky-rs` has 0 errors / 0 warnings. **Needs a play test.**
+
+## Live `AnimData` + `AnimCtl` + `PoseBlend` host (row G5d1; checked: `tests/animhost.rs`)
+
+- **Proven (`SLUS_203.26` disassembly)**:
+  - Per-tick animation order: `cPreAI::vf1` 0x1146f8 calls `Boarder_FlushEndedClips` 0x117190 (`AnimCtl_FlushEndedClips`
+    0x15f700); `cBoarder::vf7` 0x117198 plays/queries clips through `Boarder_UpdateControl` & `Boarder_PickIdleClip`;
+    `cPostAI::vf1` 0x114780 calls `Boarder_UpdateAnimLayers` 0x117180 (`AnimCtl_UpdateLayers(ctl, 1.0)` 0x15f390,
+    which runs `AnimMode_*` 4..11, fires marker sounds, advances weights, and calls `AnimCtl_BlendPose` 0x15f7c8),
+    then `Boarder_UpdatePose` 0x129628 and `Boarder_UpdateBroadphase` 0x126748.
+  - `SkinPart_Load` 0x205080 copies `.mpf` part data verbatim into memory and `RiderSkin_Bind` 0x207374 sets
+    `PoseBlend+0x388` directly to the `.mpf` part's `0x54`-byte bone array (`+0x14` flags, `+0x16` mirror bone,
+    `+0x18` bind trans, `+0x24` bind rot, `+0x30/+0x3c/+0x48` mirror offsets & scales), `+0x384` to the part slot
+    (`0` body, `1` board), `+0x38c` to the bone count, `+0x390` to the cumulative bone mask start, and
+    `RiderSkin_Scale` 0x208220 sets `+0x380` to `stats+0x60`. `StaticInit_Spline2` 0x251238 initializes
+    `animpose::MATRIX` (`0x346440`) to the 4×4 identity matrix.
+  - `SkelAnim_CreateTree` 0x158dc0 calls `SkelAnim_Create` 0x158868 (`MemPool_Alloc` 0x2ac bytes, `SkelAnim_Init`
+    0x159880, `SkelAnim_SetSkeleton` 0x1598e8 setting `+0x2a4/+0x2a8` on leaf nodes `hdr+9 == 0`) for the root clip
+    and each of its `hdr+9` child group headers.
+- **Ported (`tricky-data/src/mpf.rs`, `tricky-data/src/character.rs`, `tricky-game/src/animhost.rs`)**:
+  - `MpfBone::raw` preserves the verbatim `0x54`-byte bone records (`CharModel::slot_raw_bones`).
+  - `AnimHost` maps `/SLUS_203.26`'s static tables (`0x321190..0x39e500`), BSS (`0x3bc530..0x3d3000`), `AnimMemBank`
+    (`0x0080_0000`, 4 MiB), per-rider `cBoarder` / `PoseBlend` / `AnimCtl` (`0x00c0_0000`, stride `0x6000`), and a
+    recycling `BdrSeq`/`SkelAnim` pool (`0x00d0_0000`, 2 MiB) all inside PS2 32 MiB EE RAM (`< 0x0200_0000`), runs
+    `AnimData_Construct`/`Init`/`OpenBig`/`LoadClipTable` synchronously on `data/char/anm.big`, and exposes
+    `play_clip`, `flush_ended`, `update_layers`, `read_pose`, `test_flag`/`test_bit`, `clip_displacement`, etc.
+- **Verified (`tests/animhost.rs`)**: `SkelAnim_CreateTree` 0x158dc0 and live `AnimCtl_UpdateLayers` (mode 4
+  `AnimMode_BrakeBlend` + `AnimCtl_BlendPose` + `PoseBlend_BlendSkeleton` on real disc `.afl` curves and Mac's 19
+  body + 1 board `.mpf` bones) match `SLUS_203.26` bit-for-bit in `r5900::Runner`; switch mirroring, hard landing
+  `0x23e -> 0x1ff` auto-chain, grab `0x278` real disc markers 2 & 4, and layer-2 idle `0x2f0` verified.

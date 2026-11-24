@@ -244,9 +244,9 @@ address,size,name,system,status
 0x116a88,44,Boarder_InitSkinMem,boarder,ported
 0x116ab8,1556,cBoarder::vf8_116ab8,boarder,ported
 0x1170d0,156,Boarder_GetRaceProgress,boarder,ported
-0x117170,12,Boarder_ResetAnim,boarder,not started
-0x117180,16,Boarder_UpdateAnimLayers,boarder,not started
-0x117190,8,Boarder_FlushEndedClips,boarder,not started
+0x117170,12,Boarder_ResetAnim,boarder,ported
+0x117180,16,Boarder_UpdateAnimLayers,boarder,ported
+0x117190,8,Boarder_FlushEndedClips,boarder,ported
 0x117198,2952,cBoarder::vf7_117198,boarder,checked
 0x117d20,412,Boarder_SaveSnapshot,boarder,checked
 0x117ec0,424,Boarder_LoadSnapshot,boarder,checked
@@ -1058,7 +1058,7 @@ address,size,name,system,status
 0x152770,2496,Pad_SetupVibration,input,ported
 0x153130,236,Boarder_UpdateSlopeTimeScale,boarder,ported
 0x1532c0,144,cPlayer::vf11_1532c0,boarder,ported
-0x153390,104,cPlayer::vf7_153390,boarder,not started
+0x153390,104,cPlayer::vf7_153390,boarder,ported
 0x1533f8,84,cPlayer::SaveSnapshot,boarder,checked
 0x153450,60,cPlayer::LoadSnapshot,boarder,checked
 0x153668,92,cPlayer::__tf,runtime,host
@@ -1145,7 +1145,7 @@ address,size,name,system,status
 0x158798,80,AnimData_GetMarkerPhase,animation,checked
 0x1587e8,44,AnimData_GetMarkerFrame,animation,checked
 0x158818,80,AnimData_SetMarker,animation,checked
-0x158868,160,SkelAnim_Create,animation,ported
+0x158868,160,SkelAnim_Create,animation,checked
 0x158908,168,AnimFileList_Load,animation,checked
 0x1589b8,120,AnimFileList_Load2,animation,checked
 0x158a30,192,AnimFile_PollLoad,animation,checked
@@ -1156,7 +1156,7 @@ address,size,name,system,status
 0x158cc8,76,AnimData_Clear,animation,checked
 0x158d18,76,AnimData_Init,animation,checked
 0x158d68,88,AnimData_GetClipId,animation,checked
-0x158dc0,224,SkelAnim_CreateTree,animation,ported
+0x158dc0,224,SkelAnim_CreateTree,animation,checked
 0x158ea0,284,AnimData_OpenBig,animation,checked
 0x158fc0,176,AnimData_PollLoad,animation,checked
 0x159070,208,AnimData_Reset,animation,checked
@@ -1166,8 +1166,8 @@ address,size,name,system,status
 0x159738,152,AnimData_LoadFileList,animation,checked
 0x1597d0,76,AnimData_IndexAllClips,animation,checked
 0x159820,92,StaticInit_AnimNameHashes,animation,checked
-0x159880,104,SkelAnim_Init,animation,not started
-0x1598e8,36,SkelAnim_SetSkeleton,animation,not started
+0x159880,104,SkelAnim_Init,animation,checked
+0x1598e8,36,SkelAnim_SetSkeleton,animation,checked
 0x159910,364,SkelAnim_BindCurves,animation,checked
 0x159a80,132,SkelAnim_DestroyTree,animation,checked
 0x159b08,72,cBoarderSequence::cBoarderSequence,boarder,checked
@@ -1580,7 +1580,7 @@ address,size,name,system,status
 0x1790b8,124,StaticInit_OfflineObject2,game,not started
 0x179138,124,StaticInit_OfflineObject3,game,not started
 0x1791b8,124,StaticInit_OfflineObject4,game,not started
-0x179238,1312,Input_InitDefaults,input,not started
+0x179238,1312,Input_InitDefaults,input,ported
 0x179758,40,Input_ComboHeld,input,ported
 0x179780,40,Input_AnyHeld,input,ported
 0x1797a8,40,Input_ComboPressed,input,ported
@@ -1588,7 +1588,7 @@ address,size,name,system,status
 0x1797f8,28,Pad_GetAxis,input,ported
 0x179818,28,Input_BindButton,input,ported
 0x179838,24,Input_BindAxis,input,ported
-0x179850,16,Input_SetShownButton,input,not started
+0x179850,16,Input_SetShownButton,input,ported
 0x179860,44,cInput::vf0_179860,input,ported
 0x179890,56,cInput::vf1_179890,input,ported
 0x1798c8,56,cInput::vf2_1798c8,input,ported
@@ -4027,7 +4027,7 @@ address,size,name,system,status
 0x22d408,116,WorldEmitter_StopAll,audio,ported
 0x22d480,136,WorldTriggerMgr_StopKey,audio,not started
 0x22d508,928,Sfx_PlayInstanceHit,audio,ported
-0x22d8a8,912,SoundId_ToBankProgram,audio,not started
+0x22d8a8,912,SoundId_ToBankProgram,audio,ported
 0x22dc38,80,WorldTriggerMgr_OtherKeyPlaying,audio,ported
 0x22dc88,88,WorldTriggerMgr_HasSameSound,audio,ported
 0x22dce0,1228,Audio_LoadChantBanks,audio,ported
@@ -6477,8 +6477,8 @@ address,size,name,system,status
 0x2d0430,224,SND_Shutdown,lib-snd,not started
 0x2d0520,32,SND_StreamPollTask,lib-snd,not started
 0x2d0548,88,SND_StartStreamPoll,lib-snd,not started
-0x2d05a0,248,SND_RunTicks,lib-snd,not started
-0x2d0698,624,SND_Tick,lib-snd,not started
+0x2d05a0,248,SND_RunTicks,lib-snd,ported
+0x2d0698,624,SND_Tick,lib-snd,ported
 0x2d0908,48,SND_Lock,lib-snd,ported
 0x2d0938,48,SND_Unlock,lib-snd,ported
 0x2d0968,56,SND_AddTickCallback,lib-snd,not started
@@ -6576,7 +6576,7 @@ address,size,name,system,status
 0x2d51f8,144,Snd_CentsToPitchMult,lib-snd,ported
 0x2d5288,196,SNDVoice_CalcPitchMult,lib-snd,ported
 0x2d5350,192,SndVoice_NextInGroup,lib-snd,not started
-0x2d5410,1356,SND_ParsePTLayer,lib-snd,not started
+0x2d5410,1356,SND_ParsePTLayer,lib-snd,ported
 0x2d5960,116,SndVoice_NextGroupId,lib-snd,not started
 0x2d59d8,1084,SndVoice_PlayLayer,lib-snd,not started
 0x2d5e18,664,SndSound_PlayLayers,lib-snd,not started
@@ -6703,7 +6703,7 @@ address,size,name,system,status
 0x2dfc08,100,SndStreamVoice_Consume,lib-snd,not started
 0x2dfc70,124,SndStream_FindRequest,lib-snd,not started
 0x2dfcf0,172,SndHandle_SetFxSend,lib-snd,not started
-0x2dfda0,216,SndHandle_Release,lib-snd,not started
+0x2dfda0,216,SndHandle_Release,lib-snd,ported
 0x2dfe78,120,SndPlayParams_SetDefaults,lib-snd,not started
 0x2dfef0,156,SndVoice_CalcFxSend,lib-snd,not started
 0x2dff90,88,Snd_RandRange,lib-snd,not started

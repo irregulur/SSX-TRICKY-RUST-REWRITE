@@ -16,13 +16,22 @@ use std::collections::HashMap;
 use std::path::Path;
 
 #[derive(Deserialize)]
-struct RawBone { name: String, parent: i32, pos: [f32; 3], rot: [f32; 3] }
+struct RawBone {
+    name: String,
+    parent: i32,
+    pos: [f32; 3],
+    rot: [f32; 3],
+    #[serde(skip)]
+    slot: i8,
+    #[serde(skip)]
+    raw: Option<[u8; 0x54]>,
+}
 #[derive(Deserialize)]
 struct RawMesh { #[serde(default)] shadow: bool, pos: Vec<f32>, nrm: Vec<f32>, uv: Vec<f32>, weights: Vec<Vec<i32>>, mat: Vec<i32> }
 #[derive(Deserialize)]
 struct RawModel { bones: Vec<RawBone>, materials: Vec<String>, meshes: Vec<RawMesh> }
 
-pub struct Bone { pub name: String, pub parent: i32, local: Mat4, world_rot: Quat, inv_bind: Mat4 }
+pub struct Bone { pub name: String, pub parent: i32, pub slot: i8, pub raw: Option<[u8; 0x54]>, local: Mat4, world_rot: Quat, inv_bind: Mat4 }
 pub struct Vert { pub pos: Vec3, pub nrm: Vec3, pub uv: Vec2, pub w: [(u16, f32); 4] }
 /// All triangles that share one texture ("suit", "boot", "head", "helm", "bord").
 pub struct Part { pub texture: String, pub verts: Vec<Vert> }
@@ -62,7 +71,7 @@ impl CharModel {
                 if bone_of.contains_key(&key) { continue; }
                 bone_of.insert(key, raw.bones.len());
                 let parent = if b.parent < 0 { -1 } else { bone_of.get(&((b.parent_slot as u8 as u16) << 8 | b.parent as u16)).map_or(-1, |&g| g as i32) };
-                raw.bones.push(RawBone { name: b.name.clone(), parent, pos: b.pos, rot: b.rot });
+                raw.bones.push(RawBone { name: b.name.clone(), parent, pos: b.pos, rot: b.rot, slot: p.slot, raw: Some(b.raw) });
             }
         }
         for p in parts {
@@ -127,7 +136,7 @@ impl CharModel {
             let local = Mat4::from_rotation_translation(q, b.pos.into());
             let w = if b.parent >= 0 { world[b.parent as usize] * local } else { local };
             world.push(w);
-            bones.push(Bone { name: b.name.clone(), parent: b.parent, local, world_rot: Quat::from_mat4(&w), inv_bind: w.inverse() });
+            bones.push(Bone { name: b.name.clone(), parent: b.parent, slot: b.slot, raw: b.raw, local, world_rot: Quat::from_mat4(&w), inv_bind: w.inverse() });
         }
         let mut parts: Vec<Part> = Vec::new();
         for m in raw.meshes.iter().filter(|m| !m.shadow) {
@@ -159,6 +168,13 @@ impl CharModel {
     }
 
     fn bone(&self, name: &str) -> Option<usize> { self.bones.iter().position(|b| b.name == name) }
+
+    /// The verbatim 0x54-byte `.mpf` bone records belonging to skin slot `slot` (0 = body, 1 = board), in the
+    /// `.mpf` part's order as `RiderSkin_Bind` 0x207374 passes them to `PoseBlend_BlendSkeleton` 0x202b00. Empty
+    /// for JSON-exported models that do not carry raw `.mpf` records.
+    pub fn slot_raw_bones(&self, slot: i8) -> Vec<[u8; 0x54]> {
+        self.bones.iter().filter(|b| b.slot == slot).filter_map(|b| b.raw).collect()
+    }
 
     /// Skinning matrices (model space, cm) for a pose, plus how far to lift the model so the
     /// feet sit on the board.

@@ -43,6 +43,7 @@ pub mod fe3dstate;
 pub mod animctl;
 pub mod animcurve;
 pub mod animdata;
+pub mod animhost;
 pub mod animids;
 pub mod animload;
 pub mod animmode;
