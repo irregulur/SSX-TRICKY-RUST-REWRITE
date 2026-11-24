@@ -137,17 +137,17 @@ address,size,name,system,status
 0x110868,44,Vec4_ScaleCopy8,common,not started
 0x110898,8,Vec4_Construct,common,not started
 0x1108d0,32,Vec4_AddTo,common,not started
-0x1108f0,144,cAI::vf10_1108f0,ai,not started
+0x1108f0,144,cAI::vf10_1108f0,ai,checked
 0x110980,44,RaceScene_StopSpeech,race,checked
 0x1109b0,140,RaceScene_Prepare,race,checked
 0x110a40,116,RaceScene_Play,race,checked
 0x110ab8,316,RaceScene_CheckSkip,race,checked
-0x110bf8,812,cAI::vf11_110bf8,ai,not started
+0x110bf8,812,cAI::vf11_110bf8,ai,checked
 0x110f28,120,Race_IsPlayerPad,race,checked
-0x110fa0,356,cAI::vf13_110fa0,ai,not started
+0x110fa0,356,cAI::vf13_110fa0,ai,checked
 0x111108,964,cAI::vf14_111108,ai,ported
 0x1114d0,144,cAI::vf15_1114d0,ai,ported
-0x111560,424,cAI::vf16_111560,ai,not started
+0x111560,424,cAI::vf16_111560,ai,checked
 0x111708,44,cAI::vf18_111708,ai,checked
 0x111738,180,cAI::vf19_111738,ai,checked
 0x1117f0,44,Race_GoToEndLesson,race,ported

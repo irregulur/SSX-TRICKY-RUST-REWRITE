@@ -189,6 +189,36 @@ Part of the port notes (index: [README.md](README.md)); units and wording as des
 - Checked in the runner: 40,000 random cases over the nine functions (careers, modes, clocks, replays, pads,
   latches, tutorial): every call, the clock, the latches, the handler's state and the results flag compared.
 
+## The race object's object glue (board row G4k; `tricky_game::aiobj`, checked: `tests/aiobj.rs`)
+
+Read from the disassembly; all proven. The race object (`cAI`) keeps four inputs at +0x6c..+0x78, the players' and
+computers' counts at +0x7c / +0x80 and all riders' at +0x88, the players' controllers at +0x8c.., the computers' at
++0x9c.., and each rider's boarder (in roster order) at +0xc4... The roster is the career's (+0x27dc the count,
+0x84-byte entries from +0x27e0; the entry's signed byte +0x65 negative for a computer rider).
+
+- **vf10 0x1108f0, the reset.** The two words after the world lists' head (0x337c68, 0x337c6c) 1; +0x500 and +0x4fc
+  -1; +0x1c, +0x20, +0x60, +0x64, +0x68, +0xdc, +0xe0, +0x4f8 and the four inputs cleared; then its own +0x60.
+- **vf11 0x110bf8, the riders made.** The four counts cleared; four `cInput`s (0x274 bytes, the table 0x385750 at
+  +0x270). For each roster entry: a computer gets a `cComputer` (0x63b0 bytes, zero-filled, made with 1, 8), a
+  player first has its input given the defaults of the app's device (gApp+0x24) and then gets a controller
+  (`Race_CreateBoarders`, 0x6380 bytes, zero-filled, 1, 8). The controller's boarder (its +0) gets its skin memory
+  and its rider info (the rider's number, the roster entry); a player's pad vibration is bound to its controller and
+  input. The boarder (or 0 without a controller) is kept at +0xc4 + 4 × the rider's number. Then the two async
+  archives (+0x110, +0xfc) are opened on 0x3644b0 / 0x3644c8 with 0x10 and their loader (+0x124) given them (the
+  models' manager 0).
+- **vf13 0x110fa0, the tear-down.** The +0x64 object's +0x10 is called with the race object; each rider's boarder
+  destroyed (its +8 with 3) and its four places (+0x8c, +0x9c, +0xb4, +0xc4 + 4k) cleared; the inputs deleted; the
+  archives closed (+0x110 first) and `AnimData_Reset` on 0x3211a8.
+- **vf16 0x111560, the start of a race.** The world lists' kinds 3, 0xd and 4 emptied; the career's effects seed
+  (+0x27dc + 0x324) from `Rand_Fx`; +0xe0 1, +0xdc 0; every node of kind 8 unlinked. Each rider's controller is
+  found again in roster order, the computers' and the players' lists counted apart, its boarder given its rider info
+  again and kept at +0xc4..; the boarder's +0x5ae0 object is added to the lists as kind 8 (at its +0x82c, or 0 when
+  there is none). Then its own +0x78 with 1, 1. The decompiler drops `Boarder_SetRiderInfo`'s third argument here:
+  a2 still holds the roster entry, as in vf11.
+
+The test runs 1,000 cases of each, with up to six riders (up to four players), every callee a stand-in; 27 of 27
+mutants are caught.
+
 ## Rank catch-up: the unchecked list walk
 
 Proven on the PS2: `Race_UpdatePlacingsAndRubberBand` 0x115100 runs every 6 ticks (`race+0x18 % 6`), over
