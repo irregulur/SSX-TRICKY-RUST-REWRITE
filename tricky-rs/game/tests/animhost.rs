@@ -388,6 +388,41 @@ fn rider_step_drives_live_animhost_across_states() {
     }
     assert!(became_safe, "releasing grab must advance past real disc marker 4 and set grab_safe() == true");
 
+    // 3b. E8t: Uber trick on live AnimHost uses real disc `.afl` marker 4 (clip type 0x10): gated before m4,
+    // safe strictly past m4 while clip is still playing!
+    r.pos = Vec3::new(0.0, 80.0, 0.0);
+    r.vel = Vec3::new(0.0, 20.0, -15.0);
+    r.grounded = false;
+    r.motion = 1;
+    r.uber_timer = 20.0;
+    r.set_control(control_tick::SPIN);
+    anim.reset_trick_clips();
+    let mut saw_uber_unsafe = false;
+    let mut saw_uber_safe_while_playing = false;
+    let mut triggered_uber = false;
+    for _ in 0..200 {
+        let inp = if triggered_uber {
+            idle
+        } else if anim.clip_type(0) == 0xe && anim.test_flag(2, 0) {
+            Input { grab: 1, tweak: true, ..Default::default() }
+        } else {
+            Input { grab: 1, ..Default::default() }
+        };
+        r.pos.y = 80.0;
+        r.step(&world, &rails, inp, dt);
+        if anim.clip_type(0) == 0x10 {
+            triggered_uber = true;
+            if r.capture_gated() && !r.grab_safe() {
+                saw_uber_unsafe = true;
+            } else if saw_uber_unsafe && !r.capture_gated() && r.grab_safe() {
+                saw_uber_safe_while_playing = true;
+                break;
+            }
+        }
+    }
+    assert!(saw_uber_unsafe, "uber clip (type 0x10) before real disc marker 4 must gate capture and landing");
+    assert!(saw_uber_safe_while_playing, "uber clip (type 0x10) past real disc marker 4 must clear gate while still playing");
+
     // 4. Hard landing clip (0x23e) holds LAND_HARD until AnimCtl_FlushEndedClips chains back to 0x1ff -> CRUISE!
     r.pos = Vec3::new(0.0, 0.05, 0.0);
     r.vel = Vec3::new(0.0, 0.0, -15.0);

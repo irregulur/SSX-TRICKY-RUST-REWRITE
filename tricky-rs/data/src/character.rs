@@ -327,9 +327,14 @@ impl Sample {
     }
 }
 
-pub struct Clip { pub name: String, frames: Vec<Sample> }
+pub struct Clip { pub name: String, frames: Vec<Sample>, markers: [u16; 4] }
 impl Clip {
     pub fn len(&self) -> f32 { self.frames.len() as f32 }
+    /// First four `.afl` marker frames (`+0xc..+0x14`, `0xffff` = unused; `AnimClip_Advance` 0x15a030).
+    pub fn markers(&self) -> [u16; 4] { self.markers }
+    pub fn clip_markers(&self) -> crate::afl::ClipMarkers {
+        crate::afl::ClipMarkers { frames: self.frames.len() as u16, markers: self.markers }
+    }
     /// Pose at a (fractional) frame; `looped` wraps around, otherwise it holds the last frame.
     pub fn at(&self, frame: f32, looped: bool) -> Sample {
         let n = self.frames.len();
@@ -341,8 +346,10 @@ impl Clip {
     }
 }
 
+fn default_markers() -> [u16; 4] { [crate::afl::MARKER_UNUSED; 4] }
+
 #[derive(Deserialize)]
-struct RawClip { name: String, frames: usize, data: Vec<f32> }
+struct RawClip { name: String, frames: usize, data: Vec<f32>, #[serde(default = "default_markers")] markers: [u16; 4] }
 #[derive(Deserialize)]
 struct RawClips { clips: Vec<RawClip> }
 
@@ -379,7 +386,7 @@ impl AnimSet {
                 data.extend((0..60).map(|k| afl.eval(body.first_curve, k, t)));
                 data.extend((0..6).map(|k| afl.eval(board.first_curve, k, t)));
             }
-            clips.push(RawClip { name: c.name().map_or_else(|| format!("anim_{i}"), str::to_string), frames, data });
+            clips.push(RawClip { name: c.name().map_or_else(|| format!("anim_{i}"), str::to_string), frames, data, markers: c.markers() });
         }
         Ok(Self::from_clips(clips))
     }
@@ -428,7 +435,7 @@ impl AnimSet {
             let off = anchor - Vec3::new(0.1, 0.0, -3.1);
             if off.length() > 10.0 { for s in frames.iter_mut() { s.hips -= off; s.board_pos -= off; } }
             set.index.insert(c.name.clone(), set.clips.len());
-            set.clips.push(Clip { name: c.name, frames });
+            set.clips.push(Clip { name: c.name, frames, markers: c.markers });
         }
         set
     }
@@ -440,6 +447,12 @@ impl AnimSet {
     pub fn get(&self, name: &str) -> Option<&Clip> { self.index.get(name).map(|i| &self.clips[*i]) }
     pub fn nth(&self, i: usize) -> Option<&Clip> { self.clips.get(i) }
     pub fn list(&self) -> Vec<(String, f32)> { self.clips.iter().map(|c| (c.name.clone(), c.len())).collect() }
+    /// Export every clip's `.afl` marker record into `bank`.
+    pub fn export_markers(&self, bank: &mut crate::afl::ClipMarkerBank) {
+        for c in &self.clips {
+            bank.insert(c.name.clone(), c.clip_markers());
+        }
+    }
 }
 
 /// Animation space to the rider's local Bevy frame (same axes as the level: Y forward, Z up).

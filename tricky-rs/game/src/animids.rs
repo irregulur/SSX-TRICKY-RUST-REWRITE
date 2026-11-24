@@ -64,3 +64,41 @@ pub fn init(m: &mut Mem) {
         m.w16(at, h);
     }
 }
+
+/// Read one 32-bit word from the `AnimIds_Init` 0x15aec0 static index tables (`RUNS`).
+fn run_word(addr: u32) -> Option<u32> {
+    for &(base, words) in &RUNS {
+        if addr >= base {
+            let off = (addr - base) as usize;
+            if off % 4 == 0 && off / 4 < words.len() {
+                return Some(words[off / 4]);
+            }
+        }
+    }
+    None
+}
+
+/// `AnimClip_ResolveAnmIndex` 0x15ada8 on `AnimIds_Init` 0x15aec0's tables: resolves a clip id (`0..0x2ff`,
+/// e.g. grab `0x278..=0x291`, tweak `0x292..=0x2ab`, uber `0x2ac..=0x2db`) for `(board_class, character)` to its
+/// `.afl` clip name in `tricky_data::anim_names::CLIPS` (or `None` when unmapped / `0x585`).
+pub fn resolve_clip_name(clip: u32, board_class: u32, character: u32) -> Option<&'static str> {
+    let mode = *LOOKUP_MODES.get(clip as usize)?;
+    let anm_idx = match mode {
+        0 => run_word(0x3c0bd0 + board_class.wrapping_mul(4).wrapping_add(clip * 0xc))?,
+        1 => {
+            if character >= 12 {
+                return None;
+            }
+            run_word(0x3c2fc8u32.wrapping_add(character.wrapping_mul(4)).wrapping_add(clip * 0x30))?
+        }
+        2 => run_word(0x3bffd0 + clip * 4)?,
+        3 => {
+            // Variant 0 (first variant in the 0x3bf180 table; grab/tweak/uber clips use modes 0 and 2).
+            let e = run_word(0x3bf180 + clip * 4)?;
+            let idx = (e as i16) as i32 as u32;
+            run_word(0x3bfd80u32.wrapping_add(board_class.wrapping_mul(4)).wrapping_add(idx.wrapping_mul(0xc)))?
+        }
+        _ => return None,
+    };
+    tricky_data::anim_names::CLIPS.get(anm_idx as usize).copied()
+}

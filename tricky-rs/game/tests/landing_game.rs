@@ -108,13 +108,32 @@ fn landings_are_the_games() {
     println!("falling 30 m/s: grounded {} crashed {} hard {:.2}", fast.grounded, fast.crashed, fast.hard_land);
     // (forwards, soft, not firm: clip 0x23e)
     assert!(fast.crashed <= 0.0 && fast.hard_land == len(0x23e), "fast into the snow: hard, clip 0x23e's length ({})", len(0x23e));
-    // an uber not yet done (a clip of type 0xe short of its safe point): the check refuses the landing
+    // an uber short of its fourth marker (clip type 0x10 without flag 4): the check refuses the landing
     let uber = drop_with(&world, at, |r| {
         r.uber = 1.0;
-        r.uber_done = false;
     });
     println!("uber cut short: crashed {} cause {}", uber.crashed, uber.cause);
-    assert!(uber.crashed > 0.0 && uber.cause == "grab", "an uber cut short: down");
+    assert!(uber.crashed > 0.0 && uber.cause == "grab", "an uber short of marker 4: down");
+
+    // E8t: an uber past its real `.afl` fourth marker lands cleanly; a `0xffff` fourth marker always crashes.
+    let mut bank = tricky_data::afl::ClipMarkerBank::new();
+    bank.insert("bxUT_MTINDY", tricky_data::afl::ClipMarkers { frames: 61, markers: [10, tricky_data::afl::MARKER_UNUSED, 51, 51] });
+    bank.insert("bxUT_NOM4", tricky_data::afl::ClipMarkers { frames: 61, markers: [10, tricky_data::afl::MARKER_UNUSED, 51, tricky_data::afl::MARKER_UNUSED] });
+    let bank = Arc::new(bank);
+    let uber_ok = drop_with(&world, at, |r| {
+        r.attach_clip_markers(bank.clone());
+        r.ubers = vec![("bxUT_MTINDY".into(), 61.0)];
+        r.uber_id = 0;
+        r.uber = 52.0; // strictly past m4 = 51, well before clip end 61
+    });
+    assert!(uber_ok.grounded && uber_ok.crashed <= 0.0, "uber past real .afl marker 4 must land cleanly");
+    let uber_nom4 = drop_with(&world, at, |r| {
+        r.attach_clip_markers(bank.clone());
+        r.ubers = vec![("bxUT_NOM4".into(), 61.0)];
+        r.uber_id = 0;
+        r.uber = 60.0;
+    });
+    assert!(uber_nom4.crashed > 0.0 && uber_nom4.cause == "grab", "0xffff fourth marker must never clear landing gate");
 
     // E8r: mid-backflip (`flip = pi`, even with upright `att`): `Landing_CheckAngles` folds `flip` into `att`
     // via `SpinControl_Exit` 0x1029d0 before checking angles -> upside-down landing crashes!

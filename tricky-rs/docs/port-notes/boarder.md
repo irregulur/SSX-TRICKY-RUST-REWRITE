@@ -1155,17 +1155,23 @@ advanced by `dt * rate * 30 / 60`) reads two lists of four ushort frame numbers 
 sets bit k of **+0x74** when `marker < hi` (the clip is past it), and bit k of +0x75 as well when `lo <= marker` (it was
 crossed this very tick); the second list does the same into +0x76 / +0x77. So **flag 4 = bit 3 of +0x74 = marker 3 (the
 fourth) of the first list, set while the clip is strictly past that frame**; a clip with no fourth marker (0xffff) never
-sets it and so never clears the gate (those frame numbers live in the player's animation files, not in the exe, and are
-not read). It is rebuilt every tick from the time, not latched. The port's grab notes call this marker `m4`
-(`grab_markers().2`, the 4th of the clip's markers 1, 2, 4 and the end); a grab held stops at its second marker, so
-holding never clears the gate.
+sets it and so never clears the gate (those frame numbers live in the player's `.afl` animation files, read by row E8t). It is rebuilt every tick from the
+time, not latched; a grab held stops at its second marker, so holding never clears the gate.
 
-**Ported.** `Rider::capture_gated` (`!grab_safe() || uber not done`), the port's form of the same test it makes in
-`Rider::land` for `Landing_CheckAngles`, now refuses the air capture in `Rider::step_tick`: a grab held or playing out
-short of its fourth marker, or an uber trick not done, flies over the rail. The spin and flip clips are not in the gated
-ranges. Row E8s made `grab_safe` strict (`f > m4`, the game's `marker < time`; it was `>=`). **Inferred, not read:** that
-the uber clips' flag 4 is the port's `uber_done` (the same mechanism, but the uber clips' marker frames are in the
-animation files).
+**Ported (rows E8s & E8t).** Every grab (`0x278..=0x291`, `*T_*`), tweak (`0x292..=0x2ab`, `*TW_*`), and uber
+(`0x2ac..=0x2db`, `*UT_*`) clip's length and four marker frames (`+0xc..+0x14`, `0xffff` = unused) are read directly
+from the `.afl` files in `DATA/CHAR/ANM.BIG` (`bxanim`, `franim`, `exanim`, and all 36 `*Uber.afl`):
+- With a live `AnimHost` (`Rider::anim`), `AnimClip_Advance` `0x15a030` runs directly on the loaded `.afl` headers
+  and `Rider::grab_safe()` / `Rider::capture_gated()` query `AnimCtl_GetClipType(0)` (`0xe..=0x10`) and
+  `AnimCtl_TestClipFlag(4, 0)`.
+- Without `AnimHost`, `tricky_data::afl::ClipMarkerBank` (loaded from `.afl` headers via `ClipMarkerBank::from_disc`
+  or exported from `CharLib`'s `AnimSet`s via `AnimSet::from_afl`) resolves every clip id via
+  `animids::resolve_clip_name` (`AnimClip_ResolveAnmIndex` `0x15ada8`) and feeds `TrickClips::markers: [u16; 4]`
+  and `Rider::grab_safe()`. Every disc uber clip has `[m1, 0xffff, m3, m4]` (for example `bxUT_MTINDY` len 61,
+  `m = [10, 0xffff, 51, 51]`): marker 1 scores `Scoring_OnTrickEvent`, marker 3 opens re-grab, and marker 4 clears
+  the rail-capture and landing gate strictly past `m4` (well before clip end). Any clip whose fourth marker is
+  `0xffff` never sets flag 4 and never clears the gate. The hand-written `grab_markers` table and `uber_done`
+  stand-in are removed.
 
 ### The board's corners (row G7f3a; `pose::board_corners`, checked: `tests/pose.rs`)
 

@@ -419,7 +419,7 @@ pub struct Rider {
     /// frames into the current uber trick (0 = not doing one) and which one
     pub uber: f32,
     pub uber_id: usize,
-    pub uber_done: bool,
+    uber_scored: bool,
     /// uber tricks landed this run; six spell TRICKY and make boost unlimited
     pub letters: u8,
     /// from a multiplier pickup: applied to the next trick landed
@@ -572,6 +572,8 @@ pub struct Rider {
     pub speed_samples: f32,
     /// Live `AnimCtl` + `PoseBlend` host handle (`rider+0x46c0`, rows G5d1–G5d2); `None` when running without disc `.afl`s
     pub anim: Option<crate::animhost::RiderAnim>,
+    /// Clip length & marker table read from `.afl` headers (`AnimClip_Advance` 0x15a030, row E8t)
+    pub clip_markers: Option<std::sync::Arc<tricky_data::afl::ClipMarkerBank>>,
     /// Per-rider tick counter for `Boarder_PickIdleClip` 0x11d4e8 (`tick % 18 == 0`)
     pub anim_tick: i32,
 }
@@ -605,14 +607,70 @@ impl Rider {
                spin: 0.0, flip: 0.0, flip_dir: 0.0, wind: 0.0, wind_flip: 0.0, cap: SPEED_CAP, steer: 0.0, grab: 0, grab_hold: 0.0, grab_out: None, grab_done: [false; 16], grab_tweaked: [false; 16], ubers_done: 0, switch_takeoff: false, from_rail: false, uber_timer: 0.0, stats: Stats::default(), data: &RIDERS[0], surface: 1, prev_surface: 1, motion: 1, grind_time: 0.0, rail_twist: 0.0, rail_spun: 0.0, rail_side: 0.0, rail_entry: 0.0, rail_goal: 0.0, rail_held: false, rail_side_signed: 0.0, shove: 0.0, shove_side: 1.0, taunt: -1.0, taunt_clip: String::new(), fin: None, showoff: false, landed: Vec::new(), crash_kind: 0, land_kind: 0, switch: false, score: 0, boost: 0.0, boosting: false, body_height: 0.0,
                last_trick: String::new(), trick_timer: 0.0, crashed: 0.0, hard_land: 0.0, crouch_v: 0.0, brake_v: 0.0, jump_c: 0.0, jump_delay: 0.0, height: 0.0,
                course_dir: None, course_pts: None, wipe: None, crash_at: None, gm: None, crash_spray: None, land_puffs_vn: None, lean: [0.0; 3], up: [0.0, 0.0, 1.0, 0.0], recover: None, ai: false, down_t: 0.0, getup: -1.0, stumble: 0.0, wall_hit: None, speed_timer: 0.0, spin_timer: 0.0, spin_used: false, tube_class: u8::MAX, gate_p: 0.0, gate_hi: 0.0, gate_lo: 0.0, gate_still: 0.0, gate_target: 0.0, gate_speed: 0.0, gate_state: 8, gate_rock_dir: 0, band: (0.005, 0.0250417), spin_base: 0.0, flip_base: 0.0, late: false, cause: "", spin_ax: Axis::default(), flip_ax: Axis::default(), air_mode2: false, rail_off: 0.0, rail_time: 0.0, rail_halves: 0, boost_was: false, chain: 0,
-               ubers: Vec::new(), uber: 0.0, uber_id: 0, uber_done: false, letters: 0, multiplier: 1,
+               ubers: Vec::new(), uber: 0.0, uber_id: 0, uber_scored: false, letters: 0, multiplier: 1,
                sc: new_score(), tick_acc: 0.0, full_count: 0, rail_kind: 0, rail_lean: 0.0, rail_goal0: 0.0, rail_committed: 0.0, show_parts: Vec::new(), speech: Vec::new(), hit_by: u32::MAX, grab_scored: false, grab_tw: false, hit_wait: 0, att: None, last_hit: Default::default(), impact: 0.0, impact_n: [0.0; 4], knocks: 0.0, slot: 0, place_ray: None, hit_kind: 0, land_time: 0.0, takeoffs: 0, rail_blend: 0.0, rail_word: 0, rail_grid: false, rail_hit: [0.0; 4], spin_st: None, pad_dev: Default::default(), pad_from_host: false, pad_cfg: None, vibration: Default::default(), pad_rumble: Default::default(), rumble_muted: false, land_point: [0.0; 4], land_vel: [0.0; 4], land_word: u32::MAX, land_normal: [0.0, 0.0, 1.0, 0.0], takeoff_wind: (0.0, 0.0), ctl: control_tick::CRUISE, cruise: Default::default(), land_normal_ctl: Default::default(), natural_air_ctl: Default::default(), rail_ctl: Default::default(), rail_turn_t: 0.0, prewind_started: 0, trick_ctl: Default::default(), rec: Default::default(), boost_lvl: 0.0, reset_flag: 0, reset_req: None, reset: None, reset_acc: 0.0, fade: (1.0, 0.0), reset_ctx: ResetCtx::default(),
-               vf7: crate::boarder_tick::TickRider { active: 1, time_scale: 1.0, speed_limit: SPEED_CAP * 100.0, ..Default::default() }, speed_sum: 0.0, speed_samples: 0.0, anim: None, anim_tick: 0,
+               vf7: crate::boarder_tick::TickRider { active: 1, time_scale: 1.0, speed_limit: SPEED_CAP * 100.0, ..Default::default() }, speed_sum: 0.0, speed_samples: 0.0, anim: None, clip_markers: None, anim_tick: 0,
                predict: crate::air::Predict { word: u32::MAX, normal: [0.0, 0.0, 1.0, 0.0], ..Default::default() },
                air_surface_ticks: 0, land_fall: 0.0, celebrate_idx: 0, air_side: [0.0; 4] };
         // the start line's `Boarder_PlaceAt` 0x11cae8 (`cBoarder::vf8` 0x116ab8: heading from the path's direction)
         r.att = Some((orient::placed_attitude(placed_heading(yaw), None), yaw));
         r
+    }
+
+    /// Attach a [`tricky_data::afl::ClipMarkerBank`] loaded from `.afl` headers (row E8t) for grab/tweak/uber
+    /// marker gates when running without a live [`crate::animhost::AnimHost`].
+    pub fn attach_clip_markers(&mut self, bank: std::sync::Arc<tricky_data::afl::ClipMarkerBank>) {
+        self.clip_markers = Some(bank);
+    }
+
+    /// Look up `.afl` clip length & markers (`+0xc..+0x14`, `0xffff` = unused) by clip name.
+    pub fn clip_markers_by_name(&self, name: &str) -> Option<tricky_data::afl::ClipMarkers> {
+        self.clip_markers.as_ref()?.get(name)
+    }
+
+    /// Look up `.afl` clip length & markers for a game clip id (`0x278..=0x2db`: grabs `0xe`, tweaks `0xf`, ubers `0x10`)
+    /// using `AnimClip_ResolveAnmIndex` 0x15ada8 (`crate::animids::resolve_clip_name`) against the attached
+    /// `.afl` [`tricky_data::afl::ClipMarkerBank`].
+    pub fn clip_markers_for(&self, clip: u32) -> tricky_data::afl::ClipMarkers {
+        let ch = RIDERS.iter().position(|r| r.name == self.data.name).unwrap_or(0) as u32;
+        if let Some(name) = crate::animids::resolve_clip_name(clip, self.stats.kind as u32, ch) {
+            if let Some(m) = self.clip_markers_by_name(name) {
+                return m;
+            }
+        }
+        // STANDIN: fallback clip markers only when no `.afl` files were loaded from disc
+        if (0x2ac..=0x2db).contains(&clip) {
+            let len = self.ubers.get(self.uber_id).map_or(60.0, |u| u.1).round().clamp(4.0, 600.0) as u16;
+            let m3 = len.saturating_sub(10).max(1);
+            tricky_data::afl::ClipMarkers { frames: len, markers: [10, tricky_data::afl::MARKER_UNUSED, m3, m3] }
+        } else {
+            tricky_data::afl::ClipMarkers { frames: 33, markers: [10, 17, 25, 25] }
+        }
+    }
+
+    /// `.afl` clip markers for a grab/tweak row `0..15` of the rider's current character and board class.
+    fn grab_row_markers(&self, row: usize, tweak: bool) -> tricky_data::afl::ClipMarkers {
+        let ch = RIDERS.iter().position(|r| r.name == self.data.name).unwrap_or(0);
+        let board = (self.stats.kind as usize).min(2);
+        let r = tricky_data::trick_slots::TRICK_SLOTS[ch][board][row.min(14)];
+        let clip = if tweak { r[2] } else { r[1] } as u32;
+        self.clip_markers_for(clip)
+    }
+
+    /// `.afl` clip markers for the active legacy `self.uber` / `self.uber_id` slot.
+    fn active_uber_markers(&self) -> tricky_data::afl::ClipMarkers {
+        if let Some((name, len)) = self.ubers.get(self.uber_id) {
+            if let Some(m) = self.clip_markers_by_name(name) {
+                return m;
+            }
+            let len = len.round().clamp(4.0, 600.0) as u16;
+            let m3 = len.saturating_sub(10).max(1);
+            return tricky_data::afl::ClipMarkers { frames: len, markers: [10, tricky_data::afl::MARKER_UNUSED, m3, m3] };
+        }
+        let ch = RIDERS.iter().position(|r| r.name == self.data.name).unwrap_or(0);
+        let board = (self.stats.kind as usize).min(2);
+        let uber = tricky_data::trick_slots::TRICK_SLOTS[ch][board][0][3] as u32;
+        self.clip_markers_for(uber)
     }
 
     /// Attach a live [`crate::animhost::RiderAnim`] (`AnimCtl` + `PoseBlend`, row G5d2), syncing stats & stance and
@@ -854,7 +912,7 @@ impl Rider {
         self.grab_tweaked = [false; 16];
         self.ubers_done = 0;
         self.uber = 0.0;
-        self.uber_done = false;
+        self.uber_scored = false;
     }
     /// The boost meter (`Boarder_AddMeter` 0x11b018, exact): the gain scaled by the meter stat, clamped to 0..1; a
     /// gain at a full meter (re)opens the twenty-second uber window.
@@ -1006,12 +1064,12 @@ impl Rider {
         if self.spin_used { self.spin_timer = 0.0; self.spin_used = false; }
         let tau = std::f32::consts::TAU;
         let off = (self.flip.rem_euclid(tau)).min(tau - self.flip.rem_euclid(tau));
-        let uber_cut_short = self.uber > 0.0 && !self.uber_done;
-        if rail.is_none() && (off > self.stats.crash_pitch() || !self.grab_safe() || uber_cut_short) {
-            // too far from upright, or still holding the board: wipe out
+        if rail.is_none() && (off > self.stats.crash_pitch() || !self.grab_safe()) {
+            // too far from upright, or grab/tweak/uber clip short of marker 4 (`Landing_CheckAngles` 0x12ba78): wipe out
             self.crash_kind = if self.flip < -0.5 { 1 } else { 0 };
-            if std::env::var("TRICKY_AIDBG").is_ok() { println!("    landing: flip {:.2} off {:.2} limit {:.2} spin {:.2} grab {} hold {:.2} uber {}", self.flip, off, self.stats.crash_pitch(), self.spin, self.grab, self.grab_hold, uber_cut_short); }
-            self.cause = if off > self.stats.crash_pitch() { "landing angle" } else if uber_cut_short { "uber" } else { "grab" };
+            if std::env::var("TRICKY_AIDBG").is_ok() { println!("    landing: flip {:.2} off {:.2} limit {:.2} spin {:.2} grab {} hold {:.2} uber {:.2}", self.flip, off, self.stats.crash_pitch(), self.spin, self.grab, self.grab_hold, self.uber); }
+            let in_uber = self.uber > 0.0 || self.trick_ctl.clip_type == 0x10 || self.anim.as_ref().is_some_and(|a| a.clip_type(0) == 0x10);
+            self.cause = if off > self.stats.crash_pitch() { "landing angle" } else if in_uber { "uber" } else { "grab" };
             self.wipe_out();
         } else {
             // a grab still held is let go as the board lands
@@ -1188,7 +1246,7 @@ impl Rider {
             (a.clip_type(0) as i64, a.test_flag(4, 0))
         } else if self.trick_ctl.clip_type != 8 {
             (self.trick_ctl.clip_type as i64, self.trick_ctl.flag(4))
-        } else if !self.grab_safe() || (self.uber > 0.0 && !self.uber_done) {
+        } else if !self.grab_safe() {
             (0xe, false)
         } else {
             (0, false)
@@ -2005,17 +2063,23 @@ impl Rider {
     /// `Scoring_OnTrickEvent` as it is let go (an uber's with its length in seconds).
     pub fn air_grabs(&mut self, input: &Input, dt: f32) {
         if self.air_time < 0.15 { return; }
-        if self.uber > 0.0 && !self.uber_done {
-            // an uber trick plays right through; it pays for its whole length when it ends
+        if self.uber > 0.0 {
+            // an uber trick plays right through; it pays at marker 1 (`SpinState_UpdateTrickClips` 0x1272e8) and
+            // clears its landing/rail gate strictly past marker 4 (`AnimClip_Advance` 0x15a030)
+            let cm = self.active_uber_markers();
+            let frames = (cm.frames as f32).max(1.0);
             self.uber += dt * 30.0;
             self.grab = 0;
-            let frames = self.ubers.get(self.uber_id).map_or(60.0, |u| u.1);
-            if self.uber >= frames - 1.0 {
-                self.uber_done = true;
+            if !self.uber_scored && cm.is_past(1, self.uber) {
+                self.uber_scored = true;
                 self.ubers_done += 1;
                 let clip = self.uber_clip();
                 self.sc.end_grab(frames / 30.0, clip);
                 self.grab_scored = false;
+            }
+            if self.uber >= frames - 1.0 {
+                self.uber = 0.0;
+                self.uber_scored = false;
             }
         } else if let Some(i) = COMBOS.iter().position(|c| *c == input.grab & 15) {
             let rate = 30.0 * (0.78212035 + 0.8057834 * self.stats.tricks);
@@ -2026,7 +2090,9 @@ impl Rider {
                 self.grab_out = None;
             }
             let row = &self.data.rows[i];
-            let (m1, m2, _, _) = grab_markers(row.clip);
+            let cm = self.grab_row_markers(i, false);
+            let m1 = cm.marker(1).unwrap_or(10.0);
+            let m2 = cm.marker(2).unwrap_or(17.0);
             // the grab clip reaches in and holds at its second marker (grab clips play at
             // 0.782 + 0.806 x tricks of normal speed, Grab_Update); the grab counts from marker 1
             self.grab_hold = (self.grab_hold + rate * dt).min(m2);
@@ -2043,7 +2109,7 @@ impl Rider {
                 let uber = self.ubers.iter().position(|u| (!row.uber_clip.is_empty() && uber_grab(&u.0) == uber_grab(row.uber_clip) && !u.0.contains("UT_SIG")) || (sig && u.0.contains("UT_SIG")));
                 if input.tweak && self.uber_ready() && self.uber == 0.0 && uber.is_some() {
                     self.uber = 0.01;
-                    self.uber_done = false;
+                    self.uber_scored = false;
                     self.uber_id = uber.unwrap();
                     // STANDIN: the uber clip replaces the grab, so its hold starts over at the uber's rate
                     let clip = self.uber_clip();
@@ -2064,11 +2130,9 @@ impl Rider {
             self.grab_hold = 0.0;
             if let Some((g, f)) = self.grab_out {
                 let rate = 30.0 * (0.78212035 + 0.8057834 * self.stats.tricks);
-                let clip = self.data.rows[(g as usize - 1).min(14)].clip;
-                let n = grab_markers(clip).3;
+                let n = self.grab_row_markers((g as usize - 1).min(14), self.grab_tw).frames as f32;
                 self.grab_out = if f + rate * dt >= n - 1.0 { None } else { Some((g, f + rate * dt)) };
             }
-            if self.uber_done { self.uber = 0.0; self.uber_done = false; }
         }
     }
     /// The held grab let go (`Scoring_OnTrickEvent`(0, its clip)): into the jump's grab list.
@@ -2571,8 +2635,12 @@ impl Rider {
         let f = self.board_frame();
         [f[1], f[2], f[0], f[3]]
     }
-    pub fn capture_gated(&self) -> bool { !self.grab_safe() || (self.uber > 0.0 && !self.uber_done) }
-    /// Is the board free to land (no grab, tweak or uber clip short of its safe marker 4)?
+    /// `Rail_TryCapture` 0x125cb8 / `Landing_CheckAngles` 0x12ba78 clip gate (rows E8n, E8s, E8t):
+    /// refuses capture/landing while layer-0 clip is type `0xe..=0x10` (grab, tweak, uber) without flag 4
+    /// (`AnimCtl_TestClipFlag` 0x15ffb8 / `AnimClip_Advance` 0x15a030).
+    pub fn capture_gated(&self) -> bool { !self.grab_safe() }
+    /// Is the board free to land or capture a rail (no grab, tweak or uber clip short of its fourth marker;
+    /// a clip whose fourth marker is `0xffff` never sets flag 4 and never clears the gate)?
     pub fn grab_safe(&self) -> bool {
         if let Some(a) = &self.anim {
             let t = a.clip_type(0);
@@ -2581,11 +2649,14 @@ impl Rider {
         if self.trick_ctl.clip_type != 8 {
             return !self.trick_ctl.is_unsafe();
         }
+        if self.uber > 0.0 {
+            return self.active_uber_markers().is_past(4, self.uber);
+        }
         if self.grab != 0 { return false; }
         match self.grab_out {
-            // flag 4 is set once the clip's time is past its fourth marker (`AnimClip_Advance` 0x15a030: marker < the larger of
-            // the old and new time, row E8s): strictly past
-            Some((g, f)) => f > grab_markers(self.data.rows[(g as usize - 1).min(14)].clip).2,
+            // flag 4 is set once the clip's time is strictly past its fourth marker (`AnimClip_Advance` 0x15a030:
+            // marker < hi, `0xffff` unused -> never clears; rows E8s & E8t)
+            Some((g, f)) => self.grab_row_markers((g as usize - 1).min(14), self.grab_tw).is_past(4, f),
             None => true,
         }
     }
@@ -2835,23 +2906,6 @@ impl Rider {
 
 /// The grab an uber clip starts from: "bxUT_MTINDY" -> "INDY" (after the two-letter style).
 fn uber_grab(clip: &str) -> &str { clip.split_once("UT_").map_or("", |(_, r)| r.get(2..).unwrap_or("")) }
-
-/// Grab clip markers from the animation file (frames): the grab counts from marker 1, holds at
-/// marker 2, and is safe to land only past marker 4 (`Landing_CheckAngles`); and the clip's length.
-pub fn grab_markers(clip: &str) -> (f32, f32, f32, f32) {
-    let (m1, m2, m4, n) = match clip {
-        "bxT_CANADIAN" => (10, 17, 26, 36), "bxT_CHICKENSALAD" => (10, 14, 24, 30), "bxT_CRAIL" => (10, 17, 23, 33),
-        "bxT_EXPERIMENT" => (10, 17, 30, 36), "bxT_FLYINGSQUIRREL" => (10, 14, 31, 35), "bxT_IGUANA" => (10, 14, 25, 30),
-        "bxT_INDY" => (10, 17, 26, 35), "bxT_JAPAN" => (10, 17, 26, 33), "bxT_LEIN" => (10, 15, 21, 30),
-        "bxT_MELANCHOLY" => (10, 14, 22, 33), "bxT_METHOD" => (10, 14, 27, 36), "bxT_MUTE" => (10, 17, 23, 32),
-        "bxT_NOSEGRAB" => (10, 17, 24, 35), "bxT_NUCLEAR" => (10, 14, 23, 30), "bxT_ROASTBEEF" => (10, 16, 23, 30),
-        "bxT_ROCKET" => (10, 17, 24, 32), "bxT_SEATBELTAIR" => (10, 16, 25, 35), "bxT_SLOBAIR" => (10, 14, 23, 30),
-        "bxT_SPAGHETTI" => (10, 14, 23, 30), "bxT_STALEFISH" => (10, 20, 30, 36), "bxT_STALEMASKY" => (10, 17, 26, 35),
-        "bxT_STIFFY" => (10, 14, 25, 32), "bxT_SWISSCHEESE" => (10, 17, 24, 35), "bxT_TAILGRAB" => (10, 14, 23, 30),
-        _ => (10, 17, 25, 33),
-    };
-    (m1 as f32, m2 as f32, m4 as f32, n as f32)
-}
 
 /// The original's names for big spin-and-flip combinations (`Score_BuildTrickId`, table 0x320cf0):
 /// (backside?, half turns of spin, flips: + front / - back) -> name.

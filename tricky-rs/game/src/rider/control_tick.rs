@@ -12,7 +12,7 @@
 //! 0x117198's order). They set targets; the now/rate/target records (brake +0x1fc, crouch +0x208, steer +0x214, the
 //! wind-ups +0x220 and +0x22c) move toward them before the next tick's motion, by their rate × 1/60.
 
-use super::{grab_markers, ground_tick, uber_grab, Input, Rider, RiderSpeech, RIDERS};
+use super::{ground_tick, uber_grab, Input, Rider, RiderSpeech, RIDERS};
 use crate::boarder::{self, Fields, Prewind, PrewindCall, SteerState};
 use crate::control::{self, ControlEnv};
 use crate::controls::{get_controls, ControlsIn, Mapper};
@@ -74,8 +74,8 @@ pub struct TrickClips {
     pub speed: f32,
     /// hold frame (`m2`) while grab/tweak is held; `None` once `AnimCtl_StopClipsInCategory` releases it or for uber
     pub stop: Option<f32>,
-    /// markers `[m1, m2, m3, m4]` (frames)
-    pub markers: [f32; 4],
+    /// markers `[m1, m2, m3, m4]` from the `.afl` clip header (`+0xc..+0x14`, `0xffff` = unused; `AnimClip_Advance` 0x15a030)
+    pub markers: [u16; 4],
     /// clip length in frames
     pub len: f32,
     /// `+0x74`: bit `k-1` set while frame is past marker `k` (`AnimCtl_TestClipFlag` 0x15ffb8)
@@ -98,7 +98,7 @@ impl Default for TrickClips {
             frame: 0.0,
             speed: 1.0,
             stop: None,
-            markers: [0.0; 4],
+            markers: [tricky_data::afl::MARKER_UNUSED; 4],
             len: 0.0,
             past: 0,
             crossed: 0,
@@ -140,9 +140,13 @@ impl TrickClips {
         let lo = old.min(new);
         let hi = old.max(new);
         for (k, &mk) in self.markers.iter().enumerate() {
-            if mk < hi {
+            if mk == tricky_data::afl::MARKER_UNUSED {
+                continue;
+            }
+            let f = mk as f32;
+            if f < hi {
                 self.past |= 1 << k;
-                if lo <= mk {
+                if lo <= f {
                     self.crossed |= 1 << k;
                 }
             }
@@ -180,13 +184,17 @@ impl TrickClips {
     }
 
     /// Begin a grab (`0xe`), tweak (`0xf`), or uber (`0x10`) clip on layer 0.
-    fn begin(&mut self, clip: u32, clip_type: u32, row: usize, speed: f32, markers: [f32; 4], len: f32, hold_m2: bool) {
+    pub(super) fn begin(&mut self, clip: u32, clip_type: u32, row: usize, speed: f32, markers: [u16; 4], len: f32, hold_m2: bool) {
         self.clip = clip;
         self.clip_type = clip_type;
         self.row = Some(row);
         self.frame = 0.0;
         self.speed = speed;
-        self.stop = hold_m2.then_some(markers[1]);
+        self.stop = if hold_m2 && markers[1] != tricky_data::afl::MARKER_UNUSED {
+            Some(markers[1] as f32)
+        } else {
+            None
+        };
         self.markers = markers;
         self.len = len;
         self.past = 0;
@@ -600,8 +608,8 @@ impl Rider {
                     if go {
                         if let Some(i) = rows.iter().position(|r| r[0] as u32 == trick) {
                             let clip = rows[i][1] as u32;
-                            let (m1, m2, m4, len) = grab_markers(self.data.rows[i].clip);
-                            tc.begin(clip, 0xe, i, speed, [m1, m2, m4, m4], len, true);
+                            let cm = self.clip_markers_for(clip);
+                            tc.begin(clip, 0xe, i, speed, cm.markers, cm.frames as f32, true);
                         }
                         tc.trick_id = trick;
                         tc.hold_ticks = 0;
@@ -676,20 +684,21 @@ impl Rider {
                             }) {
                                 self.uber_id = uid;
                             }
-                            let len = self.ubers.get(self.uber_id).map_or(60.0, |u| u.1).max(4.0);
-                            let m1 = (len - 2.0).max(1.0);
-                            let m3 = (len - 1.0).max(1.0);
-                            tc.begin(uber, 0x10, i, 1.0, [m1, m1, m3, m3], len, false);
+                            let cm = self.clip_markers_for(uber);
+                            let len = (cm.frames as f32).max(4.0);
+                            tc.begin(uber, 0x10, i, 1.0, cm.markers, len, false);
                             if let Some(rate) = crate::score::grab_rate(uber) {
                                 self.sc.grab_rate = rate;
                             }
                             tc.stage = 4;
                         } else {
                             let tweak = rows[i][2] as u32;
-                            let (m1, m2, m4, len) = grab_markers(self.data.rows[i].clip);
-                            tc.begin(tweak, 0xf, i, speed, [m1, m2, m4, m4], len, true);
+                            let cm = self.clip_markers_for(tweak);
+                            tc.begin(tweak, 0xf, i, speed, cm.markers, cm.frames as f32, true);
                             // start tweak at hold frame so release plays smoothly from peak
-                            tc.frame = m2;
+                            if let Some(m2) = cm.marker(2) {
+                                tc.frame = m2;
+                            }
                             if let Some(rate) = crate::score::grab_rate(tweak) {
                                 self.sc.grab_rate = rate;
                             }
@@ -734,7 +743,6 @@ impl Rider {
             0xe | 0xf => {
                 let idx = tc.row.map_or(0, |i| (i + 1) as u8);
                 self.uber = 0.0;
-                self.uber_done = false;
                 self.grab_tw = tc.clip_type == 0xf;
                 if tc.trick_id != 0x1a {
                     self.grab = idx;
@@ -755,7 +763,6 @@ impl Rider {
                 self.grab_tw = false;
                 self.grab_scored = false;
                 self.uber = tc.frame.max(0.01);
-                self.uber_done = tc.flag(4);
             }
             _ => {
                 self.grab = 0;
@@ -764,7 +771,6 @@ impl Rider {
                 self.grab_tw = false;
                 self.grab_scored = false;
                 self.uber = 0.0;
-                self.uber_done = false;
             }
         }
     }

@@ -284,15 +284,16 @@ fn a_grab_short_of_its_fourth_marker_refuses_the_rail_capture() {
     assert!(r.capture_gated(), "a grab short of its marker did not gate");
     assert!(r.rail.is_none() && r.rail_kind == 0, "captured with a grab clip short of flag 4");
     assert!(r.crashed <= 0.0 && !r.grounded);
-    // an uber trick not done: not captured
+    // an uber trick short of its fourth marker: not captured (row E8t: real .afl marker 4, no `uber_done` stand-in)
     let (rails, mut r) = rail_and_flyer();
     r.uber = 1.0;
-    r.uber_done = false;
     r.step(&world, &rails, Input::default(), 1.0 / 60.0);
-    assert!(r.rail.is_none() && r.rail_kind == 0, "captured in an uber trick that is not done");
-    // flag 4 is set only once the clip is strictly past the fourth marker (`AnimClip_Advance` 0x15a030, row E8s)
+    assert!(r.rail.is_none() && r.rail_kind == 0, "captured in an uber trick short of marker 4");
+    // flag 4 is set only once the clip is strictly past the fourth marker (`AnimClip_Advance` 0x15a030, rows E8s & E8t)
     let (rails, mut r) = rail_and_flyer();
-    let m4 = tricky_game::rider::grab_markers(r.data.rows[0].clip).2;
+    let ch = tricky_game::trickdata::RIDERS.iter().position(|d| d.name == r.data.name).unwrap_or(0);
+    let clip0 = tricky_data::trick_slots::TRICK_SLOTS[ch][(r.stats.kind as usize).min(2)][0][1] as u32;
+    let m4 = r.clip_markers_for(clip0).marker(4).unwrap();
     r.grab_out = Some((1, m4));
     assert!(r.capture_gated(), "at the marker itself flag 4 is not set yet");
     r.grab_out = Some((1, m4 + 0.01));
@@ -303,5 +304,76 @@ fn a_grab_short_of_its_fourth_marker_refuses_the_rail_capture() {
     assert!(!r.capture_gated());
     r.step(&world, &rails, Input::default(), 1.0 / 60.0);
     assert!(r.rail.is_some() && r.rail_kind != 0, "not captured with flag 4 set");
+
+    // E8t: a clip with no fourth marker (0xffff) NEVER sets flag 4 and NEVER clears the capture or landing gate,
+    // even past its last frame (`AnimClip_Advance` 0x15a030).
+    let (rails, mut r) = rail_and_flyer();
+    let mut bank = tricky_data::afl::ClipMarkerBank::new();
+    let name0 = tricky_game::animids::resolve_clip_name(clip0, r.stats.kind as u32, ch as u32).unwrap();
+    bank.insert(name0, tricky_data::afl::ClipMarkers { frames: 35, markers: [10, 17, 25, tricky_data::afl::MARKER_UNUSED] });
+    bank.insert("bxUT_NO_M4", tricky_data::afl::ClipMarkers { frames: 61, markers: [10, tricky_data::afl::MARKER_UNUSED, 51, tricky_data::afl::MARKER_UNUSED] });
+    r.attach_clip_markers(std::sync::Arc::new(bank));
+    r.grab_out = Some((1, 1.0e3));
+    assert!(r.capture_gated(), "0xffff fourth marker on grab must never clear capture gate");
+    assert!(!r.grab_safe(), "0xffff fourth marker on grab must never be safe to land");
+    r.step(&world, &rails, Input::default(), 1.0 / 60.0);
+    assert!(r.rail.is_none(), "0xffff fourth marker must refuse rail capture");
+    // Same on an uber clip with 0xffff fourth marker and via TrickClips::advance:
+    let (_, mut r) = rail_and_flyer();
+    let mut bank = tricky_data::afl::ClipMarkerBank::new();
+    bank.insert("bxUT_NO_M4", tricky_data::afl::ClipMarkers { frames: 61, markers: [10, tricky_data::afl::MARKER_UNUSED, 51, tricky_data::afl::MARKER_UNUSED] });
+    r.attach_clip_markers(std::sync::Arc::new(bank));
+    r.ubers = vec![("bxUT_NO_M4".into(), 61.0)];
+    r.uber_id = 0;
+    r.uber = 60.0;
+    assert!(r.capture_gated(), "0xffff fourth marker on uber must never clear capture gate");
+    r.trick_ctl.clip = 0x2c3;
+    r.trick_ctl.clip_type = 0x10;
+    r.trick_ctl.len = 61.0;
+    r.trick_ctl.speed = 1.0;
+    r.trick_ctl.markers = [10, tricky_data::afl::MARKER_UNUSED, 51, tricky_data::afl::MARKER_UNUSED];
+    for _ in 0..100 {
+        r.trick_ctl.advance(1.0 / 60.0);
+        if r.trick_ctl.clip_type == 0x10 {
+            assert!(!r.trick_ctl.flag(4), "TrickClips::advance must never set flag 4 for 0xffff");
+            assert!(r.capture_gated(), "capture gate stays closed throughout 0xffff uber clip");
+        }
+    }
+
+    // E8t: with the player's own disc (`TRICKY_DISC`), load every grab/tweak/uber marker directly from `.afl`
+    // headers (`ClipMarkerBank::from_disc`) and verify all 12x3x15 TRICK_SLOTS clips resolve & real uber m4 gates.
+    if let Ok(disc_path) = std::env::var("TRICKY_DISC") {
+        let mut files = tricky_data::big::Files::new(tricky_data::disc::Disc::open(&disc_path).unwrap());
+        files.mount_game_archives().unwrap();
+        let bank = std::sync::Arc::new(tricky_data::afl::ClipMarkerBank::from_disc(&mut files).unwrap());
+        for ch in 0..12usize {
+            for brd in 0..3usize {
+                for row in &tricky_data::trick_slots::TRICK_SLOTS[ch][brd] {
+                    for &cid in &row[1..4] {
+                        if cid == 0x300 { continue; }
+                        let name = tricky_game::animids::resolve_clip_name(cid as u32, brd as u32, ch as u32)
+                            .unwrap_or_else(|| panic!("unmapped trick clip {cid:#x} ch={ch} brd={brd}"));
+                        let m = bank.get(name)
+                            .unwrap_or_else(|| panic!("missing .afl markers for {name} ({cid:#x})"));
+                        assert!(m.frames > 0, "{name} has 0 frames");
+                    }
+                }
+            }
+        }
+        // Real disc uber clip: bxUT_MTINDY (Eddie BX row 0, clip 0x2c3) has len=61, markers=[10, 0xffff, 51, 51]
+        // — clears flag 4 strictly past frame 51 (10 frames before clip end, NOT at len - 1).
+        let mtindy = bank.get("bxUT_MTINDY").expect("bxUT_MTINDY in bxEddUber.afl");
+        assert_eq!(mtindy.markers[1], tricky_data::afl::MARKER_UNUSED);
+        let m4 = mtindy.marker(4).unwrap();
+        assert!(m4 < (mtindy.frames - 1) as f32, "real uber m4 ({m4}) is well before end ({})", mtindy.frames);
+        let (_, mut r) = rail_and_flyer();
+        r.attach_clip_markers(bank);
+        r.ubers = vec![("bxUT_MTINDY".into(), mtindy.frames as f32)];
+        r.uber_id = 0;
+        r.uber = m4;
+        assert!(r.capture_gated(), "uber at real .afl m4 ({m4}) is still gated");
+        r.uber = m4 + 0.01;
+        assert!(!r.capture_gated(), "uber just past real .afl m4 ({m4}) clears gate");
+    }
 }
 

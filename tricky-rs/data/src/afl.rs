@@ -48,10 +48,93 @@ pub struct AflClip {
     pub groups: Vec<AflHeader>,
 }
 
+/// Sentinel for an unused marker slot in an `.afl` clip header (`AnimClip_Advance` 0x15a030).
+pub const MARKER_UNUSED: u16 = 0xffff;
+
+/// A clip's length in frames and its first four event marker frames (`+0xc..+0x14`, `0xffff` = unused;
+/// `AnimClip_Advance` 0x15a030 / `AnimCtl_TestClipFlag` 0x15ffb8, board rows E8s & E8t).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClipMarkers {
+    pub frames: u16,
+    pub markers: [u16; 4],
+}
+
+impl ClipMarkers {
+    /// 1-based marker (`1..=4`), or `None` when the slot is `0xffff` (unused).
+    pub fn marker(&self, n: usize) -> Option<f32> {
+        let mk = *self.markers.get(n.checked_sub(1)?)?;
+        (mk != MARKER_UNUSED).then_some(mk as f32)
+    }
+
+    /// True while `frame` is strictly past 1-based marker `n` (`AnimClip_Advance` 0x15a030: `marker < time`).
+    /// Always `false` when the marker slot is `0xffff` (a clip with no fourth marker never clears its gate).
+    pub fn is_past(&self, n: usize, frame: f32) -> bool {
+        self.marker(n).is_some_and(|mk| mk < frame)
+    }
+}
+
+/// Collection of clip marker records read from `.afl` headers, keyed by clip name (`anim_names::CLIPS`).
+#[derive(Clone, Debug, Default)]
+pub struct ClipMarkerBank {
+    by_name: std::collections::HashMap<String, ClipMarkers>,
+}
+
+impl ClipMarkerBank {
+    pub fn new() -> Self { Self::default() }
+
+    pub fn insert(&mut self, name: impl Into<String>, markers: ClipMarkers) {
+        self.by_name.insert(name.into(), markers);
+    }
+
+    /// Scan an `.afl` file's headers (without decoding curves) and insert every named clip's marker record.
+    pub fn insert_afl(&mut self, bytes: &[u8]) -> Result<usize, String> {
+        let afl = AflFile::open(bytes)?;
+        let mut n = 0;
+        for c in &afl.clips {
+            if let Some(name) = c.name() {
+                self.by_name.insert(name.to_string(), c.clip_markers());
+                n += 1;
+            }
+        }
+        Ok(n)
+    }
+
+    /// Read all board-class (`bxanim`, `franim`, `exanim`, `cmanim`) and uber (`*Uber`) `.afl` clip headers
+    /// from the player's disc (`DATA/CHAR/ANM.BIG`, already mounted on `files`).
+    pub fn from_disc(files: &mut crate::big::Files) -> Result<Self, String> {
+        let mut bank = Self::new();
+        for f in anim_names::FILES {
+            if !(f.ends_with("anim") || f.ends_with("Uber")) {
+                continue;
+            }
+            let path = format!("|data/char/{f}.afl");
+            if let Some(bytes) = files.load(&path).map_err(|e| format!("{path}: {e}"))? {
+                bank.insert_afl(&bytes).map_err(|e| format!("{path}: {e}"))?;
+            }
+        }
+        Ok(bank)
+    }
+
+    pub fn get(&self, name: &str) -> Option<ClipMarkers> { self.by_name.get(name).copied() }
+    pub fn len(&self) -> usize { self.by_name.len() }
+    pub fn is_empty(&self) -> bool { self.by_name.is_empty() }
+}
+
 impl AflClip {
     pub fn frames(&self) -> u16 { self.header.words[0] }
     pub fn name(&self) -> Option<&'static str> { clip_name(self.header.hash) }
     pub fn group(&self, kind: u8) -> Option<&AflHeader> { self.groups.iter().find(|g| g.kind == kind) }
+    /// The clip's first four event markers (`+0xc..+0x14`, `0xffff` = unused; `AnimClip_Advance` 0x15a030).
+    pub fn markers(&self) -> [u16; 4] {
+        [self.header.words[1], self.header.words[2], self.header.words[3], self.header.words[4]]
+    }
+    /// The clip's second four event markers (`+0x14..+0x1c`, `0xffff` = unused; `AnimClip_Advance` 0x15a030).
+    pub fn markers2(&self) -> [u16; 4] {
+        [self.header.words[5], self.header.words[6], self.header.words[7], self.header.words[8]]
+    }
+    pub fn clip_markers(&self) -> ClipMarkers {
+        ClipMarkers { frames: self.frames(), markers: self.markers() }
+    }
 }
 
 pub struct AflFile<'a> {

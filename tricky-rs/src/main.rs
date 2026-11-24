@@ -218,6 +218,8 @@ struct CharLib { chars: Vec<CharEntry>, board: Option<CharModel>,
     fr: Option<AnimSet>, ex: Option<AnimSet>, cm: Option<AnimSet>,
     /// `/SLUS_203.26` bytes and `TRICKY_DISC` path for live `AnimHost` (`AnimCtl` + `PoseBlend`, rows G5d1–G5d3)
     disc_elf: Option<(Vec<u8>, String)>,
+    /// Clip length & marker table read from `.afl` headers (`AnimClip_Advance` 0x15a030, row E8t)
+    clip_markers: Option<std::sync::Arc<tricky_data::afl::ClipMarkerBank>>,
     /// where the characters were found (the trick book lives there too)
     dir: PathBuf }
 /// Root of a rider's body. Holds the smoothed pose so it moves fluidly.
@@ -2393,9 +2395,15 @@ fn ride(
     }
 }
 
-/// Attach live `AnimHost` (`AnimCtl` + `PoseBlend`, rows G5d1–G5d3) to the player and all opponents when
-/// `TRICKY_DISC` was loaded into `CharLib`.
+/// Attach live `AnimHost` (`AnimCtl` + `PoseBlend`, rows G5d1–G5d3) and `.afl` clip markers (row E8t) to the
+/// player and all opponents when `TRICKY_DISC` was loaded into `CharLib`.
 fn attach_rider_anims(lib: &CharLib, rider: &mut Rider, opponents: &mut Opponents, game: &ui::Game) {
+    if let Some(bank) = &lib.clip_markers {
+        rider.attach_clip_markers(bank.clone());
+        for o in &mut opponents.0 {
+            o.rider.attach_clip_markers(bank.clone());
+        }
+    }
     let Some((elf, disc_path)) = lib.disc_elf.as_ref() else { return };
     let Ok(disc) = tricky_data::disc::Disc::open(disc_path) else { return };
     let mut files = tricky_data::big::Files::new(disc);
@@ -2558,6 +2566,18 @@ fn load_chars(level_dir: &Path, images: &mut Assets<Image>, materials: &mut Asse
         if let Ok(f) = AnimSet::load(&dir.join("anims/finish.json")) {
             match lib.scenes.as_mut() { Some(s) => s.merge(f), None => lib.scenes = Some(f) }
         }
+    }
+    let mut marker_bank = tricky_data::afl::ClipMarkerBank::new();
+    for set in [&lib.anims, &lib.fr, &lib.ex, &lib.cm].into_iter().flatten() {
+        set.export_markers(&mut marker_bank);
+    }
+    for c in &lib.chars {
+        for set in c.ubers.iter().flatten() {
+            set.export_markers(&mut marker_bank);
+        }
+    }
+    if !marker_bank.is_empty() {
+        lib.clip_markers = Some(std::sync::Arc::new(marker_bank));
     }
     println!("animations: {}", lib.anims.as_ref().map_or(0, |a| a.len()));
     println!("characters: {}", lib.chars.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(", "));
@@ -2826,7 +2846,7 @@ fn animate(set: &AnimSet, kind_set: Option<(&AnimSet, &str)>, cm: Option<&AnimSe
         let grab = (shown as usize).checked_sub(1).and_then(|i| r.data.rows.get(i)).map_or("", |row| row.clip);
         if let Some(c) = clip(grab) {
             let _ = c.len();
-            let peak = rider::grab_markers(grab).1;
+            let peak = c.clip_markers().marker(2).unwrap_or(17.0);
             a.grab_frame = if r.grab != 0 { r.grab_hold } else { r.grab_out.map_or(0.0, |g| g.1) };
             a.grab = shown;
             let held = c.at(a.grab_frame.max(0.01), false);
