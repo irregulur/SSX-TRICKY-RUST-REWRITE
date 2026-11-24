@@ -338,6 +338,75 @@ pub fn bind(cfg: &PadConfig, slots: [u16; 15]) -> ButtonMap {
     m
 }
 
+/// The mapper's three tables as `Pad_GetConfig` 0x17a290 copies them out of a `cInput` and `Pad_SetConfig`
+/// 0x17a2f8 back in (`EAMem_Copy`): +4 the pressed buttons (0xa4 bytes), +0xa8 the looked-at sets (0xa4), +0x14c the
+/// axes (0x80: mask, negate). The shown buttons (+0x1cc) are not among them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PadTables {
+    pub pressed: [u32; 0x29],
+    pub looked_at: [u32; 0x29],
+    pub axes: [(u32, bool); 16],
+}
+
+/// `Pad_GetConfig` 0x17a290(input, pressed, looked_at, axes): the three tables copied out
+pub fn get_config(m: &ButtonMap) -> PadTables {
+    PadTables { pressed: m.pressed, looked_at: m.looked_at, axes: m.axes }
+}
+
+/// `Pad_SetConfig` 0x17a2f8(input, pressed, looked_at, axes): the three tables copied in
+pub fn set_config(m: &mut ButtonMap, t: &PadTables) {
+    m.pressed = t.pressed;
+    m.looked_at = t.looked_at;
+    m.axes = t.axes;
+}
+
+/// The Trick Tutorial's two pad maps (the lesson manager's +0xdc / +0x180 / +0x224 the player's, +0x2a4 / +0x348 /
+/// +0x3ec the lesson's), swapped in and out around the preview (`cLessonPreviewHandler::Enter` 0x14e138 puts the
+/// lesson's in, `Exit` 0x14e2b0 the player's back, both with `Pad_SetConfig` on the player's `cInput`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LessonPads {
+    pub player: PadTables,
+    pub lesson: PadTables,
+}
+
+impl LessonPads {
+    /// `LessonMan_Init` 0x14aaa0's pad part: the player's tables kept (`Pad_GetConfig`); the default button map
+    /// (`Pad_LoadButtonMap` with 0: `map0`, `None` when it fails to load) bound over them as `Pad_SetupVibration`
+    /// binds a map but with `Input_BindButton` 0x179818 / `Input_BindAxis` 0x179838 alone (the 15 grab combos to the
+    /// rider's trick slots, the 14 buttons to actions 0x1b..0x28, the 16 axes; nothing shown, every other entry left
+    /// as the player's); the result kept as the lesson's (`Pad_GetConfig`) and the player's put back
+    /// (`Pad_SetConfig`). So the lesson always plays on the default map, whichever map the player chose.
+    pub fn new(input: &mut ButtonMap, map0: Option<&PadConfig>, slots: [u16; 15]) -> LessonPads {
+        let player = get_config(input);
+        if let Some(cfg) = map0 {
+            let mut button = |a: usize, pressed: u32, other: u32| {
+                input.pressed[a] = pressed;
+                input.looked_at[a] = other | pressed;
+            };
+            for (k, s) in slots.iter().enumerate() {
+                let (p, o) = cfg.grabs.get(k).copied().unwrap_or((0, 0));
+                button(*s as usize, p, o);
+            }
+            for k in 0..14 {
+                let (p, o) = cfg.bools.get(k).copied().unwrap_or((0, 0));
+                button(0x1b + k, p, o);
+            }
+            for k in 0..16 {
+                let (mask, neg) = cfg.analog.get(k).copied().unwrap_or((0, 0));
+                input.axes[k] = (mask, neg != 0);
+            }
+        }
+        let lesson = get_config(input);
+        set_config(input, &player);
+        LessonPads { player, lesson }
+    }
+
+    /// The preview's swap: the lesson's tables in (its Enter) or the player's back (its Exit)
+    pub fn swap(&self, input: &mut ButtonMap, to_lesson: bool) {
+        set_config(input, if to_lesson { &self.lesson } else { &self.player });
+    }
+}
+
 /// The front end's keys (0x3857c0): a button (or direction) and the key it gives, plain and with a shoulder held.
 pub const KEYS: [(u32, u32, u32); 14] = [
     (0x100, 0x1b, 0x1b),

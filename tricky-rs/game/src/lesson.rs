@@ -120,9 +120,13 @@ pub trait Env {
     fn rider_finish(&mut self);
     /// The rider's speed fields (`Lesson_SetupRider` 0x14b768): page 5 gives (1.0, 20.0), else (0, 0).
     fn set_rider_speed(&mut self, a: f32, b: f32);
-    /// Swap to the lesson pad map (`true`, +0x2a4 ..) or back to the player's (`false`, +0xdc ..).
+    /// Swap to the lesson pad map (`true`, +0x2a4 ..) or back to the player's (`false`, +0xdc ..): `Pad_SetConfig`
+    /// 0x17a2f8 on the player's `cInput`, [`crate::input::LessonPads::swap`] (the two maps made as `LessonMan_Init`
+    /// makes them, [`crate::input::LessonPads::new`]).
     fn pad_map(&mut self, lesson: bool);
-    /// Load `data\tutorial\<board><trick+1:02>.inp` into the recording buffer and rewind it; returns its length.
+    /// Load `data\tutorial\<rider><trick+1:02>.inp` (`<rider>` the rider's short name, `gRider_Table` +8; the file is
+    /// in the rider's lesson archive `data/tutorial/<rider>.big`) into the recording buffer and rewind it; returns its
+    /// length.
     fn load_recording(&mut self, rider: usize, trick: i32) -> u32;
     /// `Replay_Clear` when the replay exists.
     fn replay_clear(&mut self);

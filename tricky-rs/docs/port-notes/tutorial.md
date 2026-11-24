@@ -15,16 +15,26 @@ other courses. (Proven.)
 
 ## Data it reads
 
-- `data/tutorial/<rider>.big` (format string 0x31df58, `<rider>` = `gRider_Table[rider][2]`), opened with `BigArchive_Open`.
-- `data\tutorial\<board><NN>.inp` (0x31df38; `<board>` from the table at 0x331eb0 by rider, `NN` = trick index + 1): the
-  recorded pad input of the demonstration of each trick, played back by the preview. The buffer (0x4d598 bytes) is the
-  lesson manager's +0x46c.
+- `data/tutorial/<rider>.big` (format string 0x31df58, `<rider>` = `gRider_Table[rider][2]`), opened with `BigArchive_Open`
+  (C11c2, read on the disc): a `C0FB` archive holding exactly the rider's 30 recordings (below), RefPack-packed; nothing
+  else (no sounds, no speech). Twelve archives, one per rider (`BROD`, `EDDI`, `ELIS`, `JP`, `KAOR`, `LUTH`, `MAC`,
+  `MARI`, `MOBY`, `PSYM`, `SEEI`, `ZOE`).
+- `data\tutorial\<rider><NN>.inp` (0x31df38; `<rider>` from 0x331eb0 by rider, which is `gRider_Table` 0x331ea8 + 8, the
+  same short name as the archive's, not a board; `NN` = trick index + 1): the recorded pad input of the demonstration
+  of each trick, played back by the preview. The buffer (0x4d598 bytes) is the lesson manager's +0x46c; each file
+  unpacks to exactly that size (`File_LoadUnpackInto2`).
 - `data/textures/tb_<rider><n><suffix>` (0x31df70): 6 pages x 5 trick pictures per rider (`.ssh`), loaded in the
   constructor into +0x470 .. (30 handles; entry `Shape_GetEntry(sheet, 0..4)` named `%02d`).
 - `data/tutorial/trickdef.dat` is the trick book (see frontend.md, scoring.md); the page is `lesson+0x50c` (0..5),
   `TrickBook_PageFirstTrick(page)` gives its first trick; the chosen trick is `lesson+0x4e8`.
-- The pad map: `Pad_LoadButtonMap`, the 14 lesson buttons (0x1b..0x28) and 16 stick entries copied to the input
-  system at the start (0x17a290, 0x179818/0x179838), restored at exit (0x17a2f8).
+- The pad map (C11c2, `input::LessonPads`, checked: `tests/lesson_pads.rs`): `LessonMan_Init` keeps the player's
+  `cInput` tables (`Pad_GetConfig` 0x17a290: +4 pressed, +0xa8 looked-at, +0x14c axes into lesson +0xdc / +0x180 /
+  +0x224), loads the **default** button map (`Pad_LoadButtonMap` with 0, whatever map the player chose) and binds it over
+  them with `Input_BindButton` / `Input_BindAxis` alone (the 15 grabs to the rider's trick slots from 0x333098, the 14
+  buttons to 0x1b..0x28, the 16 axes; the shown buttons untouched; if the map fails to load nothing is bound), keeps
+  that as the lesson's (+0x2a4 / +0x348 / +0x3ec) and puts the player's back (`Pad_SetConfig` 0x17a2f8).
+  `cLessonPreviewHandler::Enter` 0x14e138 puts the lesson's in (`Pad_SetConfig` on race +0x8c's controller +0x870) and
+  `Exit` 0x14e2b0 the player's back: only the preview plays on the default map.
 
 ## The lesson manager
 
@@ -85,11 +95,15 @@ Wait 435.0). Exit (11): sets the game object's done flag (+0x54), hides HUD 10 a
 
 Read from `cPlayer::GetControls` (calls `LessonMan_PreviewLoadPad` 0x14b7c8 before and `LessonMan_AdvanceAndRestorePad` 0x14b8a8 or `LessonMan_RestorePad` 0x14b958 after the controls
 when the lesson manager exists), `cLessonPreviewHandler::Enter/Update`. Ported as `tricky-rs/data/src/inp.rs` (`Inp::parse`,
-`Playback`; tested on synthetic bytes, no real `.inp` is in the inputs).
+`Playback`), checked on all 360 recordings of the disc (C11c2, `tricky-rs/data/tests/inp_disc.rs`).
 
 - The 0x4d598-byte buffer is a six-word header (word 0 position, zeroed after loading; word 1 frame count; words 2..5
   unread) and up to 7200 records of 44 bytes (24 + 7200 x 44 = 0x4d598): a 12-byte control record, then the 32-byte state of
   the pad device (previous buttons, buttons, six stick floats, read by `Pad_ReadAxis`).
+- On the disc (C11c2): every file is the whole buffer; word 0 is the frame count (the recorder's position left at the
+  end, which the game zeroes on load), words 2..5 are 0; 1000 to 1068 frames (about 17 s); each frame's previous
+  buttons equal the frame before's buttons (proving the pad state at record offset 12); the six sticks are bytes over
+  255; the control record's first word ranges over small values and pad-like words (0..0x1a, 0x1a0.., 0xf800..).
 - Preview (state 5): before the controls are read the pad's state is saved (to lesson +0xbc, 32 bytes) and replaced by the
   frame at the position; after, the position advances while below the count and the live state is put back. Perform (state 7)
   only advances the position. The preview ends when the position reaches the count.
@@ -132,5 +146,5 @@ before it; RestartLesson's Update goes to 9 through `vf9`. 120,000 steps of rand
 
 ## Not read yet
 
-- `Lesson_ResetScene` 0x14d7d0's callees, the contents of `data/tutorial/<rider>.big` (C11c2), the overlays and the load
+- `Lesson_ResetScene` 0x14d7d0's callees, the overlays and the load
   screen (C11d), the texture loader `FUN_00112920`.

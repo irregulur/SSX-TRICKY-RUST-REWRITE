@@ -1,4 +1,5 @@
-//! The Trick Tutorial's recorded pad input: `data\tutorial\<board><NN>.inp` (board row C11c).
+//! The Trick Tutorial's recorded pad input: `data\tutorial\<rider><NN>.inp` (board row C11c), in the rider's lesson
+//! archive `data/tutorial/<rider>.big`.
 //!
 //! Proven from `cLessonPreviewHandler::Enter` 0x14e138 (reads the file into the lesson manager's 0x4d598-byte
 //! buffer, zeroes word 0), the lesson hooks in `cPlayer::GetControls` (the code around 0x152694..0x1526d4) (`FUN_0014b7c8` 0x14b7c8 before
@@ -14,9 +15,10 @@
 //!
 //! The preview (state 5) plays the recording by swapping the pad's state for the frame's before the controls
 //! are read, and putting the live state back after; Perform (state 7) only counts the position up.
-//! Not checked against a real file (the disc's `data/tutorial` is not in the repository's inputs): the sizes
-//! add up to the buffer size, the 7200 frames, and the field order within a record is the one the code reads
-//! (the pad state at record offset 12).
+//! Checked on every recording of the disc (`tests/inp_disc.rs`, row C11c2): the 360 files of the twelve lesson
+//! archives each unpack to the whole buffer, word 0 is the frame count the recorder left (the game zeroes it),
+//! words 2..5 are 0, 1000 to 1068 frames, each frame's previous buttons are the frame before's (so the pad state
+//! is at record offset 12), and the sticks are bytes over 255.
 
 /// The state of the pad device that a frame carries.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]

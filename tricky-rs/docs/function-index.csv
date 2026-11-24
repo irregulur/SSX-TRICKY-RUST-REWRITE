@@ -1610,8 +1610,8 @@ address,size,name,system,status
 0x17a148,96,Parse_SkipSpace,render,ported
 0x17a1a8,96,Parse_IsSectionEnd,render,ported
 0x17a208,136,Parse_SkipLine,render,ported
-0x17a290,100,Pad_GetConfig,input,not started
-0x17a2f8,96,Pad_SetConfig,input,not started
+0x17a290,100,Pad_GetConfig,input,checked
+0x17a2f8,96,Pad_SetConfig,input,checked
 0x17a3a0,64,cInput::__tf,runtime,host
 0x17a420,416,Input_Init,input,ported
 0x17a5c0,152,Input_FreeDevices,input,ported
