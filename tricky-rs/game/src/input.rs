@@ -554,3 +554,79 @@ impl Rumble {
         }
     }
 }
+
+/// The pad config and devices on the game's bytes (row E10d). The config (`Pad_ParseButtonMap`'s output): +8 the
+/// button pairs' count, +0xc the grab pairs', +0x10 the axes'; pairs of words from +0x14 (buttons: pressed,
+/// others), +0x84 (grabs) and +0xfc (axes: mask, negate), 8 bytes a pair.
+pub mod bytes {
+    use crate::fe3dstate::FeEnv;
+    use crate::pf::Mem;
+
+    /// `Pad_ParseButtonNames` 0x179e60, `Mem_Delete` 0x114f80, `scePadPortClose` 0x2e74c0
+    pub const PARSE_NAMES: u32 = 0x179e60;
+    pub const MEM_DELETE: u32 = 0x114f80;
+    pub const PAD_PORT_CLOSE: u32 = 0x2e74c0;
+    /// `cPadDevice`'s and `cPS2Device`'s tables (at +0x38)
+    pub const PAD_DEVICE_VT: u32 = 0x385868;
+    pub const PS2_DEVICE_VT: u32 = 0x385908;
+
+    fn pair(m: &mut Mem, e: &mut dyn FeEnv, cfg: u32, count: u32, at: u32, a: u32, b: u32, flag: bool) {
+        let x = e.call(m, PARSE_NAMES, &[cfg, a]);
+        let n = m.r32(cfg + count);
+        m.w32(cfg + at + 8 * n, x);
+        let y = e.call(m, PARSE_NAMES, &[cfg, b]);
+        let n = m.r32(cfg + count);
+        m.w32(cfg + at + 4 + 8 * n, if flag { (y != 0) as u32 } else { y });
+        m.w32(cfg + count, n.wrapping_add(1));
+    }
+
+    /// `Pad_ParseButtonPair` 0x179fb0(cfg, a, b): a button pair (the names of `a` pressed, of `b` the others) added
+    pub fn parse_button_pair(m: &mut Mem, e: &mut dyn FeEnv, cfg: u32, a: u32, b: u32) {
+        pair(m, e, cfg, 8, 0x14, a, b, false);
+    }
+    /// `Pad_ParseButtonPair2` 0x17a038(cfg, a, b): a grab pair added
+    pub fn parse_grab_pair(m: &mut Mem, e: &mut dyn FeEnv, cfg: u32, a: u32, b: u32) {
+        pair(m, e, cfg, 0xc, 0x84, a, b, false);
+    }
+    /// `Pad_ParseAxisPair` 0x17a0a0(cfg, a, b): an axis added (the names of `a` its mask, whether `b` names any its
+    /// negate)
+    pub fn parse_axis_pair(m: &mut Mem, e: &mut dyn FeEnv, cfg: u32, a: u32, b: u32) {
+        pair(m, e, cfg, 0x10, 0xfc, a, b, true);
+    }
+
+    /// The getters (cfg, i): `PadCfg_ButtonPressed` 0x17a018 (+0x14), `PadCfg_ButtonOthers` 0x17a028 (+0x18),
+    /// `PadCfg_AxisMask` 0x17a108 (+0xfc), `PadCfg_AxisNegate` 0x17a118 (+0x100), `PadCfg_GrabPressed` 0x17a128
+    /// (+0x84), `PadCfg_GrabOthers` 0x17a138 (+0x88): the word at that offset of pair `i`
+    pub fn get(m: &Mem, cfg: u32, at: u32, i: u32) -> u32 {
+        m.r32(cfg.wrapping_add(i << 3).wrapping_add(at))
+    }
+
+    /// `cPadDevice::cPadDevice` 0x17aa08(d): the table, +0x30 = -1, +8 = 1, the rest (+0xc..+0x34) zero; `d`
+    pub fn pad_device_construct(m: &mut Mem, d: u32) -> u32 {
+        m.w32(d + 0x38, PAD_DEVICE_VT);
+        m.w32(d + 0x30, u32::MAX);
+        m.w32(d + 8, 1);
+        for at in [0x10, 0xc, 0x14, 0x18, 0x2c, 0x34, 0x1c, 0x20, 0x24, 0x28] {
+            m.w32(d + at, 0);
+        }
+        d
+    }
+
+    /// `cPadDevice::~cPadDevice` 0x17ab58(d, how): the table back; deleted when `how` has bit 0. Its virtuals
+    /// vf3 0x17aa58, vf4 0x17aa60, vf5 0x17aa90, vf6 0x17aa88, vf7 0x17aa80 do nothing, vf1 0x17aa68 answers 0 and
+    /// vf2 0x17aa70 0.0; `cPS2Device::vf8` 0x17ad60 answers 0x2c
+    pub fn pad_device_destruct(m: &mut Mem, e: &mut dyn FeEnv, d: u32, how: u32) {
+        m.w32(d + 0x38, PAD_DEVICE_VT);
+        if how & 1 != 0 {
+            e.call(m, MEM_DELETE, &[d]);
+        }
+    }
+
+    /// `cPS2Device::~cPS2Device` 0x17ad10(d, how): its table back, its pad port (+0x3c, slot +0x40) closed, then the
+    /// pad device's destructor
+    pub fn ps2_device_destruct(m: &mut Mem, e: &mut dyn FeEnv, d: u32, how: u32) {
+        m.w32(d + 0x38, PS2_DEVICE_VT);
+        e.call(m, PAD_PORT_CLOSE, &[m.r32(d + 0x3c), m.r32(d + 0x40)]);
+        pad_device_destruct(m, e, d, how);
+    }
+}

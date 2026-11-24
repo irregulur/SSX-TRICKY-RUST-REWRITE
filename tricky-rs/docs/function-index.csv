@@ -1598,15 +1598,15 @@ address,size,name,system,status
 0x179b18,636,Pad_ParseButtonMap,input,checked
 0x179d98,200,Parse_FindSection,render,ported
 0x179e60,336,Pad_ParseButtonNames,input,ported
-0x179fb0,104,Pad_ParseButtonPair,input,not started
-0x17a018,16,PadCfg_ButtonPressed,input,not started
-0x17a028,16,PadCfg_ButtonOthers,input,not started
-0x17a038,104,Pad_ParseButtonPair2,input,not started
-0x17a0a0,104,Pad_ParseAxisPair,input,not started
-0x17a108,16,PadCfg_AxisMask,input,not started
-0x17a118,16,PadCfg_AxisNegate,input,not started
-0x17a128,16,PadCfg_GrabPressed,input,not started
-0x17a138,16,PadCfg_GrabOthers,input,not started
+0x179fb0,104,Pad_ParseButtonPair,input,checked
+0x17a018,16,PadCfg_ButtonPressed,input,checked
+0x17a028,16,PadCfg_ButtonOthers,input,checked
+0x17a038,104,Pad_ParseButtonPair2,input,checked
+0x17a0a0,104,Pad_ParseAxisPair,input,checked
+0x17a108,16,PadCfg_AxisMask,input,checked
+0x17a118,16,PadCfg_AxisNegate,input,checked
+0x17a128,16,PadCfg_GrabPressed,input,checked
+0x17a138,16,PadCfg_GrabOthers,input,checked
 0x17a148,96,Parse_SkipSpace,render,ported
 0x17a1a8,96,Parse_IsSectionEnd,render,ported
 0x17a208,136,Parse_SkipLine,render,ported
@@ -1622,19 +1622,19 @@ address,size,name,system,status
 0x17a840,84,Input_FindPressedDevice,input,checked
 0x17a898,20,Input_GetDevicePressed,input,checked
 0x17a8b0,164,Input_ResetDevices,input,checked
-0x17aa08,76,cPadDevice::cPadDevice,input,not started
-0x17aa58,8,cPadDevice::vf3_17aa58,input,not started
-0x17aa60,8,cPadDevice::vf4_17aa60,input,not started
-0x17aa68,8,cPadDevice::vf1_17aa68,input,not started
-0x17aa70,12,cPadDevice::vf2_17aa70,input,not started
-0x17aa80,8,cPadDevice::vf7_17aa80,input,not started
-0x17aa88,8,cPadDevice::vf6_17aa88,input,not started
-0x17aa90,8,cPadDevice::vf5_17aa90,input,not started
-0x17ab58,36,cPadDevice::~cPadDevice,input,not started
+0x17aa08,76,cPadDevice::cPadDevice,input,checked
+0x17aa58,8,cPadDevice::vf3_17aa58,input,checked
+0x17aa60,8,cPadDevice::vf4_17aa60,input,checked
+0x17aa68,8,cPadDevice::vf1_17aa68,input,checked
+0x17aa70,12,cPadDevice::vf2_17aa70,input,checked
+0x17aa80,8,cPadDevice::vf7_17aa80,input,checked
+0x17aa88,8,cPadDevice::vf6_17aa88,input,checked
+0x17aa90,8,cPadDevice::vf5_17aa90,input,checked
+0x17ab58,36,cPadDevice::~cPadDevice,input,checked
 0x17ab80,64,cPadDevice::__tf,runtime,host
 0x17ac40,204,cPS2Device::cPS2Device,render,ported
-0x17ad10,76,cPS2Device::~cPS2Device,render,not started
-0x17ad60,8,cPS2Device::vf8_17ad60,render,not started
+0x17ad10,76,cPS2Device::~cPS2Device,render,checked
+0x17ad60,8,cPS2Device::vf8_17ad60,render,checked
 0x17ad68,1288,PadDevice_Poll,input,checked
 0x17b270,8,cPS2Device::vf9_17b270,render,ported
 0x17b278,964,cPS2Device::vf10_17b278,render,checked
