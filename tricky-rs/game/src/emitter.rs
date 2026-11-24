@@ -204,7 +204,8 @@ pub fn calc_bounds(e: &[u32]) -> (V4, V4) {
     let dlife = f(e, 0x14);
     let base_life = f(e, 0x1c);
     let mut t_max = base_life + dlife;
-    let hi_life = base_life + dlife + dlife;
+    // (the original doubles the spread first: one rounding, `add.s f2, f0, f0` at 0x1d5bb4)
+    let hi_life = base_life + (dlife + dlife);
     if t_max <= hi_life {
         t_max = hi_life;
     }

@@ -430,3 +430,8 @@ Left open: the MockupEditor's empty item callbacks 0x1d41c8 (button 0x40 on the 
   `CacheBuffer_EvictThunk` 0x2520a0, `Replay_NoOpHook` 0x18ebc8, `Replay_KeyframeHookA` / `B` 0x193058 / 0x193060
   (empty), `MockupItem_StubA` / `B` 0x1d41c8 / 0x1d41d0 (empty) and `MockupEditor_ForEachA` / `B` 0x1d4d08 /
   0x1d4d78 (each item, stride 0xd4).
+
+Row X3c (proven, 2026-11-24): `ParticleSys_CalcBounds` 0x1d5b60 takes the longest life as `base + (spread + spread)`
+(the spread doubled first, `add.s f2, f0, f0` at 0x1d5bb4: one rounding), not `(base + spread) + spread`; the two
+part by one ulp on rare records (the emitter test's case 134: the box's min y 0xc36a388b against 0xc36a388a). Fixed in
+`emitter::calc_bounds`; `tests/emitter.rs` passes again.

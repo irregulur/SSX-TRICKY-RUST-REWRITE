@@ -2958,20 +2958,20 @@ address,size,name,system,status
 0x1d4d08,108,MockupEditor_ForEachA,game,not started
 0x1d4d78,108,MockupEditor_ForEachB,game,not started
 0x1d4de8,408,MockupEditor_DrawItems,game,not started
-0x1d50b0,208,ParticleSys_InitEmitter,render,ported
+0x1d50b0,208,ParticleSys_InitEmitter,render,checked
 0x1d5180,360,ParticleSys_RandomizeFactors,render,ported
-0x1d52e8,20,ParticleSys_SetSizeRange,render,ported
-0x1d5300,32,ParticleSys_SetLifeRange,render,ported
+0x1d52e8,20,ParticleSys_SetSizeRange,render,checked
+0x1d5300,32,ParticleSys_SetLifeRange,render,checked
 0x1d5338,68,ParticleSys_SetSpawnPoint,render,not started
-0x1d5380,152,ParticleSys_SetSpawnLine,render,ported
-0x1d5418,196,ParticleSys_SetSpawnQuad,render,ported
+0x1d5380,152,ParticleSys_SetSpawnLine,render,checked
+0x1d5418,196,ParticleSys_SetSpawnQuad,render,checked
 0x1d54e0,104,ParticleSys_SetForce,render,not started
-0x1d5548,36,ParticleSys_ClearForce,render,ported
+0x1d5548,36,ParticleSys_ClearForce,render,checked
 0x1d5570,544,ParticleSys_SetVelocityCone,render,not started
-0x1d5790,332,ParticleSys_SetVelocityBasis,render,ported
-0x1d58e0,252,ParticleSys_SetColors,render,ported
-0x1d59e0,16,ParticleSys_SetTime,render,ported
-0x1d59f0,24,ParticleSys_AdvanceTime,render,ported
+0x1d5790,332,ParticleSys_SetVelocityBasis,render,checked
+0x1d58e0,252,ParticleSys_SetColors,render,checked
+0x1d59e0,16,ParticleSys_SetTime,render,checked
+0x1d59f0,24,ParticleSys_AdvanceTime,render,checked
 0x1d5a08,36,Rand_VuNext,common,checked
 0x1d5a30,304,ParticleSys_StepEmitter,render,checked
 0x1d5b60,10532,ParticleSys_CalcBounds,render,checked
