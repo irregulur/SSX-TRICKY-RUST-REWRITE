@@ -24,6 +24,12 @@ pub struct Shot { pub pos: Vec3, pub yaw: f32, pub pitch: f32, pub fov: f32, pub
 #[derive(Clone, Copy, Debug)]
 pub struct SceneSpot { pub place: bool, pub frame: u32, pub pos: Vec3, pub yaw: f32 }
 
+/// One actor entry from a CML scene record (type 5, 0x30 bytes each, `CamScript_StartScene` 0x176850):
+/// `+0x00` animation script name (`CamAnimation` type 1), `+0x14` rider selector (`0` player 0,
+/// `10..=12` players 1..=3, `0xd` next unassigned rider, `0xe..=0x19` character `kind - 0xe`), and placement spot.
+#[derive(Clone, Debug)]
+pub struct SceneActor { pub anim: String, pub kind: u32, pub spot: SceneSpot }
+
 #[derive(Clone, Debug)]
 struct Entry { name: String, op: u32, curve: u32, p: f32, t0: f32, t1: f32 }
 
@@ -103,12 +109,66 @@ impl Cml {
     }
     /// A scene's riders in order (up to eight).
     pub fn scene(&self, n: &str) -> Vec<SceneSpot> {
+        self.scene_actors(n).into_iter().map(|a| a.spot).collect()
+    }
+    /// Full actor entries of a CML scene record (type 5, `CamScript_StartScene` 0x176850): animation script name
+    /// (`+0x00`), rider selector (`+0x14`), and placement spot (`+0x18..+0x30`).
+    pub fn scene_actors(&self, n: &str) -> Vec<SceneActor> {
         let Some((d, b)) = self.find(5, n) else { return Vec::new() };
-        (0..8).map(|i| b + i * 0x30).filter(|e| word(d, e + 0x10) != 0 && word(d, e + 0x10) != NONE).map(|e| SceneSpot {
-            place: word(d, e + 0x18) == 1, frame: word(d, e + 0x1c),
-            pos: Vec3::new(float(d, e + 0x20).unwrap_or(0.0), float(d, e + 0x24).unwrap_or(0.0), float(d, e + 0x28).unwrap_or(0.0)),
-            yaw: float(d, e + 0x2c).unwrap_or(0.0),
+        (0..8).map(|i| b + i * 0x30).filter(|e| word(d, e + 0x10) != 0 && word(d, e + 0x10) != NONE).map(|e| SceneActor {
+            anim: if word(d, e) == NONE { String::new() } else { name(d, e) },
+            kind: word(d, e + 0x14),
+            spot: SceneSpot {
+                place: word(d, e + 0x18) == 1, frame: word(d, e + 0x1c),
+                pos: Vec3::new(float(d, e + 0x20).unwrap_or(0.0), float(d, e + 0x24).unwrap_or(0.0), float(d, e + 0x28).unwrap_or(0.0)),
+                yaw: float(d, e + 0x2c).unwrap_or(0.0),
+            },
         }).collect()
+    }
+    /// Look up a `CamAnimation` clip-key list (`-1`-terminated `i32`s, CML type 1) as `CamAnimation_InitScoped`
+    /// (`0x16d9d0` -> `Cml_FindObjectInScope` `0x16e588` -> `CmlFile_FindObjectInScope` `0x16e318`) and
+    /// `CamAnimation::CamAnimation` (`0x16d990` -> `Cml_FindObject` `0x16e518`) do: scoped by character name first,
+    /// falling back to unscoped kind 1.
+    pub fn anim_keys(&self, anim_name: &str, scope: Option<&str>) -> Vec<i32> {
+        let find_scope = |d: &[u8], want: &str| -> Option<usize> {
+            fn walk(d: &[u8], off: u32, want: &str, depth: usize) -> Option<usize> {
+                if off == 0xFFFF_FFFF || depth > 256 { return None; }
+                let o = off as usize;
+                if o + 0x34 > d.len() { return None; }
+                if let Some(hit) = walk(d, word(d, o), want, depth + 1) { return Some(hit); }
+                if let Some(hit) = walk(d, word(d, o + 4), want, depth + 1) { return Some(hit); }
+                if name(d, o + 0x24).eq_ignore_ascii_case(want) { Some(o) } else { None }
+            }
+            walk(d, word(d, 0x1c), want, 0)
+        };
+        let mut hit: Option<(&[u8], usize)> = None;
+        if let Some(sc) = scope {
+            'outer: for d in &self.files {
+                let Some(so) = find_scope(d, sc) else { continue };
+                let mut r = word(d, so + 8);
+                let mut guard = 0;
+                while r != 0xFFFF_FFFF && (r as usize) + 0x20 <= d.len() && guard < 10_000 {
+                    if name(d, r as usize + 0x10).eq_ignore_ascii_case(anim_name) {
+                        hit = Some((d, word(d, r as usize + 8) as usize));
+                        break 'outer;
+                    }
+                    r = word(d, r as usize + 4);
+                    guard += 1;
+                }
+            }
+        }
+        if hit.is_none() {
+            hit = self.find(1, anim_name);
+        }
+        let Some((d, b)) = hit else { return Vec::new() };
+        let mut out = Vec::new();
+        for k in 0..16 {
+            let Some(bytes) = d.get(b + 4 * k..b + 4 * k + 4) else { break };
+            let v = i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+            if v < 0 { break; }
+            out.push(v);
+        }
+        out
     }
     fn script(&self, n: &str) -> Option<Vec<Entry>> {
         let (d, b) = self.find(2, n)?;

@@ -1993,12 +1993,14 @@ fn ride(
         if !sc.ended {
             if let (Some(anim), Some((_, disc_path))) = (r.anim.as_ref(), lib.disc_elf.as_ref()) {
                 let missing = sc.clips.iter().any(|name| {
-                    anim.clip_id_by_name(name).is_some_and(|cid| !anim.is_clip_loaded(cid))
+                    !name.is_empty() && anim.clip_id_by_name(name).is_some_and(|cid| !anim.is_clip_loaded(cid))
                 });
                 if missing {
                     if let Ok(disc) = tricky_data::disc::Disc::open(disc_path) {
                         let mut files = tricky_data::big::Files::new(disc);
                         if files.mount_game_archives().is_ok() {
+                            // `AnimData_OpenBig(RaceScene_GetAnimList)` (`0x169948`, row G11e)
+                            anim.ensure_scene_files_loaded(roster.scenes.anim_file_ids(), |p| files.load(p).ok().flatten());
                             anim.ensure_scene_clips_loaded(&sc.clips, |p| files.load(p).ok().flatten());
                         }
                     }
@@ -2419,15 +2421,54 @@ fn ride(
                 if let Some(g) = &o.grudge { game.attitude.insert(rivals::index(lib.chars.get(o.character).map_or("", |c| c.name.as_str())), g.settled()); }
             }
         }
-        // the post-race scenes (cEndRaceHandler_Update): a rival who has it in for the player has a
-        // word first, then the player wins or loses at the finish area
-        let me = rivals::index(lib.chars.get(lib.player).map_or("", |c| c.name.as_str()));
-        let rival = opponents.0.iter().enumerate()
-            .filter_map(|(i, o)| o.grudge.as_ref().filter(|g| g.score() > 2).map(|g| (g.score(), i)))
-            .max_by_key(|a| a.0)
-            .map(|(_, i)| (rivals::index(lib.chars.get(opponents.0[i].character).map_or("", |c| c.name.as_str())), i + 1));
+        // the post-race scenes (`cEndRaceHandler::Enter` 0x113e10, row G11e): a rival who has it in for the
+        // player has a word first, then the win/lose scene at the finish area.
         match race.0.cml.clone() {
+            Some(_) if !quiet && race.0.finish_area.is_some() && game.event != ui::Event::FreeRide && roster.scenes.race_scene.has_selection => {
+                let n = (1 + opponents.0.len()).min(6);
+                let p_gate = roster.player_gate.min(n.saturating_sub(1));
+                let mut counts = [[0i32; 6]; 6];
+                let mut places = [0i32; 6];
+                let mut times = [0i32; 6];
+                let mut scores = [0i32; 6];
+                // Career roster indices for non-human opponents match `prepare_lineup` order (0..n skipping p_gate).
+                let opp_gates: Vec<usize> = (0..n).filter(|&i| i != p_gate).collect();
+                for (oi, &og) in opp_gates.iter().enumerate() {
+                    if let Some(o) = opponents.0.get(oi) {
+                        counts[og][p_gate] = o.grudge.as_ref().map_or(0, |g| g.score());
+                        times[og] = (o.driver.finished.unwrap_or(race.0.time) * 100.0) as i32;
+                        scores[og] = o.rider.score as i32;
+                    }
+                }
+                let force_post = std::env::var("TRICKY_POST").ok();
+                if force_post.as_deref() == Some("rival") {
+                    if let Some(&og) = opp_gates.first() {
+                        counts[og][p_gate] = counts[og][p_gate].max(4);
+                    }
+                }
+                let win = rider.0.fin.is_some_and(|f| f.2);
+                let me_name = lib.chars.get(lib.player).map(|c| proper(&c.name)).unwrap_or_else(|| "Rider".into());
+                let st = standings(&race.0, &opponents.0, &lib, &me_name);
+                let p_place = match force_post.as_deref() {
+                    Some("win") | Some("rival") => 0,
+                    Some("lose") => n.saturating_sub(1) as i32,
+                    _ => st.iter().position(|t| t.2).map_or(if win { 0 } else { n.saturating_sub(1) }, |p| p) as i32,
+                };
+                places[p_gate] = p_place;
+                times[p_gate] = (race.0.time * 100.0) as i32;
+                scores[p_gate] = rider.0.score as i32;
+                roster.scenes.enter_end_race(&mut career.0, counts, places, times, scores);
+                race.0.cast = None;
+                race.0.post_scripts.clear();
+                race.0.post = 1;
+            }
             Some(cml) if !quiet && race.0.finish_area.is_some() && game.event != ui::Event::FreeRide => {
+                // STANDIN: fallback post-race selection when `TRICKY_DISC` is absent (no `/SLUS_203.26` for `EndRace`).
+                let me = rivals::index(lib.chars.get(lib.player).map_or("", |c| c.name.as_str()));
+                let rival = opponents.0.iter().enumerate()
+                    .filter_map(|(i, o)| o.grudge.as_ref().filter(|g| g.score() > 2).map(|g| (g.score(), i)))
+                    .max_by_key(|a| a.0)
+                    .map(|(_, i)| (rivals::index(lib.chars.get(opponents.0[i].character).map_or("", |c| c.name.as_str())), i + 1));
                 let win = rider.0.fin.is_some_and(|f| f.2);
                 let (scripts, cast) = intro::plan_post(&cml, me, win, rival, 1 + opponents.0.len(), &mut fx_pick);
                 race.0.post_scripts = scripts;
@@ -3037,18 +3078,88 @@ fn g21_camera(time: Res<SmoothDt>, cam: Single<&Transform, With<FlyCam>>, mut g:
 }
 
 fn chase_camera(
-    tick: Res<GameTick>, mut shot_before: Local<Option<intro::Shot>>, rider: Res<RiderRes>, world: Res<World>, mut chase: ResMut<CamRes>, game: Res<ui::Game>,
+    tick: Res<GameTick>, mut shot_before: Local<Option<intro::Shot>>, rider: Res<RiderRes>, world: Res<World>, mut chase: ResMut<CamRes>,
+    (game, mut career, mut roster, lib): (Res<ui::Game>, ResMut<ui::CareerRes>, ResMut<ui::RosterRes>, Res<CharLib>),
     mut cam: Single<(&mut Transform, &mut Projection), (With<FlyCam>, Without<RiderModel>)>,
     keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, mut flash: Local<f32>, mut label: Query<&mut Text, With<CamLabel>>,
     mut race: ResMut<RaceRes>, mut director: Local<Option<intro::Director>>, mut started: Local<bool>, opponents: Res<Opponents>,
 ) {
     let opponents_n = opponents.0.len();
-    // the pre-race intro (the course's camera scripts): a fly-through, then the start gate
+    let use_game_scenes = roster.scenes.race_scene.has_selection;
+    let skip = keys.just_pressed(KeyCode::Space) || pads.iter().any(|p| p.just_pressed(GamepadButton::South));
+    // the pre-race intro and post-race scenes (`PreRace` 0x112b88 / `EndRace` 0x113e10, row G11e)
     let post = race.0.post;
-    if game.screen != ui::Screen::Playing || (race.0.state != RaceState::Countdown && post != 1 && post != 2) { *started = false; if director.is_some() { *director = None; race.0.intro = false; }
-        if let Some(sc) = race.0.scene.as_mut() { sc.ended = true; } }
-    else if post == 1 {
-        // after the race: the rival's scene and the win or lose scene, at the finish area
+    if game.screen != ui::Screen::Playing || (race.0.state != RaceState::Countdown && post != 1 && post != 2) {
+        *started = false;
+        if director.is_some() { *director = None; race.0.intro = false; }
+        if let Some(sc) = race.0.scene.as_mut() { sc.ended = true; }
+    } else if use_game_scenes {
+        let total_riders = (1 + opponents_n) as i32;
+        if post == 1 || post == 2 {
+            if let Some(cml) = race.0.cml.clone() {
+                race.0.post = 2;
+                race.0.intro = true;
+                let cam_running = director.as_ref().is_some_and(|d| !d.done);
+                let mut marker_fn = |clip: i32| {
+                    rider.0.anim.as_ref().map_or(-1, |a| if clip >= 0 { a.first_marker_frame(clip as u32) } else { -1 })
+                };
+                let step = roster.scenes.step_end_race(&career.0, total_riders, cam_running, skip, &mut marker_fn);
+                if let Some(script) = step.start_script {
+                    if let Some(sc) = race.0.scene.as_mut() { sc.ended = true; }
+                    *director = Some(intro::Director::new(&cml, &[script.as_str()]));
+                } else if step.stop_script {
+                    *director = None;
+                    if let Some(sc) = race.0.scene.as_mut() { sc.ended = true; }
+                }
+                if step.done {
+                    *director = None;
+                    race.0.intro = false;
+                    chase.0.cut();
+                    race.0.post = 3;
+                    if let Some(sc) = race.0.scene.as_mut() { sc.ended = true; }
+                }
+            } else {
+                race.0.post = 3;
+            }
+        } else {
+            if !*started && game.since < 1.0 && race.0.state == RaceState::Countdown {
+                *started = true;
+                let quiet = std::env::var("TRICKY_INTRO").is_err() && (std::env::var("TRICKY_SIM").is_ok() || std::env::var("TRICKY_NOINTRO").is_ok() || std::env::var("TRICKY_SHOT").is_ok());
+                if race.0.cml.is_some() && !quiet {
+                    roster.scenes.enter_pre_race(&mut career.0, total_riders, false);
+                    match std::env::var("TRICKY_INTRO").unwrap_or_default().as_str() {
+                        "gate" => roster.scenes.pre.state = 10,
+                        "stage" => roster.scenes.pre.state = 6,
+                        _ => {}
+                    }
+                    race.0.intro = true;
+                }
+            }
+            if roster.scenes.phase == tricky_game::scenehost::Phase::PreRace {
+                if let Some(cml) = race.0.cml.clone() {
+                    let cam_running = director.as_ref().is_some_and(|d| !d.done);
+                    let mut marker_fn = |clip: i32| {
+                        rider.0.anim.as_ref().map_or(-1, |a| if clip >= 0 { a.first_marker_frame(clip as u32) } else { -1 })
+                    };
+                    let step = roster.scenes.step_pre_race(&career.0, total_riders, cam_running, skip, &mut marker_fn);
+                    if let Some(script) = step.start_script {
+                        if let Some(sc) = race.0.scene.as_mut() { sc.ended = true; }
+                        *director = Some(intro::Director::new(&cml, &[script.as_str()]));
+                    } else if step.stop_script {
+                        *director = None;
+                        if let Some(sc) = race.0.scene.as_mut() { sc.ended = true; }
+                    }
+                    if step.done {
+                        *director = None;
+                        race.0.intro = false;
+                        chase.0.cut();
+                        if let Some(sc) = race.0.scene.as_mut() { sc.ended = true; }
+                    }
+                }
+            }
+        }
+    } else if post == 1 {
+        // STANDIN: fallback post-race director when `TRICKY_DISC` is absent (no `/SLUS_203.26` for `EndRace`).
         if let Some(cml) = race.0.cml.clone() {
             let names: Vec<&str> = race.0.post_scripts.iter().map(|s| s.as_str()).collect();
             *director = Some(intro::Director::new(&cml, &names));
@@ -3060,9 +3171,8 @@ fn chase_camera(
         *started = true;
         let quiet = std::env::var("TRICKY_INTRO").is_err() && (std::env::var("TRICKY_SIM").is_ok() || std::env::var("TRICKY_NOINTRO").is_ok() || std::env::var("TRICKY_SHOT").is_ok());
         if let (Some(cml), false) = (race.0.cml.clone(), quiet) {
+            // STANDIN: fallback pre-race script picks when `TRICKY_DISC` is absent (no `/SLUS_203.26` for `PreRace`).
             let fly = match game.event { ui::Event::Race => "RaceLoaded", ui::Event::ShowOff => "ShowLoaded", ui::Event::FreeRide => "FreeLoaded" };
-            // a race also has the riders' staging scene and the gate scene (one of four each, a `Rand_Fx` draw `% 4` as
-            // `FUN_00169378` 0x169378 picks them; STANDIN: the port's draws are the only ones before them)
             let stg = format!("STG_COM_{}", 1 + fx_pick(4));
             let gat = format!("GAT_6COM_{}", 1 + fx_pick(4));
             let race_ev = game.event == ui::Event::Race;
@@ -3077,7 +3187,6 @@ fn chase_camera(
             race.0.intro = true;
         }
     }
-    let skip = keys.just_pressed(KeyCode::Space) || pads.iter().any(|p| p.just_pressed(GamepadButton::South));
     let mut intro_view = None;
     if let (Some(d), Some(cml)) = (director.as_mut(), race.0.cml.clone()) {
         // the director a tick at a time (`GameTick`); the shot it left before them, to draw between
@@ -3091,9 +3200,11 @@ fn chase_camera(
         let cast = race.0.cast.clone();
         let riders = 1 + opponents_n;
         match (&mut race.0.scene, want) {
-            (Some(sc), Some(n)) if sc.name == n => { sc.t += tick.dt(); }
+            (Some(sc), Some(n)) if sc.name == n && !sc.ended => { sc.t += tick.dt(); }
             (cur, Some(n)) => {
-                let spots = cml.scene(&n).into_iter().map(|sp| {
+                let actors = cml.scene_actors(&n);
+                let spots = actors.iter().map(|a| {
+                    let sp = a.spot;
                     if !sp.place { return None; }
                     // frame 1: relative to the start stage area, 2: the finish area
                     let area = match sp.frame { 1 => stage, 2 => finish_area, _ => None };
@@ -3105,15 +3216,30 @@ fn chase_camera(
                     Some((Vec3::new(p.x, p.z, -p.y) * WORLD_SCALE, yaw - std::f32::consts::FRAC_PI_2))
                 }).collect();
                 let saved = cur.as_ref().map(|c| c.saved.clone()).unwrap_or_default();
-                let (clips, slot_of) = match &cast { Some(c) => { let mut c = c.clone(); c.riders = riders; intro::post_scene(&n, &c) } None => (intro::scene_clips(&n), Vec::new()) };
+                let (clips, slot_of) = if use_game_scenes {
+                    let mut r_chars = Vec::with_capacity(riders);
+                    let mut r_boards = Vec::with_capacity(riders);
+                    r_chars.push(lib.chars.get(lib.player).map_or(0, |c| c.data as u32));
+                    r_boards.push(rider.0.stats.kind as u32);
+                    for o in &opponents.0 {
+                        r_chars.push(lib.chars.get(o.character).map_or(0, |c| c.data as u32));
+                        r_boards.push(o.rider.stats.kind as u32);
+                    }
+                    roster.scenes.assign_scene_actors(&actors, &r_chars, &r_boards, 0, &cml)
+                } else {
+                    match &cast { Some(c) => { let mut c = c.clone(); c.riders = riders; intro::post_scene(&n, &c) } None => (intro::scene_clips(&n), Vec::new()) }
+                };
                 *cur = Some(intro::SceneState { clips, name: n, spots, t: 0.0, saved, ended: false, slot_of });
             }
             (Some(sc), None) => { sc.ended = true; }
             (None, None) => {}
         }
-        if d.done || skip { if let Some(sc) = race.0.scene.as_mut() { sc.ended = true; } }
-        if d.done || skip { *director = None; race.0.intro = false; chase.0.cut(); if race.0.post == 2 { race.0.post = 3; } }
-        else if let Some(s) = d.shot {
+        if !use_game_scenes && (d.done || skip) {
+            if let Some(sc) = race.0.scene.as_mut() { sc.ended = true; }
+            *director = None; race.0.intro = false; chase.0.cut(); if race.0.post == 2 { race.0.post = 3; }
+        } else if d.done {
+            if let Some(sc) = race.0.scene.as_mut() { sc.ended = true; }
+        } else if let Some(s) = d.shot {
             // drawn between ticks (`GameTick`), unless the shot cut
             intro_view = Some(match *shot_before {
                 Some(b) if b.frame == s.frame && b.at_rider == s.at_rider && b.pos.distance(s.pos) < 300.0 => {

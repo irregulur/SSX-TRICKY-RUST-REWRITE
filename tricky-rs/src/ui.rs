@@ -44,13 +44,16 @@ fn save_path() -> std::path::PathBuf {
 #[derive(Resource)]
 pub struct CareerRes(pub tricky_game::career::Career);
 
-/// Loaded `SLUS_203.26` roster/scene tables and live `PreRaceSel` / `CircuitHeats` state for
-/// `Career_PrepareRace` (`0x163980`) -> `Career_SetupRidersForMode` (`0x165558`) (row E1b2r1).
+/// Loaded `SLUS_203.26` roster/scene tables and live `PreRaceSel` / `CircuitHeats` / `SceneHost` state for
+/// `Career_PrepareRace` (`0x163980`) -> `Career_SetupRidersForMode` (`0x165558`) (row E1b2r1) and
+/// `RaceScene` / `PreRace` / `EndRace` (row G11e).
 #[derive(Resource, Default)]
 pub struct RosterRes {
     pub data: Option<tricky_game::roster::RosterData>,
     pub sel: tricky_game::roster::PreRaceSel,
     pub heats: tricky_game::roster::CircuitHeats,
+    /// Live `RaceScene` (`0x32edc0`), `PreRace` (`cPreRaceHandler`), and `EndRace` (`cEndRaceHandler`) host (row G11e).
+    pub scenes: tricky_game::scenehost::SceneHost,
     /// Exact 16 stat bytes written by `Career_SetupPlayerRider` (`0x16a9d8`) for the active run.
     pub player_stat_bytes: Option<[u8; 16]>,
     /// Starting gate index (`0..6`) assigned to the human player by `Career_PrepareRace`.
@@ -371,9 +374,11 @@ impl CareerRes {
             heats: &mut roster.heats,
             env,
             rel: &tricky_game::career::InitialRelations,
-            rand_fx,
+            rand_fx: &mut *rand_fx,
         };
         self.0.prepare_race(&mut prep);
+        // `RaceScene_Reset` 0x169688 + `RaceScene_SetupFromPicks` 0x169698 on `Career+0x2b18` (row G11e).
+        roster.scenes.setup_from_career(&self.0, rand_fx);
         let rows = self.0.race_roster();
         if let Some((gate, row)) = rows.iter().enumerate().find(|(_, r)| r.is_human()) {
             roster.player_gate = gate;
@@ -464,6 +469,8 @@ mod tests {
         assert_eq!(chars.len(), 6, "all 6 race riders must be distinct");
         assert!(roster.race_seeds.is_some());
         assert_eq!(roster.sel.rider, 3);
+        assert!(roster.scenes.race_scene.has_selection);
+        assert!(!roster.scenes.anim_file_ids().is_empty());
 
         // Heat 1 keeps valid 6-rider lineup using heats initialized in heat 0
         let rows1 = c.prepare_race(&mut roster, Event::Race, 1, "gari", "mac", 1, 2, false, &mut || streams.fx()).expect("heat 1 rows");

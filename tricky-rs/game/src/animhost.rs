@@ -764,6 +764,38 @@ impl AnimHost {
         (0..n as u32).map(|j| f32::from_bits(self.mem.r32(p + 0x210 + 4 * j))).collect()
     }
 
+    /// `AnimCtl_FindFirstMarkerFrame` 0x15fb08(ctl, clip): first valid marker frame on `clip`, or `-1`.
+    pub fn first_marker_frame(&mut self, slot: usize, clip: u32) -> i32 {
+        let ctl_ptr = Self::ctl_addr(slot);
+        let mut rng = || 0u32;
+        let mut env = RuntimeEnv { alloc: &mut self.alloc, rand_game: &mut rng };
+        crate::animctl::first_marker_frame(&mut self.mem, &mut env, ctl_ptr, clip)
+    }
+
+    /// Load `.afl` scene files by their `FILES` (`0x3258b0`) indices from `RaceScene_GetAnimList` (`0x169948`).
+    pub fn ensure_scene_files_loaded(
+        &mut self,
+        file_ids: &[i32],
+        mut load_file: impl FnMut(&str) -> Option<Vec<u8>>,
+    ) -> usize {
+        let mut loaded = 0usize;
+        for &id in file_ids {
+            if id < 0 || id == crate::scene::NO_RIDER {
+                break;
+            }
+            let fid = id as u32;
+            let entry = crate::animseq::ANIM_BANK + 0x724 + fid * 0x18;
+            if self.mem.r32(entry + 8) != 0 {
+                continue;
+            }
+            self.load_extra_file(fid, &mut load_file);
+            if self.mem.r32(entry + 8) != 0 {
+                loaded += 1;
+            }
+        }
+        loaded
+    }
+
     /// Resolve a clip name from `CLIPS` (`0x3242a0`, e.g. `"scrSG_GLIDE1"`, `"scrGAT_6COM1a"`, `"scrMac_WIN_1"`,
     /// `"scrFL_Common1"`) to its `AnimCtl` clip ID (`0..0x1fc`, lookup mode 2 via `0x3bffd0`).
     pub fn clip_id_by_name(&self, name: &str) -> Option<u32> {
@@ -1377,6 +1409,16 @@ impl RiderAnim {
         load_file: impl FnMut(&str) -> Option<Vec<u8>>,
     ) -> usize {
         self.lock().ensure_scene_clips_loaded(clip_names, load_file)
+    }
+    pub fn ensure_scene_files_loaded(
+        &self,
+        file_ids: &[i32],
+        load_file: impl FnMut(&str) -> Option<Vec<u8>>,
+    ) -> usize {
+        self.lock().ensure_scene_files_loaded(file_ids, load_file)
+    }
+    pub fn first_marker_frame(&self, clip: u32) -> i32 {
+        self.lock().first_marker_frame(self.slot, clip)
     }
     pub fn pivot_pos(&self) -> [f32; 3] {
         self.lock().pivot_pos(self.slot)

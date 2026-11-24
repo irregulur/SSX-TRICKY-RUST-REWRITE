@@ -123,6 +123,7 @@ pub mod bankhost;
 pub mod banksys;
 pub mod ragdoll;
 pub mod prerace;
+pub mod scenehost;
 pub mod props;
 pub mod race;
 pub mod raceline;

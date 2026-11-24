@@ -530,3 +530,32 @@ count 0x3353f8, the riders out 0x335664 + 0x10 · character). The heats' rider s
   cases: all `0x3960` career bytes, `PreRaceSel`, `CircuitHeats`, `Rand_Fx` stream, `race_roster()`, and
   `race_seeds()`); `ui::tests::prepare_race_fills_career_roster_and_selection_from_disc` verified against real
   `TRICKY_DISC` (`/SLUS_203.26`).
+
+## Race scenes in the app (board row G11e)
+
+- Proven (`CamScript_StartScene` `0x176850`, `CamAnimation` `0x16d990`, `CamAnimation_InitScoped` `0x16d9d0`,
+  `CmlFile_FindScope` `0x16e1d8`, `CmlFile_FindObjectInScope` `0x16e318`, `RaceScene_StartCastClip` `0x16da10`,
+  `RaceScene_PlayCastClip` `0x169be8`):
+  - A CML type-5 scene record holds up to 8 `0x30`-byte actors (`+0x00` `CamAnimation` name, `+0x10` in-use,
+    `+0x14` selector: `0` player 0, `10..=12` players 1..=3, `0xd` next unassigned rider, `0xe..=0x19` character
+    `kind - 0xe`, `+0x18..+0x30` placement).
+  - `CamScript_StartScene` runs two passes (explicit player / character selectors first, then unassigned riders in
+    race order for `0xd`) and looks up each actor's `CamAnimation` (CML type 1) scoped by the rider's lowercase
+    character name (`0x336650`: `"eddie".."marisol"`, scope tree rooted at CML header `+0x1c`, node `+0` left,
+    `+4` right, `+8` scoped-object list walking `+4`, `+0x24` name) before falling back to unscoped kind 1.
+  - The `CamAnimation` body is a `-1`-terminated array of `i32` slot-`a` keys; `RaceScene_PlayCastClip` `0x169be8`
+    matches `slot.a == key` inside `RaceScene.slots[current][0..6]` and plays `slot.b` via `AnimCtl_PlayClip`
+    (`AnimClip_ResolveAnmIndex` `0x15ada8`).
+- Implemented `Cml::{scene_actors, anim_keys}` in `tricky-rs/data/src/intro.rs`, `AnimHost::{first_marker_frame,
+  ensure_scene_files_loaded}` (`AnimCtl_FindFirstMarkerFrame` `0x15fb08` / `RaceScene_GetAnimList` `0x169948`) in
+  `tricky-rs/game/src/animhost.rs`, and `tricky_game::scenehost::SceneHost` driving `RaceScene::setup_from_picks`
+  / `select`, `PreRace::enter`/`update`/`exit`, `EndRace::enter`/`update`, and `CamScript_StartScene` actor/clip
+  resolution.
+- Wired `RosterRes.scenes` into `CareerRes::prepare_race` (`src/ui.rs`), `ride` (preloading `RaceScene_GetAnimList`
+  `.afl` files on `AnimHost` and entering `EndRace` at finish), and `chase_camera` (`src/main.rs`), replacing
+  `intro::plan_post` and `chase_camera`'s `STG_COM`/`GAT_6COM` draws whenever `TRICKY_DISC` is present (keeping
+  them only as STANDIN fallbacks without a disc).
+- Verified against real `TRICKY_DISC` (`SSX Tricky (USA).iso`, Garibaldi CML + `/SLUS_203.26`): heat-0 pre-race
+  (`RaceLoaded`, `STG_*`, `GAT_*`) and rival-only post-race (`FL_<RIV>_VS_USR`, since `0x37c1b8` win rows gate on
+  final heat `u == 2` / single event `u == 3`), final-heat rival + `FL_WIN_*`, skip rules (`RaceScene_CheckSkip`
+  `0x110ab8`), and show-off loss (`FL_LOS_*`) all resolve real CML scripts and `.afl` scene clips.
