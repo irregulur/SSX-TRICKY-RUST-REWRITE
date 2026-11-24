@@ -424,6 +424,24 @@ Part of the port notes (index: [README.md](README.md)); units and wording as des
 - Checked in the runner on 400 made-up grids (empty cells, 1 to 16 INodes per cell, objects with and without
   controllers of each kind and scripts), 3,200 steps of marking, ageing, updating, releasing and whole ticks with
   1, 2 or 4 riders: every script started and controller call in order, the flags, the slots and the riders' cells.
+- **App wiring (board row E7b2; `tricky_game::cellhost::CellHost`, `tests/cellhost.rs`)**:
+  - `CourseGround` owns `cells: Mutex<CellHost>` and initial flags `init_flags` (`World_ResetInstances` `0x115fe8`).
+  - Each 60 Hz frame (`worldanim::world_anim`), `CourseGround::tick_cells` runs `AiCells::tick` (`cAIWorld::vf1`
+    `0x115e28`) from live rider positions and camera focus, spawning `cAnimObjectNode` (`0x100`/`0x102`/`0x103`),
+    `cAnimDeltaNode` (`0x101`), and logic controllers (`cDebounceNode` `2`, `cDeadNode` `5`, `cCounterNode` `6`,
+    `cTimerNode` `8`, `cRestoreNode` `0x3ee`) via `controllers::spawn` (`0x13c5d0`) and `controllers::apply`
+    (`0x13ac88`), holding fresh nodes in `pending` for their creation frame (`BxList_MergePending`), stepping live
+    nodes at 60 Hz, posing animated collision parts on `CourseGround` via `meshanim::mesh_frame`, and forwarding
+    cell-activated visual scripts (`activated_scripts`) and deactivated/killed controllers (`killed_objects`) to
+    `WorldAnim` instead of running every persistent script or `AnimObjects` clip at load.
+  - Contact scripts in `knockables::Knockables::contact` delegate non-roller `op 0` controller spawns, messages
+    (`ops 3, 9`), finish (`op 10`), kill (`op 11`), and `SetRail` to `CellHost`, check `blocks_contact` (debounce /
+    dead / cooldown), and report real controller presence in `knockables::reread` (`Some(false)` for rollers,
+    `Some(true)` for non-roller controllers).
+  - Verified on real `TRICKY_DISC` (`tests/cellhost.rs`): Mesablanca `1444` activates/steps/deactivates with its
+    pending creation frame and `1/60` s clock; Tokyo Megaplex `Pinball_FlipperL` `75` flips via trigger `59`
+    (`cDebounceNode` 90 ticks, `Pinball_FlipperL` `cAnimObjectNode` 300 ticks, flags `0x10a111a3` -> `0x10a111a5` ->
+    `0x10a111a3`, posed/unposed on `CourseGround`).
 
 ## Rigid bodies (row E8c1; `tricky_game::rigidbody`, checked: `tests/rigidbody.rs`)
 

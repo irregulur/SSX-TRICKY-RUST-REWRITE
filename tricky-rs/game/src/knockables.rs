@@ -160,10 +160,20 @@ impl ThreadEnv<'_> {
     fn spawn(&mut self, op: &Op) {
         let a = |k: usize| op.args.get(k).copied().unwrap_or(0);
         let Some((_, object, ctx_a, ctx_b)) = self.cur else { return };
-        if a(0) != 0 || object == 0 {
+        if object == 0 {
             return;
         }
         let o = object - 1;
+        if a(0) != 0 {
+            // Non-roller controllers (e.g. `cDebounceNode` 2 on trigger, `cAnimObjectNode` 0x100 on `Pinball_FlipperL`
+            // 75, `cAnimDeltaNode` 0x101, `cDeadNode` 5, etc.) live in `CourseGround::cells` (row E7b2).
+            self.course
+                .cells
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .spawn_from_contact(self.course, o as usize, op, &mut crate::rand::rand_game);
+            return;
+        }
         if let Some(r) = self.rollers.iter_mut().find(|r| r.object == o) {
             if r.body.asleep != 0 {
                 r.body.asleep = 0;
@@ -230,10 +240,12 @@ impl ScriptEnv for ThreadEnv<'_> {
     fn rider_x41c(&self, _: u32) -> i32 {
         self.rider.human as i32
     }
-    /// A roller's node, as a handle (0 none). STANDIN: the course's other controllers are not kept (row E7b2).
+    /// Controller handle for `object` (0 none): `0x1000_0000 | o` for a `cRollerNode`, `0x2000_0000 | o` for a
+    /// `CellHost` controller (row E7b2).
     fn controller(&self, object: u32) -> u32 {
         match object.checked_sub(1) {
             Some(o) if self.rollers.iter().any(|r| r.object == o) => 0x1000_0000 | o,
+            Some(o) if self.course.cells.lock().unwrap_or_else(|e| e.into_inner()).controller(o as usize).is_some() => 0x2000_0000 | o,
             _ => 0,
         }
     }
@@ -267,6 +279,34 @@ impl ScriptEnv for ThreadEnv<'_> {
                 let r = Rider { id: rider, ..self.rider };
                 self.start(Thread::new(ScriptRef::Function(function), 0, rider, ctx_a, ctx_b), r);
             }
+            ScriptCall::ControllerMessage { controller, p2, p3 } if controller & 0xf000_0000 == 0x2000_0000 => {
+                self.course.cells.lock().unwrap_or_else(|e| e.into_inner()).message_from_script(
+                    self.course,
+                    (controller & 0x0fff_ffff) as usize,
+                    p2,
+                    p3,
+                    &mut crate::rand::rand_game,
+                );
+            }
+            ScriptCall::ControllerSwitch { controller, on } if controller & 0xf000_0000 == 0x2000_0000 => {
+                self.course.cells.lock().unwrap_or_else(|e| e.into_inner()).finish_or_kill_from_script(
+                    self.course,
+                    (controller & 0x0fff_ffff) as usize,
+                    Some(on),
+                    &mut crate::rand::rand_game,
+                );
+            }
+            ScriptCall::ControllerXbc(controller) if controller & 0xf000_0000 == 0x2000_0000 => {
+                self.course.cells.lock().unwrap_or_else(|e| e.into_inner()).finish_or_kill_from_script(
+                    self.course,
+                    (controller & 0x0fff_ffff) as usize,
+                    None,
+                    &mut crate::rand::rand_game,
+                );
+            }
+            ScriptCall::SetRail(spline, on) => {
+                self.course.set_rail_live(spline, on != 0);
+            }
             _ => {}
         }
     }
@@ -278,6 +318,9 @@ impl Knockables {
     /// rider and the two records); else the controller's vf 0x94 (nothing, for a roller).
     pub fn contact(&mut self, course: &CourseGround, object: u32, rider: Rider, c: &Contact, record: Context) {
         if self.rollers.iter().any(|r| r.object == object && r.body.asleep == 0) {
+            return;
+        }
+        if course.cells.lock().unwrap_or_else(|e| e.into_inner()).blocks_contact(object as usize) {
             return;
         }
         let s = course.ssf.event_script(object as usize, 1);
@@ -348,13 +391,18 @@ impl Knockables {
 }
 
 /// A touched object as `Instance_OnPlayerContact` 0x13bd40 left it, which `Boarder_InstanceCollisions` 0x125088 reads
-/// again: its flags (+0xe8, the course's) and its controller (+0xe4): a roller's (made by the contact's event-1
-/// script, or there before) answers its vf +0x54 (0x17dda0: node +0x14 ≠ 0) with 0, so `Boarder_InstanceBounce`
-/// 0x125a00 shares the knock by the masses. STANDIN: the course's other controllers are not kept (row E7b2): the
-/// controller the query gave.
+/// again: its flags (+0xe8, the course's) and its controller (+0xe4): a roller's answers vf +0x54 (`0x17dda0`:
+/// `node+0x14 != 0`) with `false` (moving, mass-shared bounce), any other controller in `CourseGround::cells`
+/// answers `true` (fixed, row E7b2).
 pub fn reread(course: &CourseGround, o: &crate::walls::Touched) -> crate::walls::Touched {
     let rolling = course.knock.lock().unwrap_or_else(|e| e.into_inner()).rollers.iter().any(|r| r.object == o.id);
-    let controller = if rolling { Some(false) } else { o.controller };
+    let controller = if rolling {
+        Some(false)
+    } else if course.cells.lock().unwrap_or_else(|e| e.into_inner()).controller(o.id as usize).is_some() {
+        Some(true)
+    } else {
+        None
+    };
     crate::walls::Touched { flags: course.object_flags(o.id as usize), controller, ..*o }
 }
 

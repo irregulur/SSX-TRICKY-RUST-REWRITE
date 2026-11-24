@@ -347,6 +347,26 @@ impl WorldAnim {
         }
     }
 
+    /// Stop visual controllers on instance `i` when `World_CellDeactivate` 0x260108 kills its controller (row E7b2).
+    pub fn kill_instance(&mut self, i: usize) {
+        if self.flips.remove(&i).is_some() {
+            self.flip_order.retain(|k| *k != i);
+        }
+        if self.crowds.remove(&i).is_some() {
+            self.crowd_order.retain(|k| *k != i);
+        }
+        self.cracks.remove(&i);
+        self.counters.remove(&i);
+        self.busy.remove(&i);
+        for f in self.flags.iter_mut().filter(|f| f.inst == i) {
+            f.active = false;
+            f.phase = 0.0;
+            f.rate = 0.0;
+            f.amp = f.amp0;
+            f.life = 0;
+        }
+    }
+
     /// A restart: every controller gone (glass uncracked, counters full, flips, scrolls and flags
     /// stopped, crowds still), script threads dropped; the level wakes again on the next frame and
     /// its always-on scripts set things going as at the start. Keyframed clips go back to their
@@ -544,6 +564,7 @@ pub fn world_anim(
     tick: Res<GameTick>, game: Res<ui::Game>, level: Res<LevelRes>, race: Res<RaceRes>, rider: Res<RiderRes>, opponents: Res<Opponents>,
     wa: Option<ResMut<WorldAnim>>, mut anims: ResMut<AnimObjects>, mut materials: ResMut<Assets<StandardMaterial>>, mut meshes: ResMut<Assets<Mesh>>,
     props: Option<ResMut<Props>>, mut cell_mats: Query<&mut MeshMaterial3d<StandardMaterial>>, mut world: ResMut<World>,
+    cam_q: Query<&GlobalTransform, With<Camera3d>>,
 ) {
     let Some(mut wa) = wa else { return };
     let level = &level.0;
@@ -554,13 +575,17 @@ pub fn world_anim(
     if wa.restart {
         wa.restart = false;
         wa.reset_run(&mut anims, &level.logic.anim_delta);
+        if let Some(course) = &world.0.course {
+            course.reset_cells();
+        }
         world.0.reset_run();
         if std::env::var("TRICKY_WADBG").is_ok() { eprintln!("worldanim: run restarted, level state reset"); }
     }
     if game.screen == ui::Screen::Paused { return; }
     // the frame's ticks (`GameTick`, row E1a2)
     let dt = tick.dt();
-    // the level wakes: every always-on script (World_CellActivate_RunPersistant 0x25fed0)
+    // the level wakes: with a disc course (`CourseGround`), `AiCells::tick` drives `World_CellActivate_RunPersistant`
+    // 0x25fed0 from live rider positions (row E7b2); folder-only fallback runs all `w.wake` once at start.
     if !wa.started {
         wa.started = true;
         let mut cache = HashMap::new();
@@ -569,7 +594,33 @@ pub fn world_anim(
         glass.sort();
         wa.glass = glass;
         wa.gates = level.gates().into_iter().collect();
-        for &(i, h) in &w.wake { wa.run(w, level, &mut anims, Src::Header(h), 0, Some(i), 0); }
+        if world.0.course.is_none() {
+            for &(i, h) in &w.wake { wa.run(w, level, &mut anims, Src::Header(h), 0, Some(i), 0); }
+        }
+    }
+    // Live cells (`cAIWorld::vf1` 0x115e28 -> `AiCells::tick`, row E7b2): activate/deactivate cells around riders and
+    // camera at 60 Hz, stepping `cAnimObjectNode` / `cAnimDeltaNode` / logic controllers and forwarding visual scripts.
+    if let Some(course) = world.0.course.clone() {
+        let to_cm = |p: Vec3| [p.x * 100.0, -p.z * 100.0, p.y * 100.0, 1.0];
+        let mut rider_pos_cm: Vec<[f32; 4]> = Vec::with_capacity(1 + opponents.0.len());
+        rider_pos_cm.push(to_cm(rider.0.pos));
+        for o in &opponents.0 {
+            rider_pos_cm.push(to_cm(o.rider.pos));
+        }
+        let cam_cm = cam_q.iter().next().map_or(rider_pos_cm[0], |tf| to_cm(tf.translation()));
+        let race_1c = if race.0.state == RaceState::Running { 4 } else { 1 };
+        let show_off = game.event == ui::Event::ShowOff;
+        for _ in 0..tick.n {
+            let ev = course.tick_cells(&rider_pos_cm, race_1c, cam_cm, show_off, &mut tricky_game::rand::rand_game);
+            for (inst, eff) in ev.activated_scripts {
+                if eff >= 0 {
+                    wa.run(w, level, &mut anims, Src::Header(eff as usize), 0, Some(inst), 0);
+                }
+            }
+            for inst in ev.killed_objects {
+                wa.kill_instance(inst);
+            }
+        }
     }
     // the countdown starts: StartCountDown (which calls CountDownStart, the lights)
     let r = &race.0;

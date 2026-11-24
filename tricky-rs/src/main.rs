@@ -327,7 +327,9 @@ fn open_level(dir: &Path) -> Result<Loaded, String> {
     }
     let mut world = build_collision(&level);
     world.course = course.map(std::sync::Arc::new);
-    world.pose_course();
+    if world.course.is_none() {
+        world.pose_course();
+    }
     let mut rails = Rails(level.splines.iter().enumerate().filter_map(|(si, sp)| {
         let mut pts: Vec<Vec3> = Vec::new();
         for seg in sp.segments.iter().filter(|s| s.points.len() >= 4) {
@@ -751,6 +753,7 @@ fn setup(
     mut commands: Commands,
     level: Res<LevelRes>,
     rider: Res<RiderRes>,
+    world: Res<World>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -759,7 +762,7 @@ fn setup(
     let level = &level.0;
     // Game space is Z-up; rotate it into Bevy's Y-up and scale it down.
     let to_bevy = Transform { rotation: Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2), scale: Vec3::splat(WORLD_SCALE), ..default() };
-    spawn_level(&mut commands, level, &mut meshes, &mut images, &mut materials, ui::CareerRes::mode(game.event));
+    spawn_level(&mut commands, level, &mut meshes, &mut images, &mut materials, ui::CareerRes::mode(game.event), world.0.course.is_some());
 
     // camera at the start of the first race line, looking down the course
     let (pos, dir) = level.start();
@@ -835,7 +838,7 @@ fn snow_draws(level: &Level, mode: u32) -> tricky_game::fxrand::GameSnow {
 
 fn spawn_level(
     commands: &mut Commands, level: &Level,
-    meshes: &mut Assets<Mesh>, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>, mode: u32,
+    meshes: &mut Assets<Mesh>, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>, mode: u32, has_course: bool,
 ) {
     let t = spawn_terrain(commands, level, meshes, images, materials);
     let snow = snow_draws(level, mode);
@@ -846,7 +849,7 @@ fn spawn_level(
     println!("draw batches: {t} terrain, {o} objects");
     spawn_sky(commands, level, meshes, images, materials);
     let props = spawn_props(commands, level, meshes, images, materials, &mut wa);
-    let anims = spawn_animated(commands, level, meshes, images, materials, &props);
+    let anims = spawn_animated(commands, level, meshes, images, materials, &props, has_course);
     println!("{}", wa.summary());
     commands.insert_resource(wa);
     commands.insert_resource(anims);
@@ -886,19 +889,19 @@ fn fx_pick(n: u32) -> u32 { tricky_game::rand::rand_fx() % n }
 fn spawn_animated(
     commands: &mut Commands, level: &Level,
     meshes: &mut Assets<Mesh>, images: &mut Assets<Image>, materials: &mut Assets<StandardMaterial>, props: &Props,
+    has_course: bool,
 ) -> AnimObjects {
     let set = &level.world;
     let mut tex = TexCache::level(level, set.dir.join("Textures"));
     let mut mats: HashMap<String, Handle<StandardMaterial>> = HashMap::new();
     let basis = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
     let mut out = AnimObjects::default();
-    // the clips' random starts and rate jitters are `Rand_Game` draws at the nodes' construction
-    // (`cAnimObjectNode` 0x198810), in the game's order: the start, then the rate. STANDIN: the game's stream
-    // is seeded from `DAT_0032de94` at `cGame::Init` and the nodes are built in the order the cells wake;
-    // the port draws in instance order from `GAME_INIT_SEED`, and the race init reseeds the stream after
-    // (`cAI::vf14_111108`), so the riders never see these draws, as in the game
+    // With a disc course (`has_course`), `CellHost` constructs each `cAnimObjectNode` 0x198810 when its cell wakes
+    // (row E7b2) and draws `Rand_Game` then; without a disc, the STANDIN fallback initializes clocks at load.
     let saved = tricky_game::rand::streams().game;
-    tricky_game::rand::seed_game(tricky_game::rand::GAME_INIT_SEED);
+    if !has_course {
+        tricky_game::rand::seed_game(tricky_game::rand::GAME_INIT_SEED);
+    }
     for (i, inst) in level.instances.iter().enumerate() {
         if !inst.visable || !animated(level, i) { continue; }
         let Some(model) = set.models.get(inst.model_id as usize) else { continue };
@@ -938,7 +941,12 @@ fn spawn_animated(
             parts.push(child);
         }
         // the clock (cAnimObjectNode): frames / 30; rate in frames a second / 30
-        let (len, t, rate) = anim_clock(&def, model.anim_time);
+        let (len, t, rate) = if has_course {
+            let len = if def.end < 0.0 { model.anim_time } else { def.end } / 30.0;
+            (len, def.start.max(0.0) / 30.0, def.rate / 30.0)
+        } else {
+            anim_clock(&def, model.anim_time)
+        };
         out.0.push(AnimInst { def, model: inst.model_id as usize, len, t, dir: if def.reverse { -1.0 } else { 1.0 }, rate, parts, prop: None, inst: i, budget });
     }
     // props with a keyframed part (the spinning multiplier gems) turn whole with it
@@ -947,10 +955,17 @@ fn spawn_animated(
         let Some(inst) = level.instances.get(p.inst) else { continue };
         let Some(model) = set.models.get(inst.model_id.max(0) as usize) else { continue };
         if !model.model_objects.iter().any(|o| o.animation.is_some()) { continue; }
-        let (len, t, rate) = anim_clock(&def, model.anim_time);
+        let (len, t, rate) = if has_course {
+            let len = if def.end < 0.0 { model.anim_time } else { def.end } / 30.0;
+            (len, def.start.max(0.0) / 30.0, def.rate / 30.0)
+        } else {
+            anim_clock(&def, model.anim_time)
+        };
         out.0.push(AnimInst { def, model: inst.model_id as usize, len, t, dir: 1.0, rate, parts: Vec::new(), prop: Some(pi), inst: p.inst, budget: None });
     }
-    tricky_game::rand::streams().game = saved;
+    if !has_course {
+        tricky_game::rand::streams().game = saved;
+    }
     println!("keyframed objects: {}", out.0.len());
     out
 }
@@ -962,25 +977,36 @@ fn animate_objects(tick: Res<GameTick>, game: Res<ui::Game>, level: Res<LevelRes
     // game (cm, Z up) -> Bevy (m, Y up) as a change of basis
     let a = Mat4::from_cols(Vec4::new(0.01, 0.0, 0.0, 0.0), Vec4::new(0.0, 0.0, -0.01, 0.0), Vec4::new(0.0, 0.01, 0.0, 0.0), Vec4::W);
     let a_inv = a.inverse();
+    let course = coll.0.course.clone();
     for (j, o) in objs.0.iter_mut().enumerate() {
         let start = o.def.start.max(0.0) / 30.0;
-        let step = match o.budget.as_mut() {
-            Some(b) if *b > 0.0 => { let s = (o.rate * dt).abs().min(*b); *b -= s; s }
-            Some(_) => 0.0,
-            None => o.rate * dt,
-        };
-        o.t += step * o.dir;
-        match o.def.mode {
-            0 => o.t = o.t.clamp(start, o.len.max(start)),
-            2 => {
-                if o.t > o.len { o.t = 2.0 * o.len - o.t; o.dir = -o.dir; }
-                if o.t < start { o.t = 2.0 * start - o.t; o.dir = -o.dir; }
+        if let Some(ref cg) = course {
+            // Live cell/controller clock (`CellHost`: `cAnimObjectNode` 0x199058 / `cAnimDeltaNode` 0x199db8, row E7b2);
+            // `CourseGround` is already posed by `CellHost` via `meshanim::mesh_frame`.
+            if let Some(t) = cg.anim_time(o.inst) {
+                o.t = t;
+            } else if o.budget.is_none() {
+                o.t = start;
             }
-            _ => { let span = (o.len - start).max(1e-3); if o.t > o.len || o.t < start { o.t = start + (o.t - start).rem_euclid(span); } }
+        } else {
+            let step = match o.budget.as_mut() {
+                Some(b) if *b > 0.0 => { let s = (o.rate * dt).abs().min(*b); *b -= s; s }
+                Some(_) => 0.0,
+                None => o.rate * dt,
+            };
+            o.t += step * o.dir;
+            match o.def.mode {
+                0 => o.t = o.t.clamp(start, o.len.max(start)),
+                2 => {
+                    if o.t > o.len { o.t = 2.0 * o.len - o.t; o.dir = -o.dir; }
+                    if o.t < start { o.t = 2.0 * start - o.t; o.dir = -o.dir; }
+                }
+                _ => { let span = (o.len - start).max(1e-3); if o.t > o.len || o.t < start { o.t = start + (o.t - start).rem_euclid(span); } }
+            }
+            // its collision (if it has any) goes where it is drawn
+            if o.prop.is_none() { coll.0.set_mover_time(o.inst as u32, o.t); }
         }
         let Some(model) = level.0.world.models.get(o.model) else { continue };
-        // its collision (if it has any) goes where it is drawn
-        if o.prop.is_none() { coll.0.set_mover_time(o.inst as u32, o.t); }
         if let Some(pi) = o.prop {
             // turn the whole prop about its animated part's pivot, as that part moves from rest
             let Some((k, an)) = model.model_objects.iter().enumerate().find_map(|(k, ob)| ob.animation.as_ref().map(|a| (k, a))) else { continue };
@@ -1232,7 +1258,7 @@ fn switch_level(
     };
     list.current = next as usize;
     for e in &old { commands.entity(e).despawn(); }
-    spawn_level(&mut commands, &loaded.level, &mut meshes, &mut images, &mut materials, ui::CareerRes::mode(game.event));
+    spawn_level(&mut commands, &loaded.level, &mut meshes, &mut images, &mut materials, ui::CareerRes::mode(game.event), loaded.world.course.is_some());
     commands.insert_resource(RiderRes(Rider::new(loaded.start + Vec3::Y * 0.5, loaded.yaw), DrawLerp::default()));
     commands.insert_resource(make_opponents(loaded.start, loaded.yaw, lib.player, lib.chars.len(), 0, 0));
     commands.insert_resource(World(loaded.world));

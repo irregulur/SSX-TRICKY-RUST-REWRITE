@@ -19,6 +19,8 @@ pub struct CourseGround {
     /// each object's flags (+0xe8): as the course loaded them, then as its controllers set them
     /// ([`CourseGround::set_flags`])
     flags: Mutex<Vec<u32>>,
+    /// initial `.ssf` / `.pbd` flags per object, restored by `World_ResetInstances` 0x115fe8 (`CourseGround::reset_cells`)
+    init_flags: Vec<u32>,
     /// each patch's coefficients (+0x50)
     coeffs: Vec<[V4; 16]>,
     /// STANDIN: every patch tessellated stays (about 7 KB each), for the game's fixed-size cache and its eviction
@@ -33,6 +35,9 @@ pub struct CourseGround {
     pub ssf: tricky_data::ssf::Ssf,
     /// the knockable objects that are moving and the script threads the riders' contacts started (row E8c3)
     pub knock: Mutex<crate::knockables::Knockables>,
+    /// live world cells (`AiCells` 0x115e28), object controllers (`cAnimObjectNode`, `cAnimDeltaNode`,
+    /// `controllers::Controller`), and persistent/contact scripts (row E7b2)
+    pub cells: Mutex<crate::cellhost::CellHost>,
     /// the world grid as `Rail_ClosestPoint` 0x259330 walks it (row G20c2c1a, [`rail_world`]); its rails' on bits
     /// as the course's scripts leave them ([`CourseGround::set_rail_live`])
     pub rails: Mutex<crate::rider::ground_tick::RailWorld>,
@@ -74,8 +79,10 @@ impl CourseGround {
         let ssf = tricky_data::ssf::Ssf::parse(ssf_bytes, pbd.instances.len() as u32).ok()?;
         let coeffs = pbd.patches.iter().map(|r| tricky_data::pbd::PatchRec::parse(r).map_or([[0.0; 4]; 16], |p| p.coeffs)).collect();
         let world = World::from_course(pbd_bytes, &pbd, ltg_bytes, &ltg, &ssf);
-        let flags = Mutex::new(world.objects.iter().map(|o| o.flags).collect());
+        let init_flags: Vec<u32> = world.objects.iter().map(|o| o.flags).collect();
+        let flags = Mutex::new(init_flags.clone());
         let knock = Mutex::new(crate::knockables::Knockables::default());
+        let cells = Mutex::new(crate::cellhost::CellHost::new(pbd_bytes, &pbd, world.objects.len()));
         let driven = (0..world.objects.len())
             .map(|o| ssf.effects.get(ssf.event_script(o, 0) as usize).is_some_and(|ops| ops.iter().any(|op| op.op == 0 && op.args.first().is_some_and(|&t| t != 0))))
             .collect();
@@ -87,7 +94,7 @@ impl CourseGround {
         }
         let rails = Mutex::new(rails);
         let floor = ltg.bbox.min[2];
-        Some(CourseGround { world: Mutex::new(world), flags, coeffs, cache: Mutex::new(HashMap::new()), points: Mutex::new(crate::terrain::tessellate), poses: Mutex::new(HashMap::new()), ssf, knock, driven, rails, floor })
+        Some(CourseGround { world: Mutex::new(world), flags, init_flags, coeffs, cache: Mutex::new(HashMap::new()), points: Mutex::new(crate::terrain::tessellate), poses: Mutex::new(HashMap::new()), ssf, knock, cells, driven, rails, floor })
     }
 
     /// The patches' points made by `points` from now on (the cache emptied). In PCSX2 the patch program
@@ -145,6 +152,68 @@ impl CourseGround {
         }
     }
 
+    /// Copy of all object flags (+0xe8), used by `CellHost` without holding nested locks.
+    pub fn snapshot_flags(&self) -> Vec<u32> {
+        self.flags.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Replace all object flags (+0xe8) after a `CellHost` step.
+    pub fn replace_flags(&self, flags: &[u32]) {
+        let mut f = self.flags.lock().unwrap_or_else(|e| e.into_inner());
+        let n = f.len().min(flags.len());
+        f[..n].copy_from_slice(&flags[..n]);
+    }
+
+    /// Attach or detach a controller type (`+0x14`) on `world.objects[object]` without changing poses.
+    pub fn set_controller(&self, object: u32, kind: Option<u32>) {
+        let mut world = self.world.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(obj) = world.objects.get_mut(object as usize) {
+            obj.controller = kind;
+        }
+    }
+
+    /// Controller type (`+0x14`) currently attached to `object` (roller `0` or `CellHost` controller).
+    pub fn controller_type(&self, object: usize) -> Option<u32> {
+        if self.knock.lock().unwrap_or_else(|e| e.into_inner()).rollers.iter().any(|r| r.object as usize == object) {
+            return Some(0);
+        }
+        self.cells.lock().unwrap_or_else(|e| e.into_inner()).controller(object)
+    }
+
+    /// Active clip time (seconds) for a keyframed object driven by `CellHost` (`cAnimObjectNode` / `cAnimDeltaNode`).
+    pub fn anim_time(&self, object: usize) -> Option<f32> {
+        self.cells.lock().unwrap_or_else(|e| e.into_inner()).anim_time(object)
+    }
+
+    /// Advance `AiCells::tick` (`cAIWorld::vf1` 0x115e28) and all live course controllers by one 60 Hz frame (row E7b2).
+    pub fn tick_cells(
+        &self,
+        riders: &[V4],
+        race_1c: i32,
+        camera: V4,
+        show_off: bool,
+        rand_game: &mut dyn FnMut() -> u32,
+    ) -> crate::cellhost::CellEvents {
+        self.cells
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .tick(self, riders, race_1c, camera, show_off, rand_game)
+    }
+
+    /// `AIWorld_ClearSlots` 0x115df0 + `World_ResetInstances` 0x115fe8: drop all active cells, controllers, rollers,
+    /// poses, and restore every object's initial `.ssf` flags.
+    pub fn reset_cells(&self) {
+        self.cells.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        *self.knock.lock().unwrap_or_else(|e| e.into_inner()) = crate::knockables::Knockables::default();
+        self.replace_flags(&self.init_flags);
+        self.poses.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        let mut world = self.world.lock().unwrap_or_else(|e| e.into_inner());
+        for (obj, &f) in world.objects.iter_mut().zip(&self.init_flags) {
+            obj.flags = f;
+            obj.controller = None;
+        }
+    }
+
     /// `WorldNode_RayCast` 0x13aad0 = `World_RayCastInstance` 0x25bf48 on the course for one object (instance):
     /// the distance along the query (> 0 when it hits) and what was hit.
     pub fn ray_cast_instance(&self, q: &mut dyn Shape, object: usize) -> (f32, Option<CastHit>) {
@@ -163,18 +232,20 @@ impl CourseGround {
         f(&self.world.lock().unwrap_or_else(|e| e.into_inner()))
     }
 
-    /// A keyframed object's (`cAnimObjectNode`) animated parts are at `frames` (the n-th animated part's local
-    /// matrix, game units, `MeshAnimNode_GetFrameMatrix` 0x1998d0): its controller (+0xe4) animated (+0x14 bit
-    /// 0x100), so `World_RayCastInstance` poses those parts with them.
-    /// The object's box (+0xcc) stays the file's: the game never moves it (row E7a6, PINE on gari: every box,
-    /// the 41 objects with a controller too, as the `.pbd` has it).
-    /// STANDIN: the controller is only its animated bit, for the course's controllers (row E7b2).
-    pub fn pose(&self, object: u32, frames: Vec<[V4; 4]>) {
+    /// A keyframed object's (`cAnimObjectNode` / `cAnimDeltaNode`) animated parts posed at `frames` with controller
+    /// type `kind` (`0x100`..`0x103`, `MeshAnimNode_GetFrameMatrix` 0x1998d0).
+    /// The object's box (+0xcc) stays the file's: the game never moves it (row E7a6, PINE on gari).
+    pub fn pose_with_controller(&self, object: u32, kind: u32, frames: Vec<[V4; 4]>) {
         let o = object as usize;
         let mut world = self.world.lock().unwrap_or_else(|e| e.into_inner());
         let Some(obj) = world.objects.get_mut(o) else { return };
-        obj.controller = Some(0x100);
+        obj.controller = Some(kind);
         self.poses.lock().unwrap_or_else(|e| e.into_inner()).insert(o, frames);
+    }
+
+    /// Pose animated parts with controller type `0x100` (`cAnimObjectNode`).
+    pub fn pose(&self, object: u32, frames: Vec<[V4; 4]>) {
+        self.pose_with_controller(object, 0x100, frames);
     }
 
     /// The object's controller gone (killed when its cell turns off, `World_CellDeactivate` 0x260108): its parts

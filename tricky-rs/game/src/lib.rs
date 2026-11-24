@@ -18,6 +18,7 @@ pub mod collbody;
 pub mod career;
 pub mod circuit;
 pub mod roster;
+pub mod cellhost;
 pub mod cells;
 pub mod cheats;
 pub mod collide;
