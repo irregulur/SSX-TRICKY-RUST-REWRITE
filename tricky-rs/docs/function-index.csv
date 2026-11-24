@@ -931,18 +931,18 @@ address,size,name,system,status
 0x14b9b8,240,cLessonMan::vf1_14b9b8,tutorial,checked
 0x14baa8,92,LessonMan_SetState,tutorial,checked
 0x14bb08,220,LessonMan_SwitchState,tutorial,checked
-0x14bbe8,428,cLessonMan::vf2_14bbe8,tutorial,not started
-0x14bd98,764,LessonOverlay_DrawButtons,frontend,not started
-0x14c098,528,LessonOverlay_DrawPage,frontend,not started
+0x14bbe8,428,cLessonMan::vf2_14bbe8,tutorial,checked
+0x14bd98,764,LessonOverlay_DrawButtons,frontend,checked
+0x14c098,528,LessonOverlay_DrawPage,frontend,checked
 0x14c2a8,12,Lesson_SetTrickSeen,tutorial,ported
-0x14c2c0,8,LessonOverlay_DrawPage2,frontend,not started
-0x14c2c8,8,LessonOverlay_DrawPage3,frontend,not started
-0x14c2d0,3176,LessonOverlay_DrawTrickBookPage,frontend,not started
-0x14cf38,120,LessonOverlay_DrawTrickInfo,frontend,not started
-0x14cfb0,392,LessonOverlay_DrawTrickPage,frontend,not started
-0x14d138,484,LessonOverlay_DrawTipPage,frontend,not started
-0x14d320,700,LessonOverlay_DrawInstructions,frontend,not started
-0x14d5e0,256,Lesson_DrawMenu,tutorial,not started
+0x14c2c0,8,LessonOverlay_DrawPage2,frontend,checked
+0x14c2c8,8,LessonOverlay_DrawPage3,frontend,checked
+0x14c2d0,3176,LessonOverlay_DrawTrickBookPage,frontend,checked
+0x14cf38,120,LessonOverlay_DrawTrickInfo,frontend,checked
+0x14cfb0,392,LessonOverlay_DrawTrickPage,frontend,checked
+0x14d138,484,LessonOverlay_DrawTipPage,frontend,checked
+0x14d320,700,LessonOverlay_DrawInstructions,frontend,checked
+0x14d5e0,256,Lesson_DrawMenu,tutorial,checked
 0x14d6e0,240,Lesson_HandleMenuInput,tutorial,checked
 0x14d7d0,200,Lesson_ResetScene,tutorial,ported
 0x14d898,140,Lesson_RestartRider,tutorial,ported
@@ -984,7 +984,7 @@ address,size,name,system,status
 0x14ed38,8,cPreLessonHandler::Update,game,checked
 0x14ed40,36,cEndLessonHandler::Enter,game,checked
 0x14ed68,32,cEndLessonHandler::Update,game,checked
-0x14ed88,36,Lesson_GetString,tutorial,not started
+0x14ed88,36,Lesson_GetString,tutorial,checked
 0x14edb0,284,StaticInit_Lesson,tutorial,checked
 0x14eed0,24,Sprite_DrawRectScaled,hud,checked
 0x14eee8,20,Font_SetColorV,hud,ported
@@ -1083,11 +1083,11 @@ address,size,name,system,status
 0x154e20,368,cGameTrickInfo::vf4_154e20,game,not started
 0x155058,20,cGameTrickInfo::~cGameTrickInfo,game,ported
 0x155070,80,cGameTrickInfo::__tf,runtime,host
-0x1550c8,8,cTrickInfo::vf5_1550c8,tutorial,not started
-0x1550d0,12,cTrickInfo::vf4_1550d0,tutorial,not started
-0x1550e0,8,cTrickInfo::vf3_1550e0,tutorial,not started
-0x1550e8,8,cTrickInfo::vf1_1550e8,tutorial,not started
-0x1550f8,36,cTrickInfo::~cTrickInfo,tutorial,not started
+0x1550c8,8,cTrickInfo::vf5_1550c8,tutorial,checked
+0x1550d0,12,cTrickInfo::vf4_1550d0,tutorial,checked
+0x1550e0,8,cTrickInfo::vf3_1550e0,tutorial,checked
+0x1550e8,8,cTrickInfo::vf1_1550e8,tutorial,checked
+0x1550f8,36,cTrickInfo::~cTrickInfo,tutorial,checked
 0x155140,64,cTrickInfo::__tf,runtime,host
 0x1551c0,488,Score_FormatTrickName,scoring,checked
 0x1553a8,100,Score_Init,scoring,ported
@@ -1735,7 +1735,7 @@ address,size,name,system,status
 0x17ddf8,92,cBxTypeObjNode::__tf,runtime,host
 0x17de58,120,BxList_DestroySlot,world,checked
 0x17ded0,8,cCounterNode::vf8_17ded0,world,not started
-0x17ded8,8,cLessonMan::vf7_17ded8,tutorial,not started
+0x17ded8,8,cLessonMan::vf7_17ded8,tutorial,checked
 0x17dee0,8,cAI::vf6_17dee0,ai,checked
 0x17dee8,8,cAI::vf5_17dee8,ai,checked
 0x17def0,8,cAI::vf4_17def0,ai,checked

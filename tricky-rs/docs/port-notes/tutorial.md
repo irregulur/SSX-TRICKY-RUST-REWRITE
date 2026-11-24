@@ -172,3 +172,28 @@ stay ported only: the test covers modes 6..10, not 1..5.
 archive (+0xa8) `BigArchive_Close`d, then (read again) `BigArchive_Delete(…, 3)` and +0xa8 cleared; the trick info
 (+0x514) destroyed with 2; the node's destructor with the caller's argument. `PadCfg_Destruct` 0x14f550 deletes the
 pad map only when its argument has bit 0.
+
+## The lesson manager's draw (row C11d1, proven)
+
+`tricky_game::lesson_draw`, checked in the function runner (`tests/lesson_draw.rs`: 7,600 cases over the 19
+functions from the same stack pointer, every callee a stand-in; 31 of 32 mutants caught, the one left re-reads
+the pad config between two stand-ins that write nothing).
+
+- `cLessonMan::vf2` 0x14bbe8 is the lesson's 2D pass: renderer state kept (+0x1d8), the 2D view (+0xb0 with 0, 0,
+  640, 480, 0, 1000), the font colour's scale (0x337ff8) 0.15, the pad picture in states 5 and 7, the state back.
+- `LessonOverlay_DrawButtons` 0x14bd98: the pad picture (sprite 0x60) at lm+0xa0/+0xa4; once the recording
+  (lm+0x46c) has more than 120 records its **last** record's buttons are lit: record +4 bits map through the pad
+  config's (race+0x1c, +0x8c, +0x870) words at +0x70 (14), record +8 bits through +4 (26, -1 skipped), record +0x10
+  low nibble as is; of the bits in the config's +0x84 mask only the lowest stays when two or more are set. The 14
+  buttons (0x31df88: x, y, sprite, bits) are in `lesson_draw::BUTTONS`.
+- `LessonOverlay_DrawPage` 0x14c098 picks by state (jump table 0x36e4e0): 2 and 3 nothing (`DrawPage2`/`3` are
+  empty), 4 the trick book page, 5 and 7 the pad picture, 6 the trick page, 9 the tip page, 10 the instructions;
+  nothing at all while the pause menu (+0x42c, +0xc) or the menu manager 0x337e08 is up. With the lesson overlay's
+  dialog up (+0x328) the screen is darkened (0.8, 0.1, 0.1, 0.1) and the dialog drawn.
+- `LessonOverlay_DrawTrickBookPage` 0x14c2d0: five boxes at 0.166..0.833 of 640, 90×70 at y 215; with lm+0xb0 = 1
+  the picked one (lm+0xb4) scales by `pulse·0.97` and drops by `(1−s)·45`; the pulse (0x31e068) steps by 0x31e06c
+  (±0.004), turning past 1.05 or under 0.95. It formats "done/per page" (0xe6b) into a buffer it never prints.
+  Arrows: sprites 0x2b/0x2c at pulse·1.2.
+- `Lesson_DrawMenu` 0x14d5e0(lm, flag) calls `Overlay_DrawMenuList` with ten arguments (the last two, `flag` and
+  lm+0x84, on the stack). `Lesson_GetString` 0x14ed88(lm, id) is `Loc_GetString(id)`.
+- `cTrickInfo` vf1/vf3/vf5 do nothing, vf4 answers 0.0, its destructor sets the table 0x36fad0 at +0x24.

@@ -135,6 +135,7 @@ pub mod ground_motion;
 pub mod jump;
 pub mod landing;
 pub mod lesson;
+pub mod lesson_draw;
 pub mod math;
 pub mod meshanim;
 pub mod objanim;
