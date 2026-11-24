@@ -98,7 +98,6 @@ matches the original.
 | X1 | No stand-ins left: `grep -rn STANDIN tricky-rs` is empty | any | F8 | | [est] |
 | X2 | Function index at 100% ported (every function either ported or marked not needed, with a reason, e.g. PS2 hardware glue) | any | F1 | | [est] |
 | X3 | Function index at 100% checked | any | F4, X2 | | [est] |
-| E10d | Gap of E10b: the pad config's game-bytes helpers in `tricky-rs/game/src/input.rs`: the pair parsers `Pad_ParseButtonPair` 0x179fb0, `Pad_ParseButtonPair2` 0x17a038, `Pad_ParseAxisPair` 0x17a0a0, the six `PadCfg_*` getters 0x17a018..0x17a138, `cPadDevice`'s constructor 0x17aa08, empty virtuals 0x17aa58..0x17aa90 and destructor 0x17ab58; checked in the runner | any | E10b | irregulur/lynx (2026-11-24) | Gap of E10b |
 | X4 | Full playthrough of World Circuit, race and show-off, every course, gold everywhere, on our code | any | C1–C16 | | [est] |
 | X5 | 100% completion: every rider maxed, every trick book chapter, every unlock | any | X4 | | [est] |
 | X6 | Runs from the player's own disc only: no SSX-Library, no Python export step, no vgmstream | any | E2–E5, G10 | | [est] |
@@ -116,6 +115,7 @@ matches the original.
 
 | ID | Task | Section | Who | Date | Commit |
 |---|---|---|---|---|---|
+| E10d | The pad config's game-bytes helpers: the three pair parsers, the six `PadCfg_*` getters, `cPadDevice`'s constructor, empty virtuals and destructor, `cPS2Device`'s destructor and vf8 (`tricky_game::input::bytes`), checked in the runner (`tests/pad_bytes.rs`, 8 of 9 mutants, 1 equivalent) | P4 | irregulur/lynx | 2026-11-24 | 5cf4599 |
 | X2c | The 39 small helpers the compiler copied into many files (28 `Vec4_ScaleCopy*`, the empty constructors, `Vec4_AddTo`, the `memcpy` wrappers, `Rand_Init`, `Vec3_PackShort`, `Mat4_TransformVec4Copy1`, `Mem_DeleteIfFlag9`, `PtrArray_FreeAll`): `tricky_game::copies`, checked in the runner (`tests/copies.rs`, 10 of 12 mutants, 2 equivalent) | P4 | irregulur/lynx | 2026-11-24 | 60dde47 |
 | E9b2 | Wired live `.ssf` script threads (`tricky_game::script` on `tricky_data::ssf`) into `CellHost`, `CourseGround`, `Knockables`, `src/worldanim.rs`, and `src/main.rs`: unified List 3 (`live_list3` + `pending_list3`) matching `BxList_Add` (`0x17d4e8`), `BxList_MergePending` (`0x17d548`), `BxList_UpdateAll` (`0x17d950`, descending `cBxSortObjNode` `sort_id` newest-first), and `Game_UpdateObjectLists` (`0x1814c0`, `gBxList_UpdateOrder` `0x337c70`); implemented `World_FindScript` (`0x260dd8` case-insensitive), `World_DeleteScriptObject` (`0x13bbc0` scanning live List 3 head-to-tail), and `World_RunScript` (`0x13bad8`); wired engine race starters (`cAI::vf12` `0x112550` `RaceMode`/`ShowoffMode`/`FreerideMode`, `cPreRaceHandler::Enter` `0x112b88` `NoCountdown`, `cCountdownHandler::Enter`/`Update` `0x113520`/`0x113600` `StartCountdown`/`EndCountdown`) plus area-wake (event 0), contact (event 1), and controller-goal (event 4) threads streaming structured `ScriptEvent`s (`SpawnController`, `ControllerMessage`, `DeadObject`, `RestoreObject`, `SetRail`, `ScriptSound`, `ResetRider`, `Teleport`) into `WorldAnim`, `CollisionWorld`, and `Rails` (retiring `SSFLogic.json` thread execution on disc courses while keeping it as folder-only fallback); verified `66` `tricky-game` tests across 7 suites (incl. new Garibaldi mode/countdown/`World_DeleteScriptObject` and Megaplex List-3 tests in `tests/cellhost.rs`) + `23` `tricky-rs` bin tests on `TRICKY_DISC` + `TRICKY_ELF`, `function_index.py names`, `check_no_game_files.py` (`port-notes/world.md`) | P1 | irregulur/neon | 2026-11-24 | d50b2fe |
 | C11d | (umbrella) The tutorial screens: the overlays and the lesson manager's draw (C11d1), the trick pictures (`tb_<rider><n>`, loaded at lm+0x470 by `lesson.rs`), `Results_BuildLessonPage` (G9v3), `Speech_LessonLine` and `cTrickTutorialLoad` (checked in the index) | P3 | irregulur/lynx | 2026-11-24 | - |
@@ -1838,3 +1838,4 @@ matches the original.
 - 2026-11-24 irregulur/lynx: added X2c (copied small helpers).
 - 2026-11-24 irregulur/lynx: X2c done.
 - 2026-11-24 irregulur/lynx: added E10d (pad config helpers).
+- 2026-11-24 irregulur/lynx: E10d done.
