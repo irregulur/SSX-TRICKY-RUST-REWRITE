@@ -1,7 +1,8 @@
-//! The front end: main menu, the event structure (race heats, show-off, free ride), the results
-//! screen and the on-screen display while riding.
+//! The front end: main menu, the event structure (World Circuit race heats on `tricky_game::circuit`, show-off,
+//! free ride), the results screen and the on-screen display while riding.
 //!
-//! STANDIN: our menus, event flow and results screen, for the game's front end (its menus, circuit and results screens)
+//! STANDIN: our menus and results screen widgets, for the game's front end and results overlays (`cResultsOverlay` /
+//! `cUnlockedOverlay`).
 
 use crate::rider::RaceState;
 use crate::{clock, standings, CharLib, LevelList, Mode, Opponents, RaceRes, RiderRes, SmoothDt};
@@ -44,19 +45,25 @@ fn save_path() -> std::path::PathBuf {
 #[derive(Resource)]
 pub struct CareerRes(pub tricky_game::career::Career);
 
-/// Loaded `SLUS_203.26` roster/scene tables and live `PreRaceSel` / `CircuitHeats` / `SceneHost` state for
-/// `Career_PrepareRace` (`0x163980`) -> `Career_SetupRidersForMode` (`0x165558`) (row E1b2r1) and
+/// Loaded `SLUS_203.26` roster/scene tables and live `PreRaceSel` / `CircuitHeats` / `Circuit` / `SceneHost` state for
+/// `Career_PrepareRace` (`0x163980`) -> `Career_SetupRidersForMode` (`0x165558`) (row E1b2r1),
+/// `Circuit_ProcessRaceResult` (`0x16bcb0`) / `Circuit_AdvanceEvent` (`0x16c3b0`) (row C12a), and
 /// `RaceScene` / `PreRace` / `EndRace` (row G11e).
 #[derive(Resource, Default)]
 pub struct RosterRes {
     pub data: Option<tricky_game::roster::RosterData>,
     pub sel: tricky_game::roster::PreRaceSel,
     pub heats: tricky_game::roster::CircuitHeats,
+    /// Persistent World Circuit globals (`DAT_003353f0`..`DAT_00335664`: final unlocks, unlock list, eliminated riders, row C12a).
+    pub circuit: tricky_game::circuit::Circuit,
+    /// True when `Circuit_AdvanceEvent` (`0x16c3b0`) -> `Circuit_SetupEventRiders` (`0x16d300`) already populated
+    /// `Career+0x27dc/+0x27e0` for the next heat so `prepare_lineup` consumes it without re-running `Circuit_SetupRiders`.
+    pub heat_ready: bool,
     /// Live `RaceScene` (`0x32edc0`), `PreRace` (`cPreRaceHandler`), and `EndRace` (`cEndRaceHandler`) host (row G11e).
     pub scenes: tricky_game::scenehost::SceneHost,
     /// Exact 16 stat bytes written by `Career_SetupPlayerRider` (`0x16a9d8`) for the active run.
     pub player_stat_bytes: Option<[u8; 16]>,
-    /// Starting gate index (`0..6`) assigned to the human player by `Career_PrepareRace`.
+    /// Starting gate index (`0..6`) assigned to the human player by `Career_PrepareRace` / `Circuit_SetupEventRiders`.
     pub player_gate: usize,
     /// The two race seeds (`+0x2b04`, `+0x2b00`) written by `Career_PrepareRace` (`0x163980`).
     pub race_seeds: Option<(u32, u32)>,
@@ -265,7 +272,7 @@ impl Game {
     pub fn training(&self) -> f32 { if self.master { 1.0 } else { (self.points as f32 / 240.0).min(1.0) } }
 }
 /// When a run ends, into the career block (`CareerRes::record_run`), and saved.
-pub fn records(mut game: ResMut<Game>, race: Res<RaceRes>, rider: Res<RiderRes>, list: Res<LevelList>, lib: Res<CharLib>, mut career: ResMut<CareerRes>, mut was: Local<bool>, mut carried: Local<bool>) {
+pub fn records(mut game: ResMut<Game>, race: Res<RaceRes>, rider: Res<RiderRes>, list: Res<LevelList>, lib: Res<CharLib>, mut career: ResMut<CareerRes>, mut roster: ResMut<RosterRes>, mut was: Local<bool>, mut carried: Local<bool>) {
     let me = lib.chars.get(lib.player).map(|c| c.name.clone()).unwrap_or_default();
     career.ensure_player(CareerRes::character(&me));
     if !*carried {
@@ -279,8 +286,10 @@ pub fn records(mut game: ResMut<Game>, race: Res<RaceRes>, rider: Res<RiderRes>,
     if done && !*was {
         // the riders as they finished: the standings, or the player alone
         let table = if game.table.is_empty() || game.event == Event::FreeRide { vec![(me.clone(), Some(race.0.time), true)] } else { game.table.clone() };
-        if career.record_run(game.event, game.round, &track_key(&list), &me, &table, rider.0.score) {
+        if career.record_run(&mut roster, game.event, game.round, &track_key(&list), &me, &table, rider.0.score) {
             game.points = career.points();
+            game.levels = career.levels();
+            game.rivals = career.rivals();
             career.save();
         }
     }
@@ -288,42 +297,172 @@ pub fn records(mut game: ResMut<Game>, race: Res<RaceRes>, rider: Res<RiderRes>,
 }
 
 impl CareerRes {
-    /// A finished run into the block as the game's end of race does it: the race's riders, places, times (hundredths)
-    /// and scores in the career's race area (+0x27dc: per rider +0x3c the character, +0x69 the player; the places
-    /// +0x3264, the times +0x327c, the score blocks +0x3294), the mode, course and heat; then `Career_CheckNewRecords`
-    /// (the course's high-score tables and, in the World Circuit, `Circuit_ProcessRaceResult`: medals, points,
-    /// unlocks) and the character's best time or score. False for a folder not in the course table.
-    /// STANDIN: the race area filled from our standings (names, times) for the game's own race objects (its riders'
-    /// +0x418, `cAI::vf17_111820`'s tables, row G4j).
-    pub fn record_run(&mut self, event: Event, round: usize, key: &str, me: &str, table: &[(String, Option<f32>, bool)], score: u32) -> bool {
+    /// Reset World Circuit heat (`Circuit_ResetHeat` `0x16bca8`) and persistent `Circuit` globals when starting a
+    /// new event or returning to the main menu (row C12a).
+    pub fn reset_circuit(&mut self, roster: &mut RosterRes) {
+        tricky_game::circuit::reset_heat(&mut self.0);
+        roster.circuit = tricky_game::circuit::Circuit::default();
+        roster.heat_ready = false;
+    }
+
+    /// `Circuit_StoreRiderAttitudes` `0x16c228` (`circuit::take_rider_points`): copy each AI rider's settled
+    /// attitude against the player (indexed by career roster gate `0..n`) into `SETUP + 0x1c + 4 * character` so
+    /// `Rivals_InitPairsCircuit` (`0x16c008`) decays it for the next heat and `Circuit_SaveRiderPoints` (`0x16c328`)
+    /// saves it permanently after a final-heat finish (row C12a).
+    pub fn store_circuit_attitudes(&mut self, attitudes_by_gate: &[Option<i8>]) {
+        let n = (self.0.r32(0x27dc) as i32).clamp(0, 6);
+        if n <= 0 { return; }
+        tricky_game::circuit::take_rider_points(&mut self.0, n, 0x27e0, &|i, _last| {
+            attitudes_by_gate.get(i).and_then(|&a| a).unwrap_or(-1)
+        });
+    }
+
+    /// A finished run into the block as the game's end of race does it (`Career_CheckNewRecords` `0x164fc0` ->
+    /// `Circuit_ProcessRaceResult` `0x16bcb0` on the persistent `roster.circuit`, row C12a): preserves the real
+    /// `Career_PrepareRace` / `Circuit_SetupEventRiders` roster at `+0x27e0` when it matches `table` and writes the
+    /// finishing order (`+0x3264`), times (`+0x327c`, hundredths) and score (`+0x3310 + 0xbc*gate`); falls back to
+    /// filling `+0x27dc/+0x27e0` when no disc roster was prepared. Returns false for a folder not in the course table.
+    /// STANDIN: the race places/times/scores filled from our standings for the game's own race objects (`cAI::vf17`
+    /// 0x111820's tables, row G4j).
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_run(&mut self, roster: &mut RosterRes, event: Event, round: usize, key: &str, me: &str, table: &[(String, Option<f32>, bool)], score: u32) -> bool {
         let Some(course) = Self::course(key) else { return false };
         let ch = Self::character(me);
         self.ensure_player(ch);
         let c = &mut self.0;
-        let player = table.iter().position(|t| t.2).unwrap_or(0);
+        if c.r32(tricky_game::circuit::SETUP + 0x10) == 0 {
+            c.rider_setup_init(tricky_game::career::CAREER_BASE + 0x30fc);
+        }
         c.w32(0x2afc, Self::mode(event));
         c.w32(0x2af8, course);
-        c.w32(0x27dc, table.len() as u32);
-        for (i, (name, time, mine)) in table.iter().enumerate() {
-            let r = 0x27dc + 0x84 * i;
-            c.bytes[r + 0x69] = if *mine { 0 } else { 0xff };
-            c.w32(r + 0x3c, if *mine { ch } else { Self::character(name) });
-            c.w32(0x3264 + 4 * i, i as u32);
-            c.w32(0x327c + 4 * i, time.map_or(i32::MAX, |t| (t * 100.0) as i32) as u32);
-            c.w32(0x3294 + 0xbc * i + 0x7c, if *mine { score } else { 0 });
+
+        // Match finishing-order `table` onto the existing career roster at +0x27e0 when present, preserving gate order,
+        // stats, and rival pairs; otherwise populate +0x27dc/+0x27e0 from `table` directly.
+        let existing = c.race_roster();
+        let matched: Option<Vec<usize>> = if existing.len() == table.len() && !existing.is_empty() {
+            let mut used = vec![false; existing.len()];
+            let mut gates = Vec::with_capacity(table.len());
+            for (name, _, mine) in table {
+                let want_ch = if *mine { ch } else { Self::character(name) };
+                let g = existing.iter().enumerate().position(|(idx, row)| {
+                    !used[idx] && row.is_human() == *mine && row.character == want_ch
+                });
+                if let Some(idx) = g {
+                    used[idx] = true;
+                    gates.push(idx);
+                } else {
+                    break;
+                }
+            }
+            (gates.len() == table.len()).then_some(gates)
+        } else {
+            None
+        };
+
+        let (player_gate, player_pos);
+        if let Some(gates) = matched {
+            let mut p_gate = 0usize;
+            let mut p_pos = 0usize;
+            for (place, ((_, time, mine), &gate)) in table.iter().zip(gates.iter()).enumerate() {
+                c.w32(0x3264 + 4 * place, gate as u32);
+                c.w32(0x327c + 4 * gate, time.map_or(i32::MAX, |t| (t * 100.0) as i32) as u32);
+                c.w32(0x3294 + 0xbc * gate + 0x7c, if *mine { score } else { 0 });
+                if *mine {
+                    p_gate = gate;
+                    p_pos = place;
+                }
+            }
+            player_gate = p_gate;
+            player_pos = p_pos;
+        } else {
+            c.w32(0x27dc, table.len() as u32);
+            let mut p_pos = 0usize;
+            for (i, (name, time, mine)) in table.iter().enumerate() {
+                let r = 0x27dc + 0x84 * i;
+                c.bytes[r + 0x69] = if *mine { 0 } else { 0xff };
+                c.w32(r + 0x3c, if *mine { ch } else { Self::character(name) });
+                c.w32(0x3264 + 4 * i, i as u32);
+                c.w32(0x327c + 4 * i, time.map_or(i32::MAX, |t| (t * 100.0) as i32) as u32);
+                c.w32(0x3294 + 0xbc * i + 0x7c, if *mine { score } else { 0 });
+                if *mine { p_pos = i; }
+            }
+            player_gate = p_pos;
+            player_pos = p_pos;
         }
+
         // the heat (`RiderSetup` +0x14): the circuit's race medal comes at the final
-        c.w32(0x320c + 0x14, round as u32);
-        let mut circuit = tricky_game::circuit::Circuit::default();
-        c.check_new_records(&mut RecordsRun { player, circuit: &mut circuit }, &tricky_game::cheats::Cheats::default());
+        c.w32(tricky_game::circuit::SETUP + 0x14, round as u32);
+        c.check_new_records(
+            &mut RecordsRun { player: player_gate, circuit: &mut roster.circuit },
+            &tricky_game::cheats::Cheats::default(),
+        );
         match event {
             Event::ShowOff => c.record_best_score(ch as usize, course as usize, score as i32),
             _ => {
-                if let Some(t) = table[player].1 { c.record_best_time(ch as usize, course as usize, (t * 100.0) as i32); }
+                if let Some(t) = table[player_pos].1 { c.record_best_time(ch as usize, course as usize, (t * 100.0) as i32); }
                 if event == Event::FreeRide { c.record_best_score(ch as usize, course as usize, score as i32); }
             }
         }
         true
+    }
+
+    /// `Career_FinishRace` `0x163ab0` -> `Circuit_AdvanceEvent` `0x16c3b0` -> `Circuit_ScoreEventResult` `0x16d0b0`
+    /// and (when advancing to heat 1 or 2) `Circuit_SetupEventRiders` `0x16d300` (row C12a).
+    /// Returns `career+0x3260`: `4` when the next heat was prepared (`roster.heat_ready = true` if disc tables are
+    /// loaded), or `2` when the event ended (final heat completed, eliminated, or non-race event; heat reset to 0).
+    pub fn advance_circuit(
+        &mut self,
+        roster: &mut RosterRes,
+        master: bool,
+        rand_fx: &mut dyn FnMut() -> u32,
+    ) -> u32 {
+        let cheats = tricky_game::cheats::Cheats::default();
+        let data = roster.data.as_ref();
+        let sel = &mut roster.sel;
+        let heats = &mut roster.heats;
+        let scenes = &mut roster.scenes;
+        let mut built_next = false;
+        self.0.finish_race(&mut roster.circuit, &cheats, &mut |c, ci| {
+            // `Circuit::out[r]` (`0x335664 + 0x10*r`) is the same word as `CircuitHeats::rows[r][3]`.
+            for r in 0..12 {
+                heats.rows[r][3] = ci.out[r];
+            }
+            if let Some(data) = data {
+                let sel_tables = data.roster_tables();
+                let env = tricky_game::roster::PlayerRiderEnv {
+                    words: [0, 0],
+                    character_cheat: 0,
+                    mallora: false,
+                    max_attrib: master,
+                };
+                let mut ctx = data.ctx(sel, &sel_tables, env, &tricky_game::career::InitialRelations);
+                c.circuit_setup_event_riders(0, heats, &mut ctx, rand_fx);
+                let n = (c.r32(0x27dc) as i32).clamp(0, 6) as usize;
+                for i in 0..6 {
+                    c.w32(0x27e0 + 0x84 * i, if i < n { i as u32 } else { u32::MAX });
+                }
+                for r in 0..12 {
+                    ci.out[r] = heats.rows[r][3];
+                }
+                scenes.setup_from_career(c, rand_fx);
+                built_next = true;
+            }
+        });
+        let next = self.0.r32(0x3260);
+        if next == 4 && built_next {
+            let rows = self.0.race_roster();
+            if let Some((gate, row)) = rows.iter().enumerate().find(|(_, r)| r.is_human()) {
+                roster.player_gate = gate;
+                roster.player_stat_bytes = Some(row.stat_bytes);
+            }
+            roster.heat_ready = true;
+        } else {
+            roster.heat_ready = false;
+            if next != 4 {
+                roster.circuit.out.fill(0);
+            }
+        }
+        next
     }
     /// Run `Career_PrepareRace` (`0x163980`) via `Career_SetupRidersForMode` (`0x165558`) on the career block
     /// using `SLUS_203.26` tables in `roster` (row E1b2r1). Fills `+0x27dc` / `0x27e0 + 0x84*s` (rider lineup,
@@ -377,6 +516,10 @@ impl CareerRes {
             rand_fx: &mut *rand_fx,
         };
         self.0.prepare_race(&mut prep);
+        for r in 0..12 {
+            roster.circuit.out[r] = roster.heats.rows[r][3];
+        }
+        roster.heat_ready = false;
         // `RaceScene_Reset` 0x169688 + `RaceScene_SetupFromPicks` 0x169698 on `Career+0x2b18` (row G11e).
         roster.scenes.setup_from_career(&self.0, rand_fx);
         let rows = self.0.race_roster();
@@ -404,27 +547,50 @@ mod tests {
     #[test]
     fn a_final_won_is_gold_and_opens_the_next() {
         let mut c = fresh();
+        let mut roster = RosterRes::default();
         c.ensure_player(CareerRes::character("mac"));
         assert!(c.char_open("mac") && !c.char_open("brodi"));
         assert!(c.course_open(Event::Race, "gari") && !c.course_open(Event::Race, "snowdream"));
         assert_eq!(c.medal(Event::Race, "gari"), None);
         let table = |me: usize| (0..6).map(|i| (if i == me { "Mac".to_string() } else { tricky_game::rivals::NAMES[i + 4].to_string() }, Some(100.0 + i as f32), i == me)).collect::<Vec<_>>();
-        // a heat won is no medal yet
-        assert!(c.record_run(Event::Race, 0, "gari", "mac", &table(0), 0));
+        // a heat won is no medal yet, and Circuit::advance_event moves to heat 1 (returns 4)
+        assert!(c.record_run(&mut roster, Event::Race, 0, "gari", "mac", &table(0), 0));
         assert_eq!(c.medal(Event::Race, "gari"), None);
         assert_eq!(c.best("gari").0, Some(100.0));
-        // the final won: gold, its 15 points, the next course of the circuit and the next rider open
-        assert!(c.record_run(Event::Race, 2, "gari", "mac", &table(0), 0));
+        assert!(roster.circuit.unlocks.is_empty());
+        let mut streams = tricky_game::rand::Streams::default();
+        assert_eq!(c.advance_circuit(&mut roster, false, &mut || streams.fx()), 4);
+        assert_eq!(c.0.r32(tricky_game::circuit::SETUP + 0x14), 1);
+        assert_eq!(c.0.r32(tricky_game::circuit::SETUP + 0x18), tricky_game::circuit::HEAT_BONUS[0]);
+        // heat 1 won -> heat 2
+        assert!(c.record_run(&mut roster, Event::Race, 1, "gari", "mac", &table(1), 0));
+        assert_eq!(c.advance_circuit(&mut roster, false, &mut || streams.fx()), 4);
+        assert_eq!(c.0.r32(tricky_game::circuit::SETUP + 0x14), 2);
+        assert_eq!(c.0.r32(tricky_game::circuit::SETUP + 0x18), tricky_game::circuit::HEAT_BONUS[1]);
+        // the final won: gold, its 15 points, the next course of the circuit, next rider, board & ranking in circuit.unlocks
+        assert!(c.record_run(&mut roster, Event::Race, 2, "gari", "mac", &table(0), 0));
         assert_eq!(c.medal(Event::Race, "gari"), Some(0));
         assert_eq!(c.points(), 15);
         assert!(c.course_open(Event::Race, "snowdream"));
         let next = tricky_game::rivals::NAMES[tricky_game::circuit::CHARACTER_ORDER.iter().map(|&k| k as usize).find(|&k| !["Mac", "Moby", "Elise", "Eddie"].contains(&tricky_game::rivals::NAMES[k])).unwrap()];
         assert!(c.char_open(next), "{next} opens with the gold");
         assert!(c.board_open(2) && !c.board_open(3), "boards up to 5 points");
-        // a worse final keeps the gold
-        assert!(c.record_run(Event::Race, 2, "gari", "mac", &table(2), 0));
+        assert!(roster.circuit.unlocks.iter().any(|u| u.kind == 1 && u.value == 1), "Snowdream race venue unlock");
+        assert!(roster.circuit.unlocks.iter().any(|u| u.kind == 3), "character unlock on gold");
+        assert!(roster.circuit.unlocks.iter().any(|u| u.kind == 4 && u.value == 2), "board 2 unlock");
+        assert!(roster.circuit.unlocks.iter().any(|u| u.kind == 6), "ranking unlock");
+        // finishing final heat returns 2 and resets heat to 0
+        assert_eq!(c.advance_circuit(&mut roster, false, &mut || streams.fx()), 2);
+        assert_eq!(c.0.r32(tricky_game::circuit::SETUP + 0x14), 0);
+        // a worse final keeps the gold and produces no new non-medal unlocks
+        assert!(c.record_run(&mut roster, Event::Race, 2, "gari", "mac", &table(2), 0));
         assert_eq!(c.medal(Event::Race, "gari"), Some(0));
         assert_eq!(c.points(), 15);
+        assert!(roster.circuit.unlocks.iter().all(|u| u.kind == 7));
+        // elimination in heat 0 returns 2 and resets heat to 0
+        assert!(c.record_run(&mut roster, Event::Race, 0, "gari", "mac", &table(4), 0));
+        assert_eq!(c.advance_circuit(&mut roster, false, &mut || streams.fx()), 2);
+        assert_eq!(c.0.r32(tricky_game::circuit::SETUP + 0x14), 0);
         // medals are the character's: another rider starts with none
         c.ensure_player(CareerRes::character("moby"));
         assert_eq!(c.medal(Event::Race, "gari"), None);
@@ -434,11 +600,98 @@ mod tests {
     #[test]
     fn a_showoff_scores_its_medal() {
         let mut c = fresh();
+        let mut roster = RosterRes::default();
         let gold = showoff("gari").0[0];
-        assert!(c.record_run(Event::ShowOff, 0, "gari", "elise", &[("Elise".into(), None, true)], gold));
+        assert!(c.record_run(&mut roster, Event::ShowOff, 0, "gari", "elise", &[("Elise".into(), None, true)], gold));
         assert_eq!(c.medal(Event::ShowOff, "gari"), Some(0));
         assert_eq!(c.best("gari").1, gold);
-        assert!(!c.record_run(Event::Race, 2, "nowhere", "elise", &[("Elise".into(), Some(1.0), true)], 0));
+        assert!(roster.circuit.unlocks.iter().any(|u| u.kind == 0 && u.value == 1), "Snowdream show-off venue unlock");
+        assert!(roster.circuit.unlocks.iter().any(|u| u.kind == 3), "character unlock on gold");
+        assert!(!c.record_run(&mut roster, Event::Race, 2, "nowhere", "elise", &[("Elise".into(), Some(1.0), true)], 0));
+    }
+
+    #[test]
+    fn world_circuit_heats_advance_eliminate_and_save_attitudes_from_disc() {
+        let Ok(disc_path) = std::env::var("TRICKY_DISC") else { return };
+        let mut disc = tricky_data::disc::Disc::open(&disc_path).expect("open TRICKY_DISC");
+        let elf = disc.read_path("/SLUS_203.26").expect("read ELF").expect("/SLUS_203.26 present");
+        let mut roster = RosterRes::from_elf(&elf);
+        let mut c = fresh();
+        let mut streams = tricky_game::rand::Streams::default();
+        streams.seed_fx(0x2026_c12a);
+
+        // Heat 0 via Career_PrepareRace -> Circuit_SetupRiders -> Circuit_SetupEventRiders
+        let rows0 = c.prepare_race(&mut roster, Event::Race, 0, "gari", "mac", 0, 0, false, &mut || streams.fx()).expect("heat 0");
+        assert_eq!(rows0.len(), 6);
+        assert!(!roster.heat_ready);
+
+        // Pick finishing order where player (Mac) finishes 2nd and 3 specific AI riders finish 4th..6th (eliminated).
+        let p_gate = roster.player_gate;
+        let ai_gates: Vec<usize> = (0..6).filter(|&g| g != p_gate).collect();
+        let order = [ai_gates[0], p_gate, ai_gates[1], ai_gates[2], ai_gates[3], ai_gates[4]];
+        let table0: Vec<(String, Option<f32>, bool)> = order.iter().enumerate().map(|(place, &g)| {
+            let row = &rows0[g];
+            let name = tricky_game::rivals::NAMES[row.character as usize].to_string();
+            (name, Some(95.0 + place as f32), row.is_human())
+        }).collect();
+        // Store a distinct settled attitude (92) for the winning AI rider via Circuit_StoreRiderAttitudes (0x16c228).
+        let tracked_char = rows0[ai_gates[0]].character as usize;
+        let mut atts = [None; 6];
+        for &g in &ai_gates { atts[g] = Some(50); }
+        atts[ai_gates[0]] = Some(92);
+        c.store_circuit_attitudes(&atts);
+        assert_eq!(c.0.r32(tricky_game::circuit::SETUP + 0x1c + 4 * tracked_char), 92);
+
+        // Record heat 0 -> no medal yet; advance_circuit -> returns 4, sets heat=1, heat_ready=true, HEAT_BONUS[1]
+        assert!(c.record_run(&mut roster, Event::Race, 0, "gari", "mac", &table0, 0));
+        assert_eq!(c.medal(Event::Race, "gari"), None);
+        let elim_chars: Vec<usize> = order[3..6].iter().map(|&g| rows0[g].character as usize).collect();
+        assert_eq!(c.advance_circuit(&mut roster, false, &mut || streams.fx()), 4);
+        assert_eq!(c.0.r32(tricky_game::circuit::SETUP + 0x14), 1);
+        assert_eq!(c.0.r32(tricky_game::circuit::SETUP + 0x18), tricky_game::circuit::HEAT_BONUS[1]);
+        assert!(roster.heat_ready);
+        for &ch in &elim_chars {
+            assert_eq!(roster.heats.rows[ch][3], 1, "eliminated rider {ch} marked out in CircuitHeats");
+            assert_eq!(roster.circuit.out[ch], 1);
+        }
+        // Attitude stored in SETUP+0x1c survived into heat 1 (not wiped by Circuit_SetupRiders!)
+        assert_eq!(c.0.r32(tricky_game::circuit::SETUP + 0x1c + 4 * tracked_char), 92);
+        let rows1 = c.0.race_roster();
+        assert_eq!(rows1.len(), 6);
+        // If tracked_char is in heat 1, Rivals_InitPairsCircuit decayed 92 by relation (1..=3) into row.relations[player_gate].0
+        if let Some(row1) = rows1.iter().find(|r| !r.is_human() && r.character as usize == tracked_char) {
+            let decay = match tricky_game::rivals::relation(tracked_char, 3) { 1 => 3, 2 => 1, _ => 2 };
+            assert_eq!(row1.relations[roster.player_gate].0, 92 - decay);
+        }
+
+        // Heat 1 -> Heat 2 (player 1st)
+        let p_gate1 = roster.player_gate;
+        let mut order1: Vec<usize> = vec![p_gate1];
+        order1.extend((0..6).filter(|&g| g != p_gate1));
+        let table1: Vec<_> = order1.iter().enumerate().map(|(pl, &g)| {
+            (tricky_game::rivals::NAMES[rows1[g].character as usize].to_string(), Some(90.0 + pl as f32), rows1[g].is_human())
+        }).collect();
+        assert!(c.record_run(&mut roster, Event::Race, 1, "gari", "mac", &table1, 0));
+        assert_eq!(c.advance_circuit(&mut roster, false, &mut || streams.fx()), 4);
+        assert_eq!(c.0.r32(tricky_game::circuit::SETUP + 0x14), 2);
+        assert!(roster.heat_ready);
+
+        // Heat 2 (final, player 1st): gold medal, unlocks populated, Circuit_SaveRiderPoints persists tracked_char attitude (92) to rec+0x168
+        let rows2 = c.0.race_roster();
+        let p_gate2 = roster.player_gate;
+        let mut order2: Vec<usize> = vec![p_gate2];
+        order2.extend((0..6).filter(|&g| g != p_gate2));
+        let table2: Vec<_> = order2.iter().enumerate().map(|(pl, &g)| {
+            (tricky_game::rivals::NAMES[rows2[g].character as usize].to_string(), Some(88.0 + pl as f32), rows2[g].is_human())
+        }).collect();
+        assert!(c.record_run(&mut roster, Event::Race, 2, "gari", "mac", &table2, 0));
+        assert_eq!(c.medal(Event::Race, "gari"), Some(0));
+        assert!(!roster.circuit.unlocks.is_empty());
+        assert_eq!(c.advance_circuit(&mut roster, false, &mut || streams.fx()), 2);
+        assert_eq!(c.0.r32(tricky_game::circuit::SETUP + 0x14), 0);
+        assert!(!roster.heat_ready);
+        let rec = c.0.ptr(0x3114);
+        assert_eq!(c.0.r32(rec + 0x168 + 8 * tracked_char), 92, "Circuit_SaveRiderPoints persisted attitude to character record");
     }
 
     #[test]
@@ -626,7 +879,7 @@ pub fn trick_book(mut rider: ResMut<RiderRes>, lib: Res<CharLib>, mut book: ResM
 }
 
 /// Menu and results input. Riding input is read in `ride`.
-pub fn menus(keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, time: Res<Time>, mut game: ResMut<Game>, mut lib: ResMut<CharLib>, mode: Res<Mode>, career: Res<CareerRes>, list: Res<LevelList>, book: Res<crate::book::Book>) {
+pub fn menus(keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, time: Res<Time>, mut game: ResMut<Game>, mut lib: ResMut<CharLib>, mode: Res<Mode>, mut career: ResMut<CareerRes>, mut roster: ResMut<RosterRes>, list: Res<LevelList>, book: Res<crate::book::Book>) {
     game.since += time.delta_secs();
     if *mode != Mode::Ride { return; }
     let pad = |b: GamepadButton| pads.iter().any(|p| p.just_pressed(b));
@@ -662,6 +915,7 @@ pub fn menus(keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, time: Res<T
                     if let Some(k) = lib.chars.iter().position(|ch| ch.name.eq_ignore_ascii_case(name)) { lib.player = k; }
                     game.board = (c.board[0] as usize).min(11);
                     if let Some(i) = course_dir(&list, c.course as u32) { game.track_step = i as i32 - list.current as i32; }
+                    career.reset_circuit(&mut roster);
                     game.round = 0;
                     game.screen = Screen::Playing;
                     game.lineup = true;
@@ -678,18 +932,49 @@ pub fn menus(keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, time: Res<T
             else if ok && game.since > 0.15 {
                 match game.pause_cursor {
                     0 => game.screen = Screen::Playing,
-                    1 => { game.screen = Screen::Playing; game.lineup = true; }
-                    _ => { game.screen = Screen::Menu; game.lineup = true; }
+                    1 => {
+                        if game.round > 0 && roster.data.is_some() { roster.heat_ready = true; }
+                        game.screen = Screen::Playing;
+                        game.lineup = true;
+                    }
+                    _ => {
+                        career.reset_circuit(&mut roster);
+                        game.round = 0;
+                        game.screen = Screen::Menu;
+                        game.lineup = true;
+                    }
                 }
                 game.since = 0.0;
             }
         }
         Screen::Results => {
-            if back { game.screen = Screen::Menu; game.since = 0.0; game.lineup = true; }
-            else if ok && game.since > 0.8 {
-                let through = game.event == Event::Race && game.place < 3;
-                if through && game.round + 1 >= ROUND_COUNT { game.screen = Screen::Menu; }
-                else { if through { game.round += 1; } game.screen = Screen::Playing; }
+            if back {
+                // On final heat / elimination / show-off, finish the event so `Circuit_SaveRiderPoints` & attribute
+                // updates still run; abandoning mid-circuit resets heat back to 0 without advancing.
+                if game.event != Event::Race || game.round + 1 >= ROUND_COUNT || game.place >= 3 {
+                    career.advance_circuit(&mut roster, game.master, &mut tricky_game::rand::rand_fx);
+                    career.save();
+                } else {
+                    career.reset_circuit(&mut roster);
+                }
+                game.round = 0;
+                game.screen = Screen::Menu;
+                game.since = 0.0;
+                game.lineup = true;
+            } else if ok && game.since > 0.8 {
+                let was_final_win = game.event == Event::Race && game.round + 1 >= ROUND_COUNT && game.place < 3;
+                let next = career.advance_circuit(&mut roster, game.master, &mut tricky_game::rand::rand_fx);
+                career.save();
+                game.points = career.points();
+                game.levels = career.levels();
+                game.rivals = career.rivals();
+                if next == 4 {
+                    game.round = career.0.r32(tricky_game::circuit::SETUP + 0x14) as usize;
+                    game.screen = Screen::Playing;
+                } else {
+                    game.round = 0;
+                    game.screen = if was_final_win { Screen::Menu } else { Screen::Playing };
+                }
                 game.since = 0.0;
                 game.lineup = true;
             }
@@ -718,7 +1003,7 @@ pub fn course_dir(list: &LevelList, number: u32) -> Option<usize> {
 
 pub fn hud(
     game: Res<Game>, race: Res<RaceRes>, list: Res<LevelList>, time: Res<Time>, (smooth, tick): (Res<SmoothDt>, Res<crate::GameTick>), rider: Res<RiderRes>,
-    opponents: Res<Opponents>, lib: Res<CharLib>, mode: Res<Mode>, (career, book): (Res<CareerRes>, Res<crate::book::Book>),
+    opponents: Res<Opponents>, lib: Res<CharLib>, mode: Res<Mode>, (career, roster, book): (Res<CareerRes>, Res<RosterRes>, Res<crate::book::Book>),
     mut texts: Query<(&mut Text, &HudItem, &mut TextColor)>, mut segs: Query<(&mut Node, &mut BackgroundColor, &BoostSeg)>, mut shown: Local<f32>,
     mut panel: Single<&mut Visibility, (With<PanelBox>, Without<HudRoot>)>, mut root: Single<&mut Visibility, (With<HudRoot>, Without<PanelBox>)>,
     mut fps: Local<(f32, f32, u32)>,
@@ -871,10 +1156,16 @@ pub fn hud(
                             s += &format!("{}   {}{}   {}\n", game.text.ordinal(i), name, if *you { " *" } else { "" }, t.map(clock).unwrap_or_else(|| dnf.clone()));
                         }
                         let last = game.round + 1 >= ROUND_COUNT;
+                        let unlock_lines = game.text.format_unlocks(&roster.circuit, &career.0, true);
+                        let unlocks = if unlock_lines.is_empty() {
+                            String::new()
+                        } else {
+                            format!("\n\n{}\n{}", game.text.unlocked_header(&me), unlock_lines.join("\n"))
+                        };
                         s += &match (game.place < 3, last) {
-                            (true, true) => format!("\n{} {}\n\nEnter: {}", game.text.medal_caps(game.place), game.text.medal_word(), game.text.opt_continue()),
-                            (true, false) => format!("\n{}\n\nEnter: {}    Esc: {}", game.text.race_qualified(game.round), game.text.opt_continue(), game.text.opt_quit()),
-                            (false, _) => format!("\n{}\n\nEnter: {}    Esc: {}", game.text.race_eliminated(), game.text.opt_restart(), game.text.opt_quit()),
+                            (true, true) => format!("\n{} {}{unlocks}\n\nEnter: {}", game.text.medal_caps(game.place), game.text.medal_word(), game.text.opt_continue()),
+                            (true, false) => format!("\n{}{unlocks}\n\nEnter: {}    Esc: {}", game.text.race_qualified(game.round), game.text.opt_continue(), game.text.opt_quit()),
+                            (false, _) => format!("\n{}{unlocks}\n\nEnter: {}    Esc: {}", game.text.race_eliminated(), game.text.opt_restart(), game.text.opt_quit()),
                         };
                         s
                     }
@@ -884,7 +1175,13 @@ pub fn hud(
                         let verdict = medal
                             .map(|m| format!("{} {}", game.text.medal_caps(m), game.text.medal_word()))
                             .unwrap_or_else(|| game.text.won_no_medal());
-                        format!("{track}  -  {}\n\n{me}\n{} {}\n{} {}\n\n{verdict}\n\n{} {}   {} {}   {} {}\n\nEnter: {}    Esc: {}",
+                        let unlock_lines = game.text.format_unlocks(&roster.circuit, &career.0, false);
+                        let unlocks = if unlock_lines.is_empty() {
+                            String::new()
+                        } else {
+                            format!("\n\n{}\n{}", game.text.unlocked_header(&me), unlock_lines.join("\n"))
+                        };
+                        format!("{track}  -  {}\n\n{me}\n{} {}\n{} {}\n\n{verdict}{unlocks}\n\n{} {}   {} {}   {} {}\n\nEnter: {}    Esc: {}",
                             game.text.showoff_results_title(), game.text.score_label(), r.score, game.text.time_label(), clock(race.0.time),
                             game.text.medal_lower(0), sh[0], game.text.medal_lower(1), sh[1], game.text.medal_lower(2), sh[2],
                             game.text.opt_restart(), game.text.opt_quit())

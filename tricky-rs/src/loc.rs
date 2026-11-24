@@ -33,6 +33,11 @@ pub const MEDAL_LOWER_IDS: [u32; 3] = [0x0e36, 0x0e3c, 0x0e33];
 /// Tricks stat labels (`kCharTitleEdging`, `Speed`, `Stability`, `Tricks`).
 pub const STAT_LABEL_IDS: [u32; 4] = [0x0025, 0x0027, 0x0028, 0x0029];
 
+/// `cUnlockedOverlay::cUnlockedOverlay` 0x1b58c0 (`AWARD_SINGLE` 0x338268, `AWARD_PLURAL` 0x338240):
+/// unlock line format string IDs indexed by `circuit::Unlock::kind` (`0..10`).
+pub const UNLOCK_SINGLE_IDS: [u32; 10] = [0x023b, 0x023d, 0x0237, 0x0235, 0x0233, 0x0239, 0x0db3, 0x0e1e, 0x022a, 0x023f];
+pub const UNLOCK_PLURAL_IDS: [u32; 10] = [0x023a, 0x023c, 0x0236, 0x0234, 0x0232, 0x0238, 0x0db4, 0x0e1f, 0x022a, 0x023e];
+
 /// `WStr_Format` 0x17ce38 single-`%d` substitution for localised templates (`0x116`, `0xe29`, `0xe3f`, `0xe64`).
 pub fn fmt_d(template: &str, value: i32) -> String {
     if template.contains("%d") {
@@ -40,6 +45,25 @@ pub fn fmt_d(template: &str, value: i32) -> String {
     } else {
         format!("{template} {value}")
     }
+}
+
+/// `WStr_Format` 0x17ce38 `%d` + `%s`/`%S` substitution (`Results_AddAwardLine` 0x1b5bf8 kinds `0..=3`).
+fn fmt_d_str(template: &str, value: i32, text: &str) -> String {
+    let s = template.replacen("%d", &value.to_string(), 1);
+    if s.contains("%s") {
+        s.replacen("%s", text, 1)
+    } else if s.contains("%S") {
+        s.replacen("%S", text, 1)
+    } else {
+        format!("{s} ({text})")
+    }
+}
+
+/// `WStr_Format` 0x17ce38 `%d` + `%d` substitution (`Results_AddAwardLine` 0x1b5bf8 kind 5).
+fn fmt_dd(template: &str, first: i32, second: i32) -> String {
+    template
+        .replacen("%d", &first.to_string(), 1)
+        .replacen("%d", &second.to_string(), 1)
 }
 
 impl GameText {
@@ -362,6 +386,128 @@ impl GameText {
     pub fn trick_book_completed(&self) -> String {
         self.or(0x022a, "Trick Book Completed - 1 new board")
     }
+
+    // --- Unlocked Overlay (`cUnlockedOverlay` 0x1b58c0, `Results_AddAwardLine` 0x1b5bf8, `Reset` 0x1b5ef8, `DrawText` 0x1b65f0) ---
+
+    /// `cUnlockedOverlay::DrawText` 0x1b65f0 (`0xdf6` `"CONGRATULATIONS, "` + player name, `0xdf7` `"You have unlocked:"`).
+    pub fn unlocked_header(&self, name: &str) -> String {
+        format!("{}{name}\n{}", self.or(0x0df6, "CONGRATULATIONS, "), self.or(0x0df7, "You have unlocked:"))
+    }
+
+    /// `cUnlockedOverlay::DrawText` 0x1b65f0 final-circuit unlock note (`0xc9c` Race Circuit / `0xc9d` Showoff Circuit).
+    pub fn unlock_final_note(&self, is_race: bool) -> String {
+        if is_race {
+            self.or(0x0c9c, "Congratulations!  You have beaten the Race Circuit.  You've been invited to go heli-boarding on Untracked.  Have fun and check it out anytime in Freeride mode.")
+        } else {
+            self.or(0x0c9d, "Congratulations!  You have beaten the Showoff Circuit.  You are invited to the juggernaut of trick venues atop a city skyscraper.  Have fun and check it out anytime in Freeride or Single Event mode.")
+        }
+    }
+
+    /// `cUnlockedOverlay::Reset` 0x1b5ef8 + `Results_AddAwardLine` 0x1b5bf8 + `cUnlockedOverlay::DrawText` 0x1b65f0:
+    /// aggregate `circuit.unlocks` per player slot, format award lines in the game's order `[5, 9, 8, 4, 3, 2, 1, 0, 6]`
+    /// (skipping kind 7 medals and non-final kind 2 courses), and append the final-circuit note when unlocked.
+    pub fn format_unlocks(
+        &self,
+        circuit: &tricky_game::circuit::Circuit,
+        career: &tricky_game::career::Career,
+        is_race: bool,
+    ) -> Vec<String> {
+        const SINGLE_FB: [&str; 10] = [
+            "%d New Showoff Venue (%s)",
+            "%d New Race Venue (%s)",
+            "%d New Course (%s)",
+            "%d New Character (%S)",
+            "%d New Board",
+            "%d New Outfit (Trick Chapter %d completed)",
+            "%d New Rider Ranking",
+            "Top %d Record Times",
+            "Trick Book Completed - 1 new board",
+            "%d Entry In Trick Book",
+        ];
+        const PLURAL_FB: [&str; 10] = [
+            "%d More Showoff Venues!",
+            "%d More Race Venues!",
+            "%d More Courses!",
+            "%d More Characters!",
+            "%d More Boards!",
+            "%d More Outfits!",
+            "%d New Rider Rankings",
+            "Top %d Record Scores",
+            "Trick Book Completed - 1 new board",
+            "%d Entries In Trick Book",
+        ];
+
+        let mut counts = [[0i32; 10]; 4];
+        let mut values = [[0i32; 10]; 4];
+        let mut flagged = [false; 4];
+        for u in &circuit.unlocks {
+            let k = u.kind as usize;
+            if k >= 10 { continue; }
+            let slot = career.find_player_slot(u.who as i8);
+            let p = if slot >= 0 && (slot as usize) < 4 { slot as usize } else { 0 };
+            if k == 9 {
+                counts[p][9] = u.value;
+            } else {
+                counts[p][k] += 1;
+            }
+            values[p][k] = u.value;
+            flagged[p] = true;
+        }
+
+        let course_label = |course_no: u32| -> String {
+            let fb = tricky_game::courses::COURSES
+                .iter()
+                .find(|c| c.number == course_no)
+                .map_or("course", |c| c.name);
+            self.course_name(course_no, fb)
+        };
+
+        let mut lines = Vec::new();
+        for p in 0..4usize {
+            if !flagged[p] { continue; }
+            for kind in [5usize, 9, 8, 4, 3, 2, 1, 0, 6] {
+                let n = counts[p][kind];
+                if n <= 0 { continue; }
+                let val = values[p][kind];
+                let line = if kind == 8 {
+                    self.trick_book_completed()
+                } else if n >= 2 {
+                    fmt_d(&self.or(UNLOCK_PLURAL_IDS[kind], PLURAL_FB[kind]), n)
+                } else {
+                    let tmpl = self.or(UNLOCK_SINGLE_IDS[kind], SINGLE_FB[kind]);
+                    match kind {
+                        0 | 1 => fmt_d_str(&tmpl, n, &course_label(val as u32)),
+                        2 => {
+                            if val != 6 && val != 7 { continue; }
+                            fmt_d_str(&tmpl, n, &course_label(val as u32))
+                        }
+                        3 => {
+                            let rider = tricky_game::rivals::NAMES
+                                .get(val as usize)
+                                .copied()
+                                .unwrap_or("Rider");
+                            fmt_d_str(&tmpl, n, rider)
+                        }
+                        5 => {
+                            let pid = career.player_id(p);
+                            let pages = (0..5u32)
+                                .filter(|&pg| career.tricks_done_in_page(pid, pg) == 5)
+                                .count() as i32;
+                            fmt_dd(&tmpl, n, if pages > 0 { pages } else { val })
+                        }
+                        _ => fmt_d(&tmpl, n),
+                    }
+                };
+                lines.push(line);
+            }
+        }
+        if is_race && circuit.race_final != 0 {
+            lines.push(self.unlock_final_note(true));
+        } else if !is_race && circuit.showoff_final != 0 {
+            lines.push(self.unlock_final_note(false));
+        }
+        lines
+    }
 }
 
 #[cfg(test)]
@@ -488,5 +634,35 @@ mod tests {
         assert_eq!(t.chapter(3), "Chapter 3");
         assert_eq!(t.chapter_completed(), "COMPLETED");
         assert_eq!(t.trick_book_completed(), "Trick Book Completed - 1 new board");
+
+        // cUnlockedOverlay 0x1b58c0 / 0x1b5bf8 / 0x1b5ef8 / 0x1b65f0
+        assert_eq!(t.unlocked_header("Mac"), "CONGRATULATIONS, Mac\nYou have unlocked:");
+        let mut career = tricky_game::career::Career::default();
+        let mut streams = tricky_game::rand::Streams::default();
+        career.init_new_game(0, &mut streams, None);
+        career.assign_player_rider(0, 0, 3, &tricky_game::cheats::Cheats::default());
+        let mut ci = tricky_game::circuit::Circuit::default();
+        ci.unlocks.push(tricky_game::circuit::Unlock { who: 0, kind: 7, value: 0 }); // medal: skipped on unlock list
+        ci.unlocks.push(tricky_game::circuit::Unlock { who: 0, kind: 2, value: 1 }); // non-final course: skipped
+        ci.unlocks.push(tricky_game::circuit::Unlock { who: 0, kind: 1, value: 1 }); // snowdream race venue
+        ci.unlocks.push(tricky_game::circuit::Unlock { who: 0, kind: 3, value: 10 }); // Brodi
+        ci.unlocks.push(tricky_game::circuit::Unlock { who: 0, kind: 4, value: 2 }); // board
+        ci.unlocks.push(tricky_game::circuit::Unlock { who: 0, kind: 6, value: 8 }); // ranking
+        ci.unlocks.push(tricky_game::circuit::Unlock { who: 0, kind: 9, value: 2 }); // 2 trick book entries
+        let lines = t.format_unlocks(&ci, &career, true);
+        assert_eq!(lines, vec![
+            "2 Entries In Trick Book",
+            "1 New Board",
+            "1 New Character (Brodi)",
+            "1 New Race Venue (snowdream)",
+            "1 New Rider Ranking",
+        ]);
+        ci.unlocks.clear();
+        ci.unlocks.push(tricky_game::circuit::Unlock { who: 0, kind: 2, value: 7 }); // Untracked
+        ci.race_final = 1;
+        let fin = t.format_unlocks(&ci, &career, true);
+        assert_eq!(fin.len(), 2);
+        assert_eq!(fin[0], "1 New Course (untracked)");
+        assert!(fin[1].contains("Untracked"));
     }
 }

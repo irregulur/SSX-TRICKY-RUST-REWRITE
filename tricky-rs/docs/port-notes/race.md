@@ -560,3 +560,26 @@ count 0x3353f8, the riders out 0x335664 + 0x10 · character). The heats' rider s
   (`RaceLoaded`, `STG_*`, `GAT_*`) and rival-only post-race (`FL_<RIV>_VS_USR`, since `0x37c1b8` win rows gate on
   final heat `u == 2` / single event `u == 3`), final-heat rival + `FL_WIN_*`, skip rules (`RaceScene_CheckSkip`
   `0x110ab8`), and show-off loss (`FL_LOS_*`) all resolve real CML scripts and `.afl` scene clips.
+
+## World Circuit in the app (board row C12a)
+
+- Persistent `tricky_game::circuit::Circuit` (`DAT_003353f0`..`DAT_00335664`) lives on `RosterRes.circuit`
+  (`tricky-rs/src/ui.rs`), with `RosterRes.heat_ready` tracking when `Circuit_AdvanceEvent` (`0x16c3b0`) ->
+  `Circuit_SetupEventRiders` (`0x16d300`) already populated `Career+0x27dc/+0x27e0` for heat 1 or 2.
+- End of each run (`ui::records` -> `CareerRes::record_run`): preserves the career's gate-order roster at `+0x27e0`
+  when it matches the finishing standings, writes places (`+0x3264`), times (`+0x327c`), and score (`+0x3310`), and
+  runs `Career::check_new_records` (`0x164fc0`) with `RecordsRun` invoking `roster.circuit.process_race_result`
+  (`Circuit_ProcessRaceResult` `0x16bcb0`), keeping `unlocks`, `race_final`, and `showoff_final` for the results screen.
+- Race finish (`main.rs` `ride`) calls `CareerRes::store_circuit_attitudes` (`Circuit_StoreRiderAttitudes` `0x16c228` /
+  `circuit::take_rider_points`) so `SETUP + 0x1c + 4*ch` holds each AI rider's settled attitude for the next heat's
+  `Rivals_InitPairsCircuit` (`0x16c008`) decay and for `Circuit_SaveRiderPoints` (`0x16c328`) at final-heat finish.
+- Continuing from Results (`ui::menus` -> `CareerRes::advance_circuit`) runs `Career::finish_race` (`0x163ab0`) ->
+  `Circuit::advance_event` (`0x16c3b0`) -> `Circuit::score_event_result` (`0x16d0b0`), syncing `Circuit::out[r]` with
+  `CircuitHeats::rows[r][3]` (the same `0x335664 + 0x10*r` word in `SLUS_203.26`) around `Circuit_SetupEventRiders`
+  (`0x16d300`) so eliminated riders stay out and `SETUP + 0x1c..` / `SETUP + 0x18` (`HEAT_BONUS`) are not wiped by
+  `Circuit_SetupRiders` (`0x16bc50`). `prepare_lineup` consumes the prepared heat roster when `heat_ready` is true, and
+  `ride` initializes opponent grudges directly from `o.init_attitude` across all heats.
+- Results screen (`ui::hud` + `GameText::format_unlocks` in `tricky-rs/src/loc.rs`) formats `roster.circuit.unlocks`
+  and `race_final`/`showoff_final` using `cUnlockedOverlay`'s exact string IDs (`0x1b58c0` `AWARD_SINGLE`/`AWARD_PLURAL`,
+  `0xdf6`/`0xdf7`, `0xc9c`/`0xc9d`), per-slot aggregation (`0x1b5ef8`), and kind order `[5, 9, 8, 4, 3, 2, 1, 0, 6]`
+  (`0x1b5bf8`).

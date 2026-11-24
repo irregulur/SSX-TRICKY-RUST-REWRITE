@@ -158,18 +158,25 @@ fn make_opponents(start: Vec3, yaw: f32, player_char: usize, n_chars: usize, cou
 }
 
 /// Prepare the career race roster (`Career_PrepareRace` `0x163980` -> `Career_SetupRidersForMode` `0x165558`,
-/// row E1b2r1) and build `Opponents` from the non-human rows in gate order; falls back to `make_opponents`
-/// when `SLUS_203.26` tables were not loaded.
+/// row E1b2r1; or consume the heat 1/2 roster already built by `Circuit_AdvanceEvent` `0x16c3b0` ->
+/// `Circuit_SetupEventRiders` `0x16d300`, row C12a) and build `Opponents` from the non-human rows in gate order;
+/// falls back to `make_opponents` when `SLUS_203.26` tables were not loaded.
 fn prepare_lineup(
     start: Vec3, yaw: f32, lib: &CharLib, game: &ui::Game, list: &LevelList,
     career: &mut ui::CareerRes, roster: &mut ui::RosterRes,
 ) -> Opponents {
     let me = lib.chars.get(lib.player).map(|c| c.name.as_str()).unwrap_or("mac");
     let outfit = game.flow.choices.outfit[0] as usize;
-    let Some(rows) = career.prepare_race(
-        roster, game.event, game.round, &ui::track_key(list), me, outfit, game.board, game.master,
-        &mut tricky_game::rand::rand_fx,
-    ) else {
+    let rows = if roster.heat_ready && roster.data.is_some() {
+        roster.heat_ready = false;
+        Some(career.0.race_roster())
+    } else {
+        career.prepare_race(
+            roster, game.event, game.round, &ui::track_key(list), me, outfit, game.board, game.master,
+            &mut tricky_game::rand::rand_fx,
+        )
+    };
+    let Some(rows) = rows else {
         let mut out = make_opponents(start, yaw, lib.player, lib.chars.len(), game.opponents(), game.round);
         if game.master {
             for o in &mut out.0 { o.board = 11; }
@@ -2224,12 +2231,14 @@ fn ride(
         for (oi, o) in opponents.0.iter_mut().enumerate() {
             if o.grudge.is_none() {
                 let them = rivals::index(lib.chars.get(o.character).map_or("", |c| c.name.as_str()));
-                // a circuit carries the feeling over from heat to heat; round 0 takes the attitude from
-                // `Rivals_InitPairs` / `Rivals_InitPairsCircuit` (`o.init_attitude`, row E1b2r1)
-                let last = if game.round > 0 { game.attitude.get(&them).copied() } else { None };
-                let mut g = match (last, o.init_attitude) {
-                    (None, Some(att)) => rivals::Grudge::with_attitude(them, me_idx, att as i8),
-                    _ => rivals::Grudge::carried(them, me_idx, last),
+                // Starting attitude comes from `Rivals_InitPairs` / `Rivals_InitPairsCircuit` (`o.init_attitude`, rows
+                // E1b2r1 & C12a) across all heats (which already carries and decays `Circuit_StoreRiderAttitudes`
+                // attitudes); falls back to `game.attitude` only when no disc roster was prepared.
+                let mut g = if let Some(att) = o.init_attitude {
+                    rivals::Grudge::with_attitude(them, me_idx, att as i8)
+                } else {
+                    let last = if game.round > 0 { game.attitude.get(&them).copied() } else { None };
+                    rivals::Grudge::carried(them, me_idx, last)
                 };
                 // TRICKY_GRUDGE: everyone starts out after the player (for testing)
                 if std::env::var("TRICKY_GRUDGE").is_ok() { g.force_level(2); }
@@ -2414,12 +2423,23 @@ fn ride(
     let stopped = rider.0.finished_and_stopped() || std::env::var("TRICKY_SIM").is_ok();
     let quiet = std::env::var("TRICKY_INTRO").is_err() && (std::env::var("TRICKY_SIM").is_ok() || std::env::var("TRICKY_NOINTRO").is_ok() || std::env::var("TRICKY_SHOT").is_ok());
     if playing && stopped && race.0.state == RaceState::Finished && race.0.post == 0 {
-        // how each rider now feels about the player, for the next heat
+        // how each rider now feels about the player, for the next heat (`Circuit_StoreRiderAttitudes` 0x16c228, row C12a)
         if game.event == ui::Event::Race {
             if game.round == 0 { game.attitude.clear(); }
-            for o in opponents.0.iter() {
-                if let Some(g) = &o.grudge { game.attitude.insert(rivals::index(lib.chars.get(o.character).map_or("", |c| c.name.as_str())), g.settled()); }
+            let n = (1 + opponents.0.len()).min(6);
+            let p_gate = roster.player_gate.min(n.saturating_sub(1));
+            let opp_gates: Vec<usize> = (0..n).filter(|&g| g != p_gate).collect();
+            let mut atts_by_gate = [None; 6];
+            for (oi, o) in opponents.0.iter().enumerate() {
+                if let Some(g) = &o.grudge {
+                    let settled = g.settled();
+                    game.attitude.insert(rivals::index(lib.chars.get(o.character).map_or("", |c| c.name.as_str())), settled);
+                    if let Some(&og) = opp_gates.get(oi) {
+                        atts_by_gate[og] = Some(settled.clamp(0.0, 100.0) as i8);
+                    }
+                }
             }
+            career.store_circuit_attitudes(&atts_by_gate);
         }
         // the post-race scenes (`cEndRaceHandler::Enter` 0x113e10, row G11e): a rival who has it in for the
         // player has a word first, then the win/lose scene at the finish area.
