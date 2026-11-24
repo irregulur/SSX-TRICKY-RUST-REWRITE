@@ -1,6 +1,7 @@
 //! The static initializers that only write one header's three constant vectors (row X2a): forty of them, one per
 //! source file that includes the header, each at its own place. Each is 124 bytes of `lui`/`mtc1`/`swc1`; their
-//! places were read from the disassembly and the writes are checked in the runner (`tests/statics.rs`).
+//! places were read from the disassembly and the writes are checked in the runner (`tests/statics.rs`). Four more
+//! (row X2b, 284 bytes) write six more words-groups before the same vectors, in one of two layouts.
 
 use crate::pf::Mem;
 
@@ -63,4 +64,68 @@ pub fn init_header_vectors(m: &mut Mem, base: u32) {
             m.w32(base + 0x10 * k as u32 + 4 * j as u32, w);
         }
     }
+}
+
+/// The first wide layout (`StaticInit_PostAI` 0x114948, `StaticInit_HUD` 0x1a6998): the words before the header's
+/// vectors, which follow at +0x60 (offset, bits)
+pub const WIDE_A: [(u32, u32); 19] = [
+    (0x0, 0x0),
+    (0x4, 0x0),
+    (0x8, 0x3f000000),
+    (0x10, 0x0),
+    (0x14, 0x0),
+    (0x18, 0x3f800000),
+    (0x20, 0x3f000000),
+    (0x24, 0x0),
+    (0x28, 0x3f000000),
+    (0x30, 0x3f800000),
+    (0x34, 0x0),
+    (0x38, 0x3f800000),
+    (0x40, 0xffffffff),
+    (0x44, 0x3f800000),
+    (0x48, 0x3f800000),
+    (0x4c, 0x0),
+    (0x50, 0x0),
+    (0x54, 0x3f800000),
+    (0x58, 0x3f800000),
+];
+
+/// The second (`StaticInit_Boarder` 0x11f4e8, `StaticInit_Lesson` 0x14edb0)
+pub const WIDE_B: [(u32, u32); 19] = [
+    (0x0, 0xffffffff),
+    (0x4, 0x3f800000),
+    (0x8, 0x3f800000),
+    (0xc, 0x0),
+    (0x10, 0x0),
+    (0x14, 0x3f800000),
+    (0x18, 0x3f800000),
+    (0x20, 0x0),
+    (0x24, 0x0),
+    (0x28, 0x3f000000),
+    (0x30, 0x0),
+    (0x34, 0x0),
+    (0x38, 0x3f800000),
+    (0x40, 0x3f000000),
+    (0x44, 0x0),
+    (0x48, 0x3f000000),
+    (0x50, 0x3f800000),
+    (0x54, 0x0),
+    (0x58, 0x3f800000),
+];
+
+/// The four wide initializers: the function, its place and its layout
+pub const WIDE_INITS: [(u32, u32, &[(u32, u32)]); 4] = [
+    (0x114948, 0x3bbf70, &WIDE_A), // `StaticInit_PostAI`
+    (0x11f4e8, 0x3bc0d0, &WIDE_B), // `StaticInit_Boarder`
+    (0x14edb0, 0x3bc350, &WIDE_B), // `StaticInit_Lesson`
+    (0x1a6998, 0x3ce2d8, &WIDE_A), // `StaticInit_HUD`
+];
+
+/// One of the four wide initializers ([`WIDE_INITS`]): its layout's words at `base`, then the header's vectors at
+/// `base + 0x60`
+pub fn init_wide(m: &mut Mem, base: u32, layout: &[(u32, u32)]) {
+    for &(o, v) in layout {
+        m.w32(base + o, v);
+    }
+    init_header_vectors(m, base + 0x60);
 }

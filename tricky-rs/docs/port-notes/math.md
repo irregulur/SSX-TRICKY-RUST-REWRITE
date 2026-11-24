@@ -24,4 +24,6 @@ Forty static initializers (`StaticInit_*`, 124 bytes each, from `StaticInit_Prew
 including file's own copy: (1, 0.966, 0), (1, 0.474, 0), (1, 0.0757, 0.002) (bits 0x3f76e979, 0x3ef2fec5,
 0x3d9b3d08, 0x3b03126f). `tricky_game::statics` keeps the forty places (`HEADER_INITS`) and writes them
 (`init_header_vectors`); `tests/statics.rs` runs each original on random memory around its place. The 284-byte ones
-(`StaticInit_PostAI`, `_Boarder`, `_Lesson`, `_HUD`) write more vectors and are not ported yet.
+(`StaticInit_PostAI`, `_Boarder`, `_Lesson`, `_HUD`, row X2b) write six more words-groups first, in one of two
+layouts (`WIDE_A` for PostAI and HUD, `WIDE_B` for Boarder and Lesson; 0x60 bytes, then the vectors at +0x60:
+`init_wide`), checked by the same test.

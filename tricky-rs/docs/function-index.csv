@@ -190,7 +190,7 @@ address,size,name,system,status
 0x1147f8,212,Replay_RefreshRiders,replay,checked
 0x1148d0,20,Game_IsTutorial,game,checked
 0x1148e8,96,Race_FindRiderByPlayer,race,checked
-0x114948,284,StaticInit_PostAI,ai,not started
+0x114948,284,StaticInit_PostAI,ai,checked
 0x114a68,20,cPostAI::~cPostAI,ai,checked
 0x114ab8,80,cPostAI::__tf,runtime,host
 0x114b08,20,cPreAI::~cPreAI,ai,checked
@@ -326,7 +326,7 @@ address,size,name,system,status
 0x11f440,36,Boarder_SetSfxMuted,boarder,checked
 0x11f468,28,Boarder_TickSfxFadeIn,boarder,checked
 0x11f488,92,Boarder_State4PastHalf,boarder,checked
-0x11f4e8,284,StaticInit_Boarder,boarder,not started
+0x11f4e8,284,StaticInit_Boarder,boarder,checked
 0x11f608,8,Boarder_SetState,boarder,ported
 0x11f610,8,Boarder_SetMotion,boarder,ported
 0x11f628,324,cBoarderHandler::__tf,runtime,host
@@ -985,7 +985,7 @@ address,size,name,system,status
 0x14ed40,36,cEndLessonHandler::Enter,game,checked
 0x14ed68,32,cEndLessonHandler::Update,game,checked
 0x14ed88,36,Lesson_GetString,tutorial,not started
-0x14edb0,284,StaticInit_Lesson,tutorial,not started
+0x14edb0,284,StaticInit_Lesson,tutorial,checked
 0x14eed0,24,Sprite_DrawRectScaled,hud,checked
 0x14eee8,20,Font_SetColorV,hud,ported
 0x14ef70,92,cLessonMan::__tf,runtime,host
@@ -2413,7 +2413,7 @@ address,size,name,system,status
 0x1a4f70,6380,HUD_DrawPlayerText,hud,checked
 0x1a6860,152,HUD_SetViewLayout,hud,checked
 0x1a68f8,160,HUD_WobbleOffset,hud,checked
-0x1a6998,284,StaticInit_HUD,hud,not started
+0x1a6998,284,StaticInit_HUD,hud,checked
 0x1a6b20,20,cHUDOverlay::~cHUDOverlay,frontend,not started
 0x1a6b38,80,cHUDOverlay::__tf,runtime,host
 0x1a6ba0,236,HUD_FormatTime,hud,checked
