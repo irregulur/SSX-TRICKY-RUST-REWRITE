@@ -579,3 +579,228 @@ pub fn tick(m: &mut Mem, e: &mut dyn FeEnv, ai: u32) {
     vcall_at(m, e, h, 0, 0x18, &[ai]);
     m.w32(ai + 0x18, m.r32(ai + 0x18).wrapping_add(1));
 }
+
+/// The game's mode word (the career's +0x2afc, 0x32de8c: 3 and 5 the show-offs, 6 the tutorial) and its course
+/// (+0x2af8); the courses' records (0x332f28, 0x1c bytes each: +0xc the show-off time in hundredths)
+pub const CAREER_AT: u32 = CAREER;
+pub const GAME_MODE: u32 = CAREER + 0x2afc;
+pub const GAME_COURSE: u32 = CAREER + 0x2af8;
+pub const COURSE_TABLE: u32 = 0x332f28;
+/// The speech system (its pointer at 0x343050)
+pub const SPEECH: u32 = 0x343050;
+/// `Boarder_ResetRender` 0x11a7a8, `Boarder_LaunchFromGate` 0x11a7b0, `Boarder_DrainMeter` 0x11b1f8,
+/// `Boarder_Finish` 0x11da40, `Boarder_IsFinishedAndStopped` 0x11d998, `Race_UpdatePairDistances` 0x115a80,
+/// `Race_UpdatePlacingsAndRubberBand` 0x115100, `Speech_OnTimeUp` 0x234058, `Audio_SetMusicState` 0x21d610,
+/// `Circuit_StoreRiderAttitudes` 0x16c228
+pub const RESET_RENDER: u32 = 0x11a7a8;
+pub const LAUNCH: u32 = 0x11a7b0;
+pub const DRAIN_METER: u32 = 0x11b1f8;
+pub const FINISH: u32 = 0x11da40;
+pub const FINISHED: u32 = 0x11d998;
+pub const PAIR_DISTANCES: u32 = 0x115a80;
+pub const PLACINGS: u32 = 0x115100;
+pub const TIME_UP: u32 = 0x234058;
+pub const MUSIC_STATE: u32 = 0x21d610;
+pub const STORE_ATTITUDES: u32 = 0x16c228;
+/// `AsyncBdrLoad_Request` 0x201e68, `_IsSlotReady` 0x201d30, `BdrLoad_BindTextures` 0x2021f8, `AsyncBdrLoad_FreeSlot`
+/// 0x201c20, `AnimData_PollLoad` 0x158fc0, `SpeechSys_IsCharScriptReady` 0x235710, `HUD_HideItem` 0x1a7860 /
+/// `HUD_ShowItem` 0x1a7848
+pub const BDR_REQUEST: u32 = 0x201e68;
+pub const SLOT_READY: u32 = 0x201d30;
+pub const BIND_TEXTURES: u32 = 0x2021f8;
+pub const FREE_SLOT: u32 = 0x201c20;
+pub const ANIM_POLL: u32 = 0x158fc0;
+pub const SPEECH_READY: u32 = 0x235710;
+pub const HUD_HIDE: u32 = 0x1a7860;
+pub const HUD_SHOW: u32 = 0x1a7848;
+/// The show-off clock's step, 1/60 s (0x3c888889)
+pub const CLOCK_STEP: f32 = 1.0 / 60.0;
+/// The music state asked for when everyone is through: (0, 0.65)
+pub const FINISH_MUSIC: f32 = 0.65;
+
+/// `Race_GoToEndLesson` 0x1117f0(ai): the race's +0x50 with 10 (mode EndLesson)
+pub fn go_to_end_lesson(m: &mut Mem, e: &mut dyn FeEnv, ai: u32) {
+    vcall_at(m, e, ai, 8, 0x50, &[10]);
+}
+
+/// `Race_ResetRiderRenders` 0x1128b8(ai): each of the race's riders' render reset
+pub fn reset_rider_renders(m: &mut Mem, e: &mut dyn FeEnv, ai: u32) {
+    let mut k = 0u32;
+    while (k as i32) < m.r32(ai + 0x88) as i32 {
+        e.call(m, RESET_RENDER, &[m.r32(ai + 0xc4 + 4 * k)]);
+        k += 1;
+    }
+}
+
+/// `Game_IsTutorial` 0x1148d0: the game's mode is 6
+pub fn is_tutorial(m: &Mem) -> bool {
+    m.r32(GAME_MODE) == 6
+}
+
+/// `Race_FindRiderByPlayer` 0x1148e8(race, player): the first of the race's players (+0x7c of them, controllers at
+/// +0x8c) whose boarder's info (+0x464) has `player` at +0x65 (signed). As the original: when none has, the answer is
+/// the first controller all the same (and with no players the word at +0x8c)
+pub fn find_rider_by_player(m: &Mem, race: u32, player: u32) -> u32 {
+    let first = m.r32(race + 0x8c);
+    let n = m.r32(race + 0x7c) as i32;
+    let id = |c: u32| m.r8(m.r32(m.r32(c) + 0x464) + 0x65) as i8 as i32 as u32;
+    if n <= 0 || id(first) == player {
+        return first;
+    }
+    for k in 1..n as u32 {
+        let c = m.r32(race + 0x8c + 4 * k);
+        if id(c) == player {
+            return c;
+        }
+    }
+    first
+}
+
+/// `Career_StoreCircuitAttitudes` 0x114f70(career): `Circuit_StoreRiderAttitudes` on its +0x320c with the roster
+/// (+0x27dc count, +0x27e0 entries)
+pub fn store_circuit_attitudes(m: &mut Mem, e: &mut dyn FeEnv, career: u32) {
+    e.call(m, STORE_ATTITUDES, &[career + 0x320c, m.r32(career + 0x27dc), career + 0x27e0]);
+}
+
+/// `cRaceHandler::Enter` 0x113740(handler, ai): +0xe4..+0xf8 cleared; the clock (+0x14) the course's show-off time in
+/// seconds in the show-offs (modes 3, 5), else 0; each rider launched from the gate (the count read first: none
+/// launched when it was 0)
+pub fn race_enter(m: &mut Mem, e: &mut dyn FeEnv, ai: u32) {
+    let n = m.r32(ai + 0x88) as i32;
+    for k in (0..6u32).rev() {
+        m.w32(ai + 0xe4 + 4 * k, 0);
+    }
+    let mode = m.r32(GAME_MODE);
+    if mode == 3 || mode == 5 {
+        let course = m.r32(GAME_COURSE);
+        let t = m.r32(course.wrapping_mul(0x1c).wrapping_add(COURSE_TABLE + 0xc)) as i32;
+        m.w32(ai + 0x14, (t as f32 / 100.0).to_bits());
+    } else {
+        m.w32(ai + 0x14, 0);
+    }
+    if n > 0 {
+        let mut k = 0u32;
+        loop {
+            e.call(m, LAUNCH, &[m.r32(ai + 0xc4 + 4 * k)]);
+            k += 1;
+            if k as i32 >= m.r32(ai + 0x88) as i32 {
+                break;
+            }
+        }
+    }
+}
+
+/// `cRaceHandler::Update` 0x113820(handler, ai): each rider's meter drained, the pair distances and the placings
+/// (both with the handler and the race); in the show-offs the clock counts down 1/60 s and at 0 or below is held at
+/// 0, every rider finished (`Boarder_Finish` 1) and, when one of them had not (+0x418 negative), the speech's time-up;
+/// in the other modes it counts up. Then, out of the tutorial (game +0x34 null): if every player (+0x7c of them;
+/// with none, every rider) is finished and stopped, the music's state (0, 0.65) and the race's +0xa0 with -1
+pub fn race_update(m: &mut Mem, e: &mut dyn FeEnv, handler: u32, ai: u32) {
+    let mut k = 0u32;
+    while (k as i32) < m.r32(ai + 0x88) as i32 {
+        e.call(m, DRAIN_METER, &[m.r32(ai + 0xc4 + 4 * k)]);
+        k += 1;
+    }
+    e.call(m, PAIR_DISTANCES, &[handler, ai]);
+    e.call(m, PLACINGS, &[handler, ai]);
+    let mode = m.r32(GAME_MODE);
+    let clock = f32::from_bits(m.r32(ai + 0x14));
+    if mode == 3 || mode == 5 {
+        let left = clock - CLOCK_STEP;
+        m.w32(ai + 0x14, left.to_bits());
+        if left <= 0.0 {
+            m.w32(ai + 0x14, 0f32.to_bits());
+            let mut late = false;
+            let mut k = 0u32;
+            while (k as i32) < m.r32(ai + 0x88) as i32 {
+                let b = m.r32(ai + 0xc4 + 4 * k);
+                if (m.r32(b + 0x418) as i32) < 0 {
+                    late = true;
+                }
+                e.call(m, FINISH, &[b, 1]);
+                k += 1;
+            }
+            if late {
+                e.call(m, TIME_UP, &[m.r32(SPEECH)]);
+            }
+        }
+    } else {
+        m.w32(ai + 0x14, (clock + CLOCK_STEP).to_bits());
+    }
+    if m.r32(m.r32(m.r32(GAPP) + 0x730) + 0x34) != 0 {
+        return;
+    }
+    let (count, list, deref) = if m.r32(ai + 0x7c) as i32 > 0 { (0x7c, 0x8c, true) } else { (0x88, 0xc4, false) };
+    let mut all = 1u32;
+    let mut k = 0u32;
+    while (k as i32) < m.r32(ai + count) as i32 {
+        let c = m.r32(ai + list + 4 * k);
+        let b = if deref { m.r32(c) } else { c };
+        all = e.call(m, FINISHED, &[b]);
+        k += 1;
+        if all == 0 {
+            break;
+        }
+    }
+    if all != 0 {
+        e.call(m, MUSIC_STATE, &[m.r32(SPEECH), 0, FINISH_MUSIC.to_bits()]);
+        vcall_at(m, e, ai, 8, 0xa0, &[0xffff_ffff]);
+    }
+}
+
+/// `Race_UpdateRiderStreaming` 0x112920(ai), while the riders stream in (+0x4f8): a fresh start (+0x4fc -2) asks for
+/// rider 0's files; a slot asked for (+0x500 not negative) that is ready has its textures bound and is freed, and the
+/// next rider's asked for (or none left: +0x500 and +0x4fc -1); not ready, the HUD's loading item stays. When the
+/// animations, the speech and the riders are all in, the loading item (HUD 8) is hidden, a slot still held is bound
+/// and freed and the streaming ends; else it is shown. `scratch`: 8 bytes for the two request words
+pub fn update_rider_streaming(m: &mut Mem, e: &mut dyn FeEnv, ai: u32, scratch: u32) {
+    if m.r32(ai + 0x4f8) == 0 {
+        return;
+    }
+    let slots = ai + 0x124;
+    let mut riders_in = true;
+    if m.r32(ai + 0x4fc) as i32 == -2 {
+        m.w32(ai + 0x4fc, 0);
+        e.call(m, DEFAULT_REQUEST, &[scratch]);
+        let b = m.r32(ai + 0xc4 + 4 * m.r32(ai + 0x4fc));
+        let s = e.call(m, BDR_REQUEST, &[slots, b, 1, m.r32(scratch)]);
+        m.w32(ai + 0x500, s);
+    }
+    let slot = m.r32(ai + 0x500);
+    if slot as i32 >= 0 {
+        if e.call(m, SLOT_READY, &[slots, slot]) == 0 {
+            riders_in = false;
+        } else if m.r32(ai + 0x4fc) as i32 >= 0 {
+            e.call(m, BIND_TEXTURES, &[slots, m.r32(ai + 0x500)]);
+            e.call(m, FREE_SLOT, &[slots, m.r32(ai + 0x500)]);
+            let next = m.r32(ai + 0x4fc).wrapping_add(1);
+            m.w32(ai + 0x4fc, next);
+            if (next as i32) < m.r32(ai + 0x88) as i32 {
+                e.call(m, DEFAULT_REQUEST, &[scratch + 4]);
+                riders_in = false;
+                let b = m.r32(ai + 0xc4 + 4 * m.r32(ai + 0x4fc));
+                let s = e.call(m, BDR_REQUEST, &[slots, b, 1, m.r32(scratch + 4)]);
+                m.w32(ai + 0x500, s);
+            } else {
+                m.w32(ai + 0x500, 0xffff_ffff);
+                m.w32(ai + 0x4fc, 0xffff_ffff);
+            }
+        }
+    }
+    let anims = e.call(m, ANIM_POLL, &[ANIM_DATA]);
+    let speech = e.call(m, SPEECH_READY, &[m.r32(SPEECH)]);
+    let hud = m.r32(m.r32(m.r32(GAPP) + 0x730) + 0x38);
+    if anims == 0 || !riders_in || speech == 0 {
+        e.call(m, HUD_SHOW, &[hud, 8, 0xffff_ffff]);
+        return;
+    }
+    e.call(m, HUD_HIDE, &[hud, 8, 0xffff_ffff]);
+    // (the original asks first whether a slot was asked for this tick: it can only be held if so)
+    if m.r32(ai + 0x500) as i32 >= 0 {
+        e.call(m, SLOT_READY, &[slots, m.r32(ai + 0x500)]);
+        e.call(m, BIND_TEXTURES, &[slots, m.r32(ai + 0x500)]);
+        e.call(m, FREE_SLOT, &[slots, m.r32(ai + 0x500)]);
+        m.w32(ai + 0x500, 0xffff_ffff);
+    }
+    m.w32(ai + 0x4f8, 0);
+}

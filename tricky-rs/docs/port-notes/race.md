@@ -266,6 +266,31 @@ when +0x60 is null), the new one's Enter (+8), +0x60 cleared and +0x20 = +0x1c; 
 (+0x18) and +0x18 counts up. Handlers get (handler, race). So mode 0 (no handler) would crash the original: the
 race is always put in a mode first. `lesson::RaceLesson` keeps its own model of modes 6..10 for the lesson.
 
+Row G4k6 (proven, same test: 27,000 cases over 27 functions, 29 of 30 mutants, the survivor equivalent; the floats
+as IEEE, `add=n,mul=n,div=n,cvt=n`, until F4c): the race's remaining glue in `aiobj.rs`.
+
+- `cRaceHandler::Enter` 0x113740: +0xe4..+0xf8 cleared; the clock +0x14 = the course's show-off time (records
+  0x332f28, 0x1c each, +0xc in hundredths, course = career +0x2af8) / 100 in modes 3 and 5 (career +0x2afc), else
+  0; each rider `Boarder_LaunchFromGate` (the count is read before the clear: with none, none launched).
+- `cRaceHandler::Update` 0x113820: each rider's `Boarder_DrainMeter`; `Race_UpdatePairDistances` then
+  `Race_UpdatePlacingsAndRubberBand` (handler, race); in the show-offs the clock goes down 1/60 (0x3c888889) and at
+  0 or below is held at 0, every rider gets `Boarder_Finish(1)` and `Speech_OnTimeUp` (speech 0x343050) is said only
+  when one of them had +0x418 negative; in other modes the clock counts up 1/60. Out of the tutorial (game +0x34
+  null): every player (+0x7c, controllers at +0x8c, through their word 0) or, with no players, every rider (+0xc4)
+  asked `Boarder_IsFinishedAndStopped`, stopping at the first no; all yes (or none to ask) → `Audio_SetMusicState`
+  (speech, 0, 0.65) and the race's +0xa0 with -1.
+- `Race_UpdateRiderStreaming` 0x112920, while +0x4f8: +0x4fc -2 starts with rider 0's request
+  (`AsyncBdrLoad_Request` on +0x124, 1, the default request's word); a held slot (+0x500 ≥ 0) that is ready
+  (`AsyncBdrLoad_IsSlotReady`) gets `BdrLoad_BindTextures` + `AsyncBdrLoad_FreeSlot` and the next rider is asked for
+  (none left: +0x500 = +0x4fc = -1); not ready, the riders are not in. Animations (`AnimData_PollLoad`), the speech
+  (`SpeechSys_IsCharScriptReady`) and the riders all in → `HUD_HideItem(8, -1)`, a slot still held asked again,
+  bound and freed, +0x500 -1, the streaming over (+0x4f8 0); else `HUD_ShowItem(8, -1)`.
+- `Race_FindRiderByPlayer` 0x1148e8 (a quirk): when no player has the number, the answer is still the first
+  controller (with no players, the word at +0x8c), not null.
+- `Race_ResetRiderRenders` 0x1128b8 (`Boarder_ResetRender` each rider), `Race_GoToEndLesson` 0x1117f0 (mode 10),
+  `Game_IsTutorial` 0x1148d0 (mode word == 6), `Career_StoreCircuitAttitudes` 0x114f70
+  (`Circuit_StoreRiderAttitudes(career+0x320c, roster count, roster)`).
+
 ## Rank catch-up: the unchecked list walk
 
 Proven on the PS2: `Race_UpdatePlacingsAndRubberBand` 0x115100 runs every 6 ticks (`race+0x18 % 6`), over

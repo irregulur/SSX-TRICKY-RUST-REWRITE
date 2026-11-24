@@ -3,7 +3,8 @@
 //! 0x111560 (start of a race), (row G4k2) its constructor 0x114c00 and destructor 0x114d30, and (G4k3) vf14 0x111108
 //! (the race reset) and vf15 0x1114d0 (the restart), and (G4k4) the start-race handler, the countdown's exit, the
 //! pre- and post-AI nodes' ticks and destructors, and (G4k5) the mode machine: vf1 0x1126f0, vf9 0x1125a0 and
-//! `Race_CreateHandlers` 0x1125c8 on every mode, the handlers stood in for. Every case builds a random race object, career roster (0..6 riders, computers and
+//! `Race_CreateHandlers` 0x1125c8 on every mode, the handlers stood in for, and (G4k6) the race handler's Enter /
+//! Update, the riders' streaming and the race's small helpers. Every case builds a random race object, career roster (0..6 riders, computers and
 //! players mixed), app and controllers in the arena; one function then runs on both sides. Every callee is a
 //! stand-in answering from the case's seed: the controllers' constructors answer their object and give it a boarder
 //! (or none, at times) at +0; the list's first node is a random word or none. The calls are compared with their
@@ -59,10 +60,14 @@ fn slot(off: u32) -> u32 {
 }
 /// the objects' virtuals: the boarder's destructor +8, the +0x64 object's +0x10, the race's +0x60 and +0x78
 const SLOTS: [u32; 9] = [8, 0x10, 0x60, 0x78, 0xa0, 0x48, 0x50, 0x68, 0x18];
-const FUNCS: [u32; 19] = [
+const FUNCS: [u32; 27] = [
     0x1108f0, 0x110bf8, 0x110fa0, 0x111560, 0x114c00, 0x114d30, 0x111108, 0x1114d0, 0x113478, 0x1134a0, 0x1134d0,
-    0x113738, 0x1146b0, 0x114730, 0x114b08, 0x114a68, 0x1126f0, 0x1125a0, 0x1125c8,
+    0x113738, 0x1146b0, 0x114730, 0x114b08, 0x114a68, 0x1126f0, 0x1125a0, 0x1125c8, 0x1117f0, 0x1128b8, 0x1148d0,
+    0x1148e8, 0x114f70, 0x113740, 0x113820, 0x112920,
 ];
+/// the courses' records (read from the ELF) and the speech system's pointer
+const COURSES: (u32, u32) = (ao::COURSE_TABLE, 13 * 0x1c);
+const SPEECH_PTR: (u32, u32) = (ao::SPEECH, 4);
 /// the riders `Race_GetRider` answers (big objects: +0x46b0 is read)
 const RIDERS: (u32, u32) = (0x0170_0000, 0x4800);
 /// our side's stack words (the original's are on its stack): not compared
@@ -82,6 +87,10 @@ fn arity(f: u32) -> usize {
         HIDE_OVERLAYS | SEED_GAME | MAIN_PATH | GET_CAMERA | IS_TUTORIAL | RESET_RENDERS | SCENE_ANIMS => 1,
         DEFAULT_REQUEST | VALIDATE_ALL => 0,
         GET_RIDER => 2,
+        BDR_REQUEST => 4,
+        HUD_SHOW | HUD_HIDE | STORE_ATTITUDES | MUSIC_STATE => 3,
+        SLOT_READY | BIND_TEXTURES | FREE_SLOT | FINISH | PAIR_DISTANCES | PLACINGS => 2,
+        ANIM_POLL | SPEECH_READY | RESET_RENDER | LAUNCH | DRAIN_METER | FINISHED | TIME_UP => 1,
         FLUSH_CLIPS | ANIM_LAYERS | UPDATE_POSE | BROADPHASE | LOOK_BACK | REPLAY_MODE | HAS_START_GATE | RUN_SCRIPT => 1,
         f if f == slot(0x50) => 2,
         NODE_CTOR | NODE_DTOR | ARCHIVE_DTOR | LOADER_DTOR => 2,
@@ -109,7 +118,9 @@ impl Answers {
 
 /// A stand-in's answer, its logged call and the words it writes
 fn standin(f: u32, w: &[u32], ans: &Answers) -> (u32, Call, Vec<(u32, u32)>) {
-    let log = w[..arity(f)].to_vec();
+    // (the race's +0xa0 is called with -1; a rider's with nothing)
+    let n = if f == slot(0xa0) && w[0] == AI + 4 { 2 } else { arity(f) };
+    let log = w[..n].to_vec();
     let r = ans.next();
     let mut g = Rng(r as u64 | 1);
     let mut writes = Vec::new();
@@ -126,7 +137,9 @@ fn standin(f: u32, w: &[u32], ans: &Answers) -> (u32, Call, Vec<(u32, u32)>) {
         }
         ao::LIST_FIRST => g.pick(&[0, 0, r & !0x0100_0000]),
         ao::GET_CAMERA => g.pick(&[0, r & !0x0100_0000]),
-        ao::IS_TUTORIAL | ao::HAS_START_GATE => g.below(2),
+        ao::IS_TUTORIAL | ao::HAS_START_GATE | ao::SLOT_READY => g.below(2),
+        ao::ANIM_POLL | ao::SPEECH_READY | ao::FINISHED => g.pick(&[0, 1, 1, 1]),
+        ao::BDR_REQUEST => { let x = g.below(4); g.pick(&[u32::MAX, x]) },
         ao::GET_RIDER => RIDERS.0 + RIDERS.1 * w[1],
         ao::DEFAULT_REQUEST => {
             writes.push((w[0], g.next()));
@@ -176,6 +189,14 @@ fn ours(m: &mut Mem, e: &mut dyn FeEnv, f: u32, a1: u32, a2: u32) -> u32 {
         0x1126f0 => ao::tick(m, e, AI),
         0x1125a0 => ao::set_mode(m, AI, a1),
         0x1125c8 => ao::create_handlers(m, AI, a1),
+        0x1117f0 => ao::go_to_end_lesson(m, e, AI),
+        0x1128b8 => ao::reset_rider_renders(m, e, AI),
+        0x1148d0 => return ao::is_tutorial(m) as u32,
+        0x1148e8 => return ao::find_rider_by_player(m, AI, a1),
+        0x114f70 => ao::store_circuit_attitudes(m, e, ao::CAREER_AT),
+        0x113740 => ao::race_enter(m, e, AI),
+        0x113820 => ao::race_update(m, e, ARENA + 0x300, AI),
+        0x112920 => ao::update_rider_streaming(m, e, AI, SCRATCH),
         0x1108f0 => ao::reset(m, e, AI),
         0x110bf8 => ao::make_riders(m, e, AI),
         0x110fa0 => ao::tear_down(m, e, AI),
@@ -188,10 +209,13 @@ fn ours(m: &mut Mem, e: &mut dyn FeEnv, f: u32, a1: u32, a2: u32) -> u32 {
 #[test]
 fn race_object_glue_matches_the_original() {
     let Some(mut r) = Runner::from_env() else { return };
+    // (the floats as IEEE, the port's rule until F4c: the clock's int-to-float and its steps)
+    r.float_rules = r5900::ps2float::Rules::parse("add=n,mul=n,div=n,cvt=n").unwrap();
     for f in FUNCS {
         r.allow(f);
     }
     let log: Rc<RefCell<Vec<Call>>> = Rc::default();
+    let testing: Rc<Cell<u32>> = Rc::default();
     let ans = Rc::new(Answers { seed: Cell::new(0), n: Cell::new(0), heap: Cell::new(HEAP.0) });
     use ao::*;
     let mut stubs = vec![
@@ -201,13 +225,23 @@ fn race_object_glue_matches_the_original() {
         HIDE_OVERLAYS, RESET_SKIN, LOAD_RIDER, DEFAULT_REQUEST, REQUEST_RIDER, SEED_GAME, MAIN_PATH, GET_PATH,
         RESTART_POINT, GET_CAMERA, FOCUS_RIDER, IS_TUTORIAL, VALIDATE_ALL, OPEN_BIG, SCENE_SETUP, SCENE_ANIMS,
         RESET_RENDERS, REPLAY_MODE, HAS_START_GATE, RUN_SCRIPT, GET_RIDER, FLUSH_CLIPS, ANIM_LAYERS, UPDATE_POSE,
-        BROADPHASE, LOOK_BACK,
+        BROADPHASE, LOOK_BACK, RESET_RENDER, LAUNCH, DRAIN_METER, FINISH, FINISHED, PAIR_DISTANCES, PLACINGS, TIME_UP,
+        MUSIC_STATE, STORE_ATTITUDES, BDR_REQUEST, SLOT_READY, BIND_TEXTURES, FREE_SLOT, ANIM_POLL, SPEECH_READY,
+        HUD_HIDE, HUD_SHOW,
     ];
     stubs.extend(SLOTS.map(slot));
     for f in stubs {
         let (l, a) = (log.clone(), ans.clone());
-        r.stub(f, move |c, mem| {
-            let w: Vec<u32> = (4..12).map(|k| c.gpr(k) as u32).collect();
+        let t = testing.clone();
+        r.hook(f, move |c, mem| {
+            // (a stood-in function under test itself runs)
+            if t.get() == f {
+                return false;
+            }
+            let mut w: Vec<u32> = (4..12).map(|k| c.gpr(k) as u32).collect();
+            if f == ao::MUSIC_STATE {
+                w[2] = c.f(12).to_bits();
+            }
             let (v, call, writes) = standin(f, &w, &a);
             for (at, x) in writes {
                 mem.write_u32(at, x);
@@ -215,14 +249,18 @@ fn race_object_glue_matches_the_original() {
             l.borrow_mut().push(call);
             assert!(l.borrow().len() < 100_000, "the original calls on and on");
             c.set_gpr(2, v as i32 as i64 as u64);
+            true
         });
     }
     let mut data = vec![0u8; DATA.1 as usize];
     r.mem.read(DATA.0, &mut data).unwrap();
+    let mut courses = vec![0u8; COURSES.1 as usize];
+    r.mem.read(COURSES.0, &mut courses).unwrap();
     let mut g = Rng(0x64b0_0000_0000_0001);
     let mut riders = [0u32; 7];
-    for case in 0..19000u32 {
-        let func = FUNCS[(case % 19) as usize];
+    for case in 0..27000u32 {
+        let func = FUNCS[(case % 27) as usize];
+        testing.set(func);
         let heap = if func == 0x110bf8 { HEAP.1 } else { 0x100 };
         let mut regions = vec![
             (DATA.0, data.clone()),
@@ -230,6 +268,9 @@ fn race_object_glue_matches_the_original() {
             (ARENA, vec![0; SIZE as usize]),
             (HEAP.0, vec![0xa5; heap as usize]),
             (SCRATCH, vec![0; 8]),
+            // (the courses' records as the game has them, or any times)
+            (COURSES.0, if g.below(2) == 0 { courses.clone() } else { (0..COURSES.1).map(|_| g.next() as u8).collect() }),
+            (SPEECH_PTR.0, (g.next() & !0x0100_0000).to_le_bytes().to_vec()),
         ];
         let ticks = matches!(func, 0x1146b0 | 0x114730);
         if ticks {
@@ -294,6 +335,35 @@ fn race_object_glue_matches_the_original() {
                     m.w32(AI + 0xc4 + 4 * k, g.pick(&[0, obj(k)]));
                 }
             }
+            0x1128b8 | 0x113740 | 0x113820 | 0x112920 => {
+                m.w32(AI + 0x88, g.below(7));
+                for k in 0..6 {
+                    m.w32(AI + 0xc4 + 4 * k, obj(k));
+                    m.w32(AI + 0x8c + 4 * k, obj(k + 6));
+                    let late = g.next() & !0x0100_0000;
+                    m.w32(obj(k) + 0x418, g.pick(&[0, u32::MAX, 1, late]));
+                }
+                m.w32(AI + 0x7c, { let x = g.below(5); g.pick(&[0, 0xffff_fffe, x]) });
+                m.w32(ao::GAME_MODE, { let x = g.below(12); g.pick(&[3, 5, 6, x]) });
+                m.w32(ao::GAME_COURSE, g.below(13));
+                let clock = [0.5f32 / 60.0, 1.0 / 60.0, 2.0 / 60.0, 10.0, -1.0, 0.0, 95.5];
+                m.w32(AI + 0x14, g.pick(&clock).to_bits());
+                m.w32(ARENA + 0x200 + 0x34, g.pick(&[0, 0, 0x1234]));
+                m.w32(AI + 0x4f8, g.pick(&[0, 1, 1, 1]));
+                m.w32(AI + 0x4fc, { let x = g.below(6); g.pick(&[0xffff_fffe, 0xffff_fffe, u32::MAX, x]) });
+                m.w32(AI + 0x500, { let x = g.below(4); g.pick(&[u32::MAX, x]) });
+            }
+            0x1148d0 => m.w32(ao::GAME_MODE, { let x = g.below(12); g.pick(&[6, x]) }),
+            0x1148e8 => {
+                m.w32(AI + 0x7c, { let x = g.below(5); g.pick(&[0, 0xffff_fffe, x]) });
+                for k in 0..4 {
+                    let (c, b, info) = (obj(k), far_boarder(k), ARENA + 0x7000 + 0x80 * k);
+                    m.w32(AI + 0x8c + 4 * k, c);
+                    m.w32(c, b);
+                    m.w32(b + 0x464, info);
+                    m.w8(info + 0x65, g.pick(&[0, 1, 2, 3, 0x80, 0xff]));
+                }
+            }
             0x1126f0 | 0x1125a0 | 0x1125c8 => {
                 // (the modes 0..12, the handlers: the race's own or none before)
                 let cur = g.below(13);
@@ -339,21 +409,27 @@ fn race_object_glue_matches_the_original() {
                 let v = [m.r32(AI + 0x1c), g.below(13), g.next()];
                 (g.pick(&v), 0)
             }
+            0x1148e8 => (g.pick(&[0, 1, 2, 3, u32::MAX, 0x80]), 0),
             _ => (g.next(), 0),
         };
         // (the handlers: a0 the handler, a1 the race)
-        let handler = matches!(func, 0x113478 | 0x1134a0 | 0x1134d0 | 0x113738);
+        let handler = matches!(func, 0x113478 | 0x1134a0 | 0x1134d0 | 0x113738 | 0x113740 | 0x113820);
         let mut env = Env { log: Vec::new(), ans: &ans };
         let v = ours(&mut m, &mut env, func, a1, a2);
         ans.n.set(0);
         ans.heap.set(HEAP.0);
         log.borrow_mut().clear();
-        r.cpu.set_gpr(4, if handler { ARENA + 0x300 } else { AI } as i32 as i64 as u64);
+        let a0 = match func {
+            _ if handler => ARENA + 0x300,
+            0x114f70 => ao::CAREER_AT,
+            _ => AI,
+        };
+        r.cpu.set_gpr(4, a0 as i32 as i64 as u64);
         r.cpu.set_gpr(5, if handler { AI } else { a1 } as i32 as i64 as u64);
         r.cpu.set_gpr(6, a2 as i32 as i64 as u64);
         r.call(func).unwrap_or_else(|e| panic!("case {case} {func:#x}: {e}"));
         assert_eq!(*log.borrow(), env.log, "case {case} {func:#x}: the calls");
-        if func == 0x114c00 {
+        if matches!(func, 0x114c00 | 0x1148d0 | 0x1148e8) {
             assert_eq!(r.cpu.gpr(2) as u32, v, "case {case}: the answer");
         }
         for (at, b) in m.regions.iter().filter(|(at, _)| *at != SCRATCH) {

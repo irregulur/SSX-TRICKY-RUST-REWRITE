@@ -150,7 +150,7 @@ address,size,name,system,status
 0x111560,424,cAI::vf16_111560,ai,checked
 0x111708,44,cAI::vf18_111708,ai,checked
 0x111738,180,cAI::vf19_111738,ai,checked
-0x1117f0,44,Race_GoToEndLesson,race,ported
+0x1117f0,44,Race_GoToEndLesson,race,checked
 0x111820,3376,cAI::vf17_111820,ai,ported
 0x112550,56,cAI::vf12_112550,ai,checked
 0x1125a0,40,cAI::vf9_1125a0,ai,checked
@@ -159,8 +159,8 @@ address,size,name,system,status
 0x112790,76,cAI::SaveSnapshot,ai,checked
 0x1127e0,100,cAI::vf8_1127e0,ai,checked
 0x112848,108,Race_HasStartGate,race,checked
-0x1128b8,104,Race_ResetRiderRenders,race,ported
-0x112920,460,Race_UpdateRiderStreaming,race,ported
+0x1128b8,104,Race_ResetRiderRenders,race,checked
+0x112920,460,Race_UpdateRiderStreaming,race,checked
 0x112af0,152,Race_AnyRiderLevelAbove7,race,checked
 0x112b88,388,cPreRaceHandler::Enter,race,checked
 0x112d10,1876,cPreRaceHandler::Update,race,checked
@@ -171,8 +171,8 @@ address,size,name,system,status
 0x113520,224,cCountdownHandler::Enter,game,checked
 0x113600,312,cCountdownHandler::Update,game,checked
 0x113738,8,cCountdownHandler::Exit,game,checked
-0x113740,224,cRaceHandler::Enter,race,ported
-0x113820,612,cRaceHandler::Update,race,ported
+0x113740,224,cRaceHandler::Enter,race,checked
+0x113820,612,cRaceHandler::Update,race,checked
 0x113a88,292,Race_UpdateLookBack,race,checked
 0x113bb0,12,RaceMenu_OnEndRace,race,checked
 0x113bc0,12,RaceMenu_OnState11,race,checked
@@ -188,8 +188,8 @@ address,size,name,system,status
 0x1146b0,128,cPreAI::vf1_1146b0,ai,checked
 0x114730,196,cPostAI::vf1_114730,ai,checked
 0x1147f8,212,Replay_RefreshRiders,replay,checked
-0x1148d0,20,Game_IsTutorial,game,ported
-0x1148e8,96,Race_FindRiderByPlayer,race,ported
+0x1148d0,20,Game_IsTutorial,game,checked
+0x1148e8,96,Race_FindRiderByPlayer,race,checked
 0x114948,284,StaticInit_PostAI,ai,not started
 0x114a68,20,cPostAI::~cPostAI,ai,checked
 0x114ab8,80,cPostAI::__tf,runtime,host
@@ -205,7 +205,7 @@ address,size,name,system,status
 0x114ed8,80,cPreRaceHandler::__tf,runtime,host
 0x114f28,8,cReplayEndRaceHandler::Exit,game,checked
 0x114f30,64,cAIStateHandler::__tf,runtime,host
-0x114f70,16,Career_StoreCircuitAttitudes,race,not started
+0x114f70,16,Career_StoreCircuitAttitudes,race,checked
 0x114f80,60,Mem_Delete,common,ported
 0x114fc0,116,cAIState::__tf,runtime,host
 0x115038,8,cReplayEndRaceHandler::Update,game,checked
