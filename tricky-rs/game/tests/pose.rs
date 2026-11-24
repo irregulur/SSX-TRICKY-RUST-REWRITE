@@ -209,3 +209,102 @@ fn body_height_easing_matches_the_original() {
         assert_eq!(r.mem.read_u32(rider + 0x308), ours.to_bits(), "case {case}: height {h}, motion {motion}, surface {surface}");
     }
 }
+
+#[test]
+fn update_skeleton_matches_the_original() {
+    // `Boarder_UpdateSkeleton` 0x12ae18 run in the function runner against `tricky_game::pose::update_skeleton`
+    // bit for bit across ground/air/rail/reset motions, board-tilt angles, and +0x1cc normal lifts.
+    use tricky_game::pf::Mem;
+    use tricky_game::pose::update_skeleton;
+
+    let Some(mut r) = Runner::from_env() else { return };
+    for a in [0x2083d8u32, 0x2057a0, 0x250c10, 0x250fd0] {
+        r.allow(a);
+    }
+    let rider = 0x00c0_0000u32;
+    let base_len = 0x8000usize;
+    let sp = rider + 0x6d00;
+    let hdr = sp + 0x48;
+    let bone = rider + 0x6200;
+    let mat = rider + 0x7100;
+    let pb = rider + 0x7c0 + 0x394; // part 1 PoseBlend
+
+    let mut g = Rng(0x9a1e_4c7b_2d3f_8811);
+    let mut tilted = 0u32;
+    let mut lifted = 0u32;
+    for case in 0..2_000 {
+        let mut pm = Mem { regions: vec![(rider, vec![0u8; base_len])] };
+        // Wire SkinPart slot 1 (`rider+0x4498`) with 1 root bone (`parent = -1`)
+        pm.w16(hdr + 0x42, 1);
+        pm.w16(bone + 0x12, 0xffff);
+        pm.w32(sp, pb);
+        pm.w32(sp + 4, mat);
+        pm.w32(sp + 0xc, hdr);
+        pm.w32(sp + 0x18, bone);
+        pm.w32(rider + 0x4498, sp);
+
+        // Random PoseBlend[1] rotation (pb+0) and translation (pb+0x108)
+        for k in 0..3u32 {
+            pm.w32(pb + 4 * k, g.f(-3.14, 3.14).to_bits());
+            pm.w32(pb + 0x108 + 4 * k, g.f(-20.0, 20.0).to_bits());
+        }
+        // Random board_frame at rider+0x4aa0
+        let mut o = Orient { q: [g.f(-1.0, 1.0), g.f(-1.0, 1.0), g.f(-1.0, 1.0), g.f(-1.0, 1.0)], ..Default::default() };
+        update_orientation(&mut o);
+        let f = board_frame(&PoseIn {
+            quat: o.q,
+            steer: g.f(-0.8, 0.8),
+            motion: 2,
+            class: g.next() % 3,
+            pos: [g.f(-5000.0, 5000.0), g.f(-5000.0, 5000.0), g.f(-500.0, 500.0), 1.0],
+            up: o.up,
+            height: g.f(0.0, 30.0),
+            side: o.side,
+            lean: g.f(-10.0, 10.0),
+            lean_scale: g.f(0.85, 1.15),
+            spin: 0.0,
+            flip: 0.0,
+            pivot_z: 0.0,
+        });
+        for row in 0..4u32 {
+            for col in 0..4u32 {
+                pm.w32(rider + 0x4aa0 + 0x10 * row + 4 * col, f[row as usize][col as usize].to_bits());
+            }
+        }
+        let motion = [1u32, 2, 2, 2, 3, 4][g.next() as usize % 6];
+        pm.w32(rider + 0x424, motion);
+        let unit = |g: &mut Rng| {
+            let v = [g.f(-1.0, 1.0), g.f(-1.0, 1.0), g.f(-1.0, 1.0)];
+            let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt().max(1e-3);
+            [v[0] / l, v[1] / l, v[2] / l, 0.0]
+        };
+        let up = unit(&mut g);
+        let norm = unit(&mut g);
+        let x1cc = [0.0, g.f(0.1, 25.0), -1.0][g.next() as usize % 3];
+        for k in 0..4u32 {
+            pm.w32(rider + 0x2c0 + 4 * k, up[k as usize].to_bits());
+            pm.w32(rider + 0x2a0 + 4 * k, norm[k as usize].to_bits());
+        }
+        pm.w32(rider + 0x1cc, x1cc.to_bits());
+
+        // Copy exact bytes into runner, run 0x12ae18, and compare against our `update_skeleton`
+        r.mem.write(rider, &pm.regions[0].1);
+        r.cpu.set_gpr(4, rider as u64);
+        r.cpu.set_gpr(5, 1);
+        r.call(0x12ae18).unwrap_or_else(|e| panic!("case {case}: {e}"));
+
+        update_skeleton(&mut pm, rider);
+
+        let theirs_mat: Vec<u32> = (0..16).map(|i| r.mem.read_u32(mat + 4 * i)).collect();
+        let ours_mat: Vec<u32> = (0..16).map(|i| pm.r32(mat + 4 * i)).collect();
+        assert_eq!(theirs_mat, ours_mat, "case {case}: board mat mismatch (motion={motion}, x1cc={x1cc})");
+
+        let theirs_bone: Vec<u32> = (0..16).map(|i| r.mem.read_u32(rider + 0x4a60 + 4 * i)).collect();
+        let ours_bone: Vec<u32> = (0..16).map(|i| pm.r32(rider + 0x4a60 + 4 * i)).collect();
+        assert_eq!(theirs_bone, ours_bone, "case {case}: rider+0x4a60 mismatch");
+
+        tilted += (motion == 2) as u32;
+        lifted += (motion == 2 && x1cc > 0.0) as u32;
+    }
+    assert!(tilted > 500 && lifted > 100, "tilted={tilted} lifted={lifted}");
+}

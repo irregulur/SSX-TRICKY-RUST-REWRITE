@@ -2388,6 +2388,14 @@ fn attach_rider_anims(lib: &CharLib, rider: &mut Rider, opponents: &mut Opponent
             continue;
         }
         let s = host.add_rider(entry.data as u32, info.kind as u32, scale, &[(0, &body_bones), (1, &board_bones)]);
+        if let Some(b) = board_model {
+            if !b.ik_points.is_empty() {
+                host.set_board_ik_points(s, &b.ik_points);
+            }
+        }
+        for &(morph_slot, morph_count) in &entry.model.morph_slots {
+            host.add_morph_part(s, morph_slot as i32, morph_count);
+        }
         slots.push(Some(s));
     }
     let shared = std::sync::Arc::new(std::sync::Mutex::new(host));
@@ -2633,12 +2641,26 @@ fn animate_visuals(
             Some(c.at((sc.t * character::ANIM_FPS) % c.len().max(1.0), true))
         });
         let board_model = lib.shapes.get(vis.shape).and_then(|s| s.as_ref()).or(lib.board.as_ref());
-        let blended = if scene_sample.is_none() {
+        let pose_snap = if scene_sample.is_none() {
+            r.anim.as_ref().and_then(|a| a.pose_snapshot())
+        } else {
+            None
+        };
+        let blended = if scene_sample.is_none() && pose_snap.is_none() {
             r.anim.as_ref().and_then(|a| Some((a.read_pose(0)?, a.read_pose(1)?)))
         } else {
             None
         };
-        let (use_anim_space, use_vertex_mirror, mats, lift, board_mats) = if let Some((body_p, board_p)) = blended {
+        let (use_anim_space, use_vertex_mirror, mats, lift, board_mats) = if let Some(snap) = pose_snap {
+            // Full `Boarder_UpdatePose` 0x129628 + `Boarder_BuildBoneMatrices` 0x2083f8 (2-bone leg IK onto board
+            // bindings + foot binding orientations + `RiderSkin_Bind` scaled `inv_bind`, row G5d4).
+            let b_mats = entry.model.skin_bone_matrices(&snap.body_local_mats, r.stats.scale);
+            let brd_mats = match board_model {
+                Some(b) => b.skin_bone_matrices(&[snap.board_local_mat], r.stats.scale),
+                None => vec![Mat4::IDENTITY],
+            };
+            (true, false, b_mats, 0.0, brd_mats)
+        } else if let Some((body_p, board_p)) = blended {
             let b_mats = entry.model.skin_pose(&body_p.trans, &body_p.rot);
             let brd_mats = match (board_model, board_p.trans.first(), board_p.rot.first()) {
                 (Some(b), Some(&t), Some(&rot)) => b.skin_board_pose(t, rot),

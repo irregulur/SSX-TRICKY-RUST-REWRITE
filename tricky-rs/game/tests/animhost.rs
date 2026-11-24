@@ -409,3 +409,214 @@ fn rider_step_drives_live_animhost_across_states() {
     }
     assert!(exited_hard_land, "LandHardControl_Update should transition back to CRUISE when real AnimCtl clip 0x23e chains to 0x1ff");
 }
+
+#[test]
+fn update_pose_world_bones_and_collbody_match_original() {
+    // Full `Boarder_UpdatePose` 0x129628 + `Boarder_UpdateSkeleton` 0x12ae18 + `Boarder_GetBoneWorldPos`
+    // 0x208398 + `Boarder_BuildBoneMatrices` 0x2083f8 (`Boarder_PoseBonesFromAngles` 0x205a78 + 2-bone leg IK
+    // `Boarder_SolveLimbIk` 0x205e98) + foot binding orientations (`0x12a6c4..0x12abf4`) + `Boarder_SetSkinChildMatrices`
+    // 0x2083e8 + `CollBody_UpdateFromBones` 0x2361b0 verified bit-for-bit against `SLUS_203.26` in `r5900::Runner`!
+    use tricky_game::animhost::PoseUpdateIn;
+    use tricky_game::orient::{update_orientation, Orient};
+
+    let Some((elf, mut files)) = disc_and_elf() else { return };
+    let body_model = CharModel::rider_from_disc(&mut files, "elise").expect("load elise");
+    let board_model = CharModel::board_from_disc(&mut files, Some("Bx")).expect("load Bx board");
+    let body_bones = body_model.slot_raw_bones(0);
+    let board_bones = board_model.slot_raw_bones(1);
+    assert_eq!(body_bones.len(), 19);
+    assert_eq!(board_bones.len(), 1);
+    assert_eq!(board_model.ik_points.len(), 2, "Bx board.mpf must expose 2 IK binding points");
+    assert!(!body_model.morph_slots.is_empty(), "elise head.mpf must expose facial morph slot");
+
+    let scale = 1.02f32;
+    let roster = [RosterEntry { character: 1, board_class: 0, load_uber: true }];
+    let mut host = AnimHost::from_disc(&elf, &mut files, &roster).expect("init AnimHost");
+    let slot = host.add_rider(1, 0, scale, &[(0, &body_bones), (1, &board_bones)]);
+    host.set_board_ik_points(slot, &board_model.ik_points);
+    for &(mslot, mcount) in &body_model.morph_slots {
+        host.add_morph_part(slot, mslot as i32, mcount);
+    }
+
+    let mut rng_state = 0x5555_aaaa_1234_5678u64;
+    let mut next_rng = || {
+        rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1);
+        (rng_state >> 32) as u32
+    };
+
+    // Play a riding clip and step 15 ticks so PoseBlend holds live animated rotations & translations.
+    host.play_clip(slot, 0x1ff, 0, 5, &mut next_rng);
+    let inp = AnimRiderInputs { crouch: 0.45, steer: 0.35, board_class: 0, ..Default::default() };
+    host.sync_rider(slot, &inp);
+    for _ in 0..15 {
+        host.flush_ended(slot, &mut next_rng);
+        host.update_layers(slot, 1.0, &mut next_rng);
+    }
+
+    // Verify both `!skin_child` (2-bone leg IK + foot binding rotations) and `skin_child` (state=1 -> pure FK)!
+    let mut r = r5900::Runner::from_elf(&elf).expect("load elf");
+    for a in [
+        0x12ae18u32, // Boarder_UpdateSkeleton
+        0x2083d8,    // RiderSkin_SetRootMatrix
+        0x2083e8,    // Boarder_SetSkinChildMatrices
+        0x208398,    // Boarder_GetBoneWorldPos
+        0x2083f8,    // Boarder_BuildBoneMatrices
+        0x2057a0,    // SkinPart_SetChildMatrices
+        0x2059f8,    // Skel_GetBoneWorldPos
+        0x205a78,    // Boarder_PoseBonesFromAngles
+        0x205e98,    // Boarder_SolveLimbIk
+        0x250c10,    // Math_SinCos
+        0x250fd0,    // Math_Asin
+        0x102f50,    // Vec4_Scale
+        0x15fdd0,    // AnimCtl_GetClip
+        0x15eec0,    // AnimCtl_GetClipType
+        0x2361b0,    // CollBody_UpdateFromBones
+        0x236050,    // CollBody_InitRider
+        0x2cc808,    // EAMem_Set
+    ] {
+        r.allow(a);
+    }
+
+    let rider_addr = AnimHost::rider_addr(slot);
+    let mut o = Orient { q: [0.92, 0.14, -0.22, 0.29], ..Default::default() };
+    update_orientation(&mut o);
+
+    for (case, &(motion, state, steer, spin, flip, x1c0, x1cc)) in [
+        (2u32, 3u32, 0.35f32, 0.0f32, 0.0f32, 1.5f32, 4.0f32),   // ground motion + leg IK + board tilt + x1cc lift
+        (1, 0x10, -0.4, 1.25, -0.65, 0.0, 0.0),                  // air spin/flip + leg IK
+        (2, 1, 0.2, 0.0, 0.0, 0.0, 0.0),                         // state=1 (skin_child=true -> pure FK!)
+    ]
+    .iter()
+    .enumerate()
+    {
+        let pin = PoseUpdateIn {
+            quat: o.q,
+            steer,
+            motion,
+            state,
+            class: 0,
+            natural_stance: 0,
+            pos: [1200.0, -4500.0, 320.0, 1.0],
+            up: o.up,
+            normal: [0.05, -0.1, 0.9937, 0.0],
+            height: 6.5,
+            side: o.side,
+            lean: -0.25,
+            scale,
+            spin,
+            flip,
+            x1c0,
+            x1cc,
+        };
+
+        // Snapshot AnimHost memory BEFORE `update_pose`, write inputs that `Boarder_UpdatePose` reads from rider struct
+        let snap = host.update_pose(slot, &pin);
+        assert_eq!(snap.skin_child, state == 1, "case {case}: skin_child");
+        assert_eq!(snap.body_world_mats.len(), 19);
+
+        // Sync full AnimHost memory into Runner, then set exact `Boarder_UpdatePose` input fields on rider_addr
+        for &(base, ref bytes) in &host.mem().regions {
+            r.mem.write(base, bytes);
+        }
+        let put4 = |m: &mut r5900::Mem, at: u32, v: [f32; 4]| {
+            for (k, &x) in v.iter().enumerate() {
+                m.write_f32(at + 4 * k as u32, x);
+            }
+        };
+        let stats = r.mem.read_u32(rider_addr + 0x464);
+        r.mem.write_u32(stats + 0x40, pin.natural_stance);
+        r.mem.write_f32(stats + 0x60, pin.scale);
+        r.mem.write_u32(stats + 0x78, 0);
+        put4(&mut r.mem, rider_addr + 0x140, pin.pos);
+        put4(&mut r.mem, rider_addr + 0x170, pin.quat);
+        r.mem.write_f32(rider_addr + 0x1c0, pin.x1c0);
+        r.mem.write_f32(rider_addr + 0x1cc, pin.x1cc);
+        r.mem.write_f32(rider_addr + 0x1d0, pin.spin);
+        r.mem.write_f32(rider_addr + 0x1d4, pin.flip);
+        r.mem.write_f32(rider_addr + 0x214, pin.steer);
+        r.mem.write_f32(rider_addr + 0x244, pin.lean);
+        put4(&mut r.mem, rider_addr + 0x2a0, pin.normal);
+        put4(&mut r.mem, rider_addr + 0x2c0, pin.up);
+        r.mem.write_f32(rider_addr + 0x308, pin.height);
+        put4(&mut r.mem, rider_addr + 0x330, pin.side);
+        r.mem.write_u32(rider_addr + 0x420, pin.class);
+        r.mem.write_u32(rider_addr + 0x424, pin.motion);
+        r.mem.write_u32(rider_addr + 0x428, pin.state);
+
+        // Zero output bone matrices & frames in Runner so we prove 0x129628 writes them fresh!
+        let body_part_addr = r.mem.read_u32(rider_addr + 0x4494);
+        let body_mats_addr = r.mem.read_u32(body_part_addr + 4);
+        r.mem.write(body_mats_addr, &vec![0u8; 19 * 0x40]);
+        r.mem.write(rider_addr + 0x4a60, &[0u8; 0x80]);
+
+        r.cpu.set_gpr(4, rider_addr as u64);
+        r.call(0x129628).unwrap_or_else(|e| panic!("case {case}: Boarder_UpdatePose failed: {e}"));
+
+        // 1. Compare board_frame (+0x4aa0), board_bone_frame (+0x4a60), board_corners (+0x5760)
+        for &(off, label) in &[(0x4a60u32, "board_bone_frame"), (0x4aa0, "board_frame"), (0x5760, "board_corners")] {
+            let theirs: Vec<u32> = (0..16).map(|i| r.mem.read_u32(rider_addr + off + 4 * i)).collect();
+            let ours: Vec<u32> = (0..16).map(|i| host.mem().r32(rider_addr + off + 4 * i)).collect();
+            assert_eq!(theirs, ours, "case {case}: {label} mismatch");
+        }
+
+        // 2. Compare ALL 19 body world bone 4×4 matrices bit-for-bit (including 2-bone leg IK + foot bindings!)
+        for b in 0..19u32 {
+            let theirs: Vec<u32> = (0..16).map(|i| r.mem.read_u32(body_mats_addr + b * 0x40 + 4 * i)).collect();
+            let ours: Vec<u32> = snap.body_world_mats[b as usize].iter().flat_map(|row| row.map(f32::to_bits)).collect();
+            assert_eq!(theirs, ours, "case {case}: body bone {b} world matrix mismatch");
+        }
+
+        // 3. Compare `CollBody_UpdateFromBones` 0x2361b0 against `snap.coll_body` bit-for-bit!
+        let cb_addr = rider_addr + 0x470;
+        let saved_rules = r.float_rules;
+        r.float_rules = r5900::ps2float::Rules::parse("add=n,mul=n,div=n,cvt=n").unwrap();
+        r.cpu.set_gpr(4, cb_addr as u64);
+        r.cpu.set_f(12, pin.scale);
+        r.call(0x236050).expect("CollBody_InitRider");
+        r.mem.write_u32(cb_addr, body_mats_addr);
+        r.cpu.set_gpr(4, cb_addr as u64);
+        r.call(0x2361b0).expect("CollBody_UpdateFromBones");
+        r.float_rules = saved_rules;
+        for k in 0..4u32 {
+            assert_eq!(r.mem.read_u32(cb_addr + 0x10 + 4 * k), snap.coll_body.center[k as usize].to_bits(), "case {case}: coll center[{k}]");
+        }
+        assert_eq!(r.mem.read_u32(cb_addr + 0x20), snap.coll_body.radius.to_bits());
+        for s in 0..18u32 {
+            for k in 0..4u32 {
+                assert_eq!(
+                    r.mem.read_u32(cb_addr + 0x30 + s * 0x20 + 4 * k),
+                    snap.coll_body.spheres[s as usize].0[k as usize].to_bits(),
+                    "case {case}: coll sphere {s}[{k}]"
+                );
+            }
+            assert_eq!(
+                r.mem.read_u32(cb_addr + 0x30 + s * 0x20 + 0x10),
+                snap.coll_body.spheres[s as usize].1.to_bits(),
+                "case {case}: coll sphere {s} radius"
+            );
+        }
+
+        // 4. Verify `CharModel::skin_bone_matrices` on the local IK bone matrices produces valid finite vertices!
+        let skin_mats = body_model.skin_bone_matrices(&snap.body_local_mats, pin.scale);
+        let board_skin = board_model.skin_bone_matrices(&[snap.board_local_mat], pin.scale);
+        let (mut pos, mut nrm) = (Vec::new(), Vec::new());
+        tricky_data::character::skin_part_anim(&body_model.parts[0], &skin_mats, &mut pos, &mut nrm);
+        assert!(!pos.is_empty());
+        let (mut min_y, mut max_y) = (f32::INFINITY, f32::NEG_INFINITY);
+        for p in &pos {
+            assert!(p.iter().all(|v| v.is_finite()), "case {case}: non-finite IK vertex {p:?}");
+            min_y = min_y.min(p[1]);
+            max_y = max_y.max(p[1]);
+        }
+        assert!(min_y > -0.35 && max_y > 0.8 && max_y < 2.5, "case {case}: IK skinned Y bounds [{min_y:.3}, {max_y:.3}]");
+        tricky_data::character::skin_part_anim(&board_model.parts[0], &board_skin, &mut pos, &mut nrm);
+        assert!(pos.iter().all(|p| p.iter().all(|v| v.is_finite())));
+    }
+
+    // Check morph weights accessor works cleanly on registered head morph part.
+    for &(mslot, mcount) in &body_model.morph_slots {
+        let w = host.read_morph_weights(slot, mslot as i32);
+        assert_eq!(w.len(), mcount);
+        assert!(w.iter().all(|v| v.is_finite()));
+    }
+}

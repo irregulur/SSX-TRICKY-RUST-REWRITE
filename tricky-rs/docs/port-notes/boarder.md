@@ -1887,3 +1887,48 @@ Proven (`SLUS_203.26`):
 - **Verified**: `tests/animhost.rs` skins real disc `PoseBlend` output (regular & switch stance) through `skin_pose` /
   `skin_board_pose` / `skin_part_anim` with valid finite body & board bounds; `tricky-rs` bin tests pass. **Needs a
   play test.**
+
+## Full `Boarder_UpdatePose` + `Boarder_UpdateSkeleton` + leg IK + `CollBody` (row G5d4; checked: `tests/pose.rs`, `tests/animhost.rs`)
+
+- **Proven (`SLUS_203.26` disassembly)**:
+  - `Boarder_UpdateSkeleton` 0x12ae18 calls `RiderSkin_SetRootMatrix(rider+0x79c, rider+0x4aa0)` 0x2083d8 to build
+    the board world matrix `B = *(rider+0x4498)->+4`; in ground motion (`rider+0x424 == 2`), computes
+    `axis = cross(rider+0x2c0, B[0])` (`vopmula`/`vopmsub`, w=0), tilts `B` about `unit(axis)` by
+    `±(π/2 - Math_Asin(min(|axis|, 0.99999)))` (negated when `dot(up, B[0]) > 0`) when `|axis| > 1e-10` so `B[0]`
+    is orthogonal to `up`, shifts `B[3]` by `apply(B, (0,0,0,1) + rider+0x2a0 * rider+0x1cc)` when `rider+0x1cc > 0`,
+    and copies `B` to `rider+0x4a60` (`board_bone_frame`).
+  - `cBoarder::Init` (`0x11a898..0x11ae64`) plays clip `0x1ff` for 1 tick, evaluates board + body FK at identity
+    (`0x346440`), and captures the 3×3 foot-to-board binding rotations `F_bind * B_bind^T` at `rider+0x3d0` (right
+    foot, bone 15 `+0x3c0`) and `rider+0x3f4` (left foot, bone 18 `+0x480`), then resets `AnimCtl`.
+  - `Boarder_UpdatePose` 0x129628 (normal riders `stats+0x78 == 0`): computes `skin_child = (state == 1 && clip != 0x1fc)
+    || clip == 0x291 || clip == 0x2ab || clip_type == 0x10`. When `skin_child` is true, calls
+    `Boarder_SetSkinChildMatrices` 0x2083e8 (pure FK); otherwise shifts `rider+0x4ad0` by `x1c0 * scale * up` in
+    motions 2/4, resolves left/right board binding world targets via `Boarder_GetBoneWorldPos` 0x208398 (part 1,
+    points 1 and 0, loaded from `PartEntry+0x1c` count `+0x46` and scaled by `SkinPart_Scale` 0x2054f0), calls
+    `Boarder_BuildBoneMatrices` 0x2083f8 (FK bones `0..12`, 2-bone leg IK on `16..18` and `13..15`), locks the 3×3
+    orientations of bones 15 and 18 via `F_local * B_world` (`0x12a6c4..0x12abf4`), moves `rider+0x4ad0` to the world
+    pivot, and writes `board_corners` (`rider+0x5760..+0x5790`).
+  - `RiderSkin_Bind` 0x207198 scales the inverse-bind matrices by `diag(scale, scale, scale, 1)` so `SkinPart_Scale`
+    0x2054f0's scaled bone offsets and IK points match unscaled `.mpf` vertices at any character `scale` (`stats+0x60`).
+- **Ported (`mpf.rs`, `character.rs`, `pose.rs`, `animhost.rs`, `rider.rs`, `rider/wipeout.rs`, `main.rs`)**:
+  - `MpfPart::ik_points` (`PartEntry+0x1c`/`+0x46`), `CharModel::{ik_points, morph_slots, skin_bone_matrices}`.
+  - `pose::{update_skeleton, init_foot_bindings, apply_foot_bindings, update_pose}` in `tricky-rs/game/src/pose.rs`.
+  - `AnimHost` (`RIDER_STRIDE = 0x8000`, `SkinPart` structs at `rider+0x4494/+0x4498`, scaled bone offsets & IK points,
+    foot binding capture on `add_rider`, `add_morph_part` / `read_morph_weights` for `PoseBlend_EvalCurves` 0x2029d8,
+    and `update_pose` caching `PoseSnapshot` with world/local bone matrices, `board_bone_frame`, `pivot`, and
+    `CollBody_UpdateFromBones` 0x2361b0).
+  - `Rider::step` runs `Boarder_UpdatePose` + `Boarder_UpdateSkeleton` + `CollBody_UpdateFromBones` right after
+    `Boarder_UpdateAnimLayers`; `Rider::board_bone_frame`, `Rider::board_frame`, `Rider::end_spin`, `Rider::air_wall`,
+    and `wipeout.rs` (`wipe_enter` + `Wipe::tick`) all consume the live `PoseSnapshot` / `pivot_pos` / `CollBody` when
+    `AnimHost` is attached; `main.rs` installs `.mpf` board IK points + head morph parts and skins directly from the
+    posed IK bone matrices via `skin_bone_matrices`.
+- **Verified**: `tests/pose.rs` (`update_skeleton_matches_the_original`, 2,000 random cases) and `tests/animhost.rs`
+  (`update_pose_world_bones_and_collbody_match_original`: full `Boarder_UpdatePose` + `Boarder_UpdateSkeleton` +
+  2-bone leg IK + foot bindings + `skin_child` FK + `CollBody_UpdateFromBones` on real disc `.mpf`/`.afl`) match
+  `SLUS_203.26` bit-for-bit in `r5900::Runner`; 35 `tricky-data` + 89 `tricky-game` (12 suites) + 20 `tricky-rs`
+  binary tests pass.
+- **Remaining gaps (split/noted for follow-up)**:
+  - Facial morph vertex blending in the Bevy renderer (`AnimHost::read_morph_weights` evaluates `PoseBlend_EvalCurves`
+    0x2029d8, but `CharModel` does not yet apply `MpfMesh::morphs` vertex deltas per frame) and pre-/post-race scene
+    clips still using `AnimSet::scenes_from_disc`.
+  - Visual play-test of `G5d` in Bevy with `TRICKY_DISC` still needed before closing the `G5d` umbrella row.

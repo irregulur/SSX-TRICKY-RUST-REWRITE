@@ -584,9 +584,33 @@ impl Wipe {
             kn.start_scripts(c, &starts);
         }
         self.wr.stuck += std::mem::take(&mut self.s.impact);
-        // STANDIN: the collision body re-posed from the bind pose where the rider now is, for
-        // `CollBody_UpdateFromBones` 0x2361b0 on the animated skeleton (row G5)
-        self.rag.body = bind_body_at(self.rag.pos, self.wr.fwd, self.rag.up, k);
+        // Re-pose the collision body via `Boarder_UpdatePose` 0x129628 + `CollBody_UpdateFromBones` 0x2361b0
+        // when `AnimHost` is attached; otherwise fall back to the bind-pose STANDIN.
+        self.rag.body = match anim {
+            Some(a) => {
+                let snap = a.update_pose(&crate::animhost::PoseUpdateIn {
+                    quat: self.rag.q,
+                    steer: 0.0,
+                    motion: now,
+                    state: self.s.state,
+                    class: self.wr.x420,
+                    natural_stance: self.wr.x464 as u32,
+                    pos: self.rag.pos,
+                    up: self.rag.up,
+                    normal: self.rag.ground,
+                    height: self.rag.height,
+                    side: self.wr.side,
+                    lean,
+                    scale: k,
+                    spin: 0.0,
+                    flip: 0.0,
+                    x1c0: 0.0,
+                    x1cc: 0.0,
+                });
+                snap.coll_body
+            }
+            None => bind_body_at(self.rag.pos, self.wr.fwd, self.rag.up, k),
+        };
         self.s.clip_t += TICK;
         let getup_done = match anim {
             Some(a) => matches!(a.clip(0), 0x1ff | 0x202) || a.at_end(0),
@@ -641,9 +665,18 @@ impl Rider {
             crash_n: [0.0; 4],
             side: o.fwd,
             course,
-            body: bind_body_at(pos, o.fwd, o.up, k),
-            // STANDIN: the hip bone (rider+0x44d8's) at the bind pose's root, 91.7 cm up (row G5)
-            hip: [0.0, 0.0, 91.7 * k, 0.0],
+            body: self.anim.as_ref().and_then(|a| a.pose_snapshot()).map_or_else(
+                || bind_body_at(pos, o.fwd, o.up, k),
+                |snap| snap.coll_body,
+            ),
+            hip: match &self.anim {
+                Some(a) => {
+                    let p = a.pivot_pos();
+                    [p[0], p[1], p[2], 0.0]
+                }
+                // STANDIN (without AnimHost): the hip bone (rider+0x44d8's) at the bind pose's root, 91.7 cm up
+                None => [0.0, 0.0, 91.7 * k, 0.0],
+            },
         };
         let mut wr = WipeRider {
             time_scale: 1.0,

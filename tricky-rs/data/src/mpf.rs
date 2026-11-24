@@ -249,6 +249,9 @@ pub struct MpfPart {
     pub morph_count: usize,
     pub textures: Vec<TexSet>,
     pub bones: Vec<MpfBone>,
+    /// IK/attachment points (`PartEntry+0x1c`, count `+0x46`, 16 bytes: `[x, y, z]` cm + `bone` index;
+    /// proven from `SkinPart_Load` 0x205080 and `Skel_GetBoneWorldPos` 0x2059f8).
+    pub ik_points: Vec<([f32; 3], u32)>,
     /// Weight sets: (bone, percent) pairs; entry+0x30 list of (count, pointer, ...) 0xc records.
     pub weights: Vec<Vec<(u16, u16)>>,
     pub meshes: Vec<MpfMesh>,
@@ -260,6 +263,7 @@ impl MpfPart {
         let materials = e.u16(0x40) as usize;
         let bones_n = e.u16(0x42) as usize;
         let textures_n = e.u16(0x44) as usize;
+        let ik_points_n = e.u16(0x46) as usize;
         let morph_count = e.u16(0x48) as usize;
         let weights_n = e.u16(0x3c) as usize;
         let palettes_n = e.u16(0x3e) as usize;
@@ -361,7 +365,13 @@ impl MpfPart {
             }
             meshes.push(MpfMesh { texture, flags, lists, shadow_lists: Vec::new(), morphs });
         }
-        Ok(MpfPart { name: e.name.clone(), slot: e.slot(), morph_count, textures, bones, weights, meshes })
+        let ik_at = e.u32(0x1c) as usize;
+        let mut ik_points = Vec::with_capacity(ik_points_n);
+        for i in 0..ik_points_n {
+            let at = ik_at + i * 0x10;
+            ik_points.push(([r.f32(at)?, r.f32(at + 4)?, r.f32(at + 8)?], r.u32(at + 0xc)?));
+        }
+        Ok(MpfPart { name: e.name.clone(), slot: e.slot(), morph_count, textures, bones, ik_points, weights, meshes })
     }
 }
 

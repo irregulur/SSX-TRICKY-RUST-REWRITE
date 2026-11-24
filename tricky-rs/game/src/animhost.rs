@@ -51,14 +51,20 @@ const BANK_MEM_BASE: u32 = 0x0080_0000;
 const BANK_MEM_ALLOC_SIZE: u32 = 0x003f_ff00;
 const BANK_MEM_REGION_SIZE: usize = 0x0040_0000;
 
-/// Per-rider memory (`cBoarder` offsets: `+0x1b4..+0x464`, `+0x7bc/+0x7c0` `PoseBlend` array, `+0x46c0` `AnimCtl`,
-/// plus `+0x5000` raw `.mpf` bones and `+0x5c00` stats stub).
+/// Per-rider memory (`cBoarder` offsets `0x0000..0x5fff`: `+0x1b4..+0x464`, `+0x79c` `RiderSkin` with
+/// `+0x7bc/+0x7c0` `PoseBlend` array and `+0x4494/+0x44d8` part tables, `+0x46c0` `AnimCtl`, `+0x4a60`
+/// `board_bone_frame`, `+0x4aa0` `board_frame`, `+0x5760` `board_corners`; sidecar structs in `0x6000..0x7fff`).
 const RIDER_BASE: u32 = 0x00c0_0000;
-const RIDER_STRIDE: u32 = 0x0000_6000;
+const RIDER_STRIDE: u32 = 0x0000_8000;
 const MAX_RIDERS: usize = 12;
-const RIDER_BONES_OFF: u32 = 0x5000;
-const RIDER_STATS_OFF: u32 = 0x5c00;
-const RIDER_DISP_SCRATCH: u32 = 0x5e00;
+const RIDER_STATS_OFF: u32 = 0x6000;
+const RIDER_DISP_SCRATCH: u32 = 0x6100;
+const RIDER_BONES_OFF: u32 = 0x6200;
+const RIDER_SKINPART_OFF: u32 = 0x6d00;
+const RIDER_SKINPART_STRIDE: u32 = 0xa0;
+const RIDER_IK_OFF: u32 = 0x7000;
+const RIDER_MATS_OFF: u32 = 0x7100;
+const RIDER_POSE_SCRATCH: u32 = 0x7800;
 /// Maximum bones per `PoseBlend` object (`0x108 / 0xc = 22`).
 pub const MAX_POSE_BONES: usize = 22;
 
@@ -399,13 +405,110 @@ impl<L: FnMut(&str) -> Option<Vec<u8>>> LoadEnv for SyncLoadEnv<'_, L> {
     fn big_reset(&mut self, _m: &mut Mem, _big: u32) {}
 }
 
+/// Inputs to `Boarder_UpdatePose` 0x129628 + `Boarder_UpdateSkeleton` 0x12ae18 + `CollBody_UpdateFromBones`
+/// 0x2361b0 (board row G5d4).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PoseUpdateIn {
+    /// `rider+0x170`: attitude quaternion `(w, x, y, z)`
+    pub quat: [f32; 4],
+    /// `rider+0x214`: steer ease value
+    pub steer: f32,
+    /// `rider+0x424`: motion (`1` air, `2` ground, `3` rail, `4` reset/stationary, `5` wipeout, `6` getup)
+    pub motion: u32,
+    /// `rider+0x428`: control state (`1` triggers `skin_child` when layer-0 clip != `0x1fc`)
+    pub state: u32,
+    /// `rider+0x420`: board class (`0` BX, `1` FR, `2` EX)
+    pub class: u32,
+    /// `stats+0x40`: natural stance (`0` regular, `1` goofy)
+    pub natural_stance: u32,
+    /// `rider+0x140`: rider position in game space (cm, z up)
+    pub pos: [f32; 4],
+    /// `rider+0x2c0`: rider up vector
+    pub up: [f32; 4],
+    /// `rider+0x2a0`: ground normal vector
+    pub normal: [f32; 4],
+    /// `rider+0x308`: body height above snow (cm)
+    pub height: f32,
+    /// `rider+0x330`: board side vector on ground
+    pub side: [f32; 4],
+    /// `rider+0x244`: lean value
+    pub lean: f32,
+    /// `stats+0x60`: rider body scale
+    pub scale: f32,
+    /// `rider+0x1d0`, `rider+0x1d4`: trick spin and flip angles (rad)
+    pub spin: f32,
+    pub flip: f32,
+    /// `rider+0x1c0`: body lift offset (motions 2 and 4)
+    pub x1c0: f32,
+    /// `rider+0x1cc`: board lift along ground normal (motion 2, `Boarder_UpdateSkeleton` 0x12ae18)
+    pub x1cc: f32,
+}
+
+/// Cached world & rider-local bone matrices and `CollBody` produced by `Boarder_UpdatePose` 0x129628 +
+/// `Boarder_UpdateSkeleton` 0x12ae18 + `CollBody_UpdateFromBones` 0x2361b0 (board row G5d4).
+#[derive(Clone, Debug)]
+pub struct PoseSnapshot {
+    /// `rider+0x4aa0` before `frame_where` moves its position to the pivot bone
+    pub board_frame_raw: [[f32; 4]; 4],
+    /// `rider+0x4aa0` final (position at world hips)
+    pub board_frame: [[f32; 4]; 4],
+    /// `rider+0x4a60` copied by `Boarder_UpdateSkeleton` 0x12ae18
+    pub board_bone_frame: [[f32; 4]; 4],
+    /// `PoseBlend[0].trans[0]` (hips pivot in rider animation space, cm)
+    pub pivot: [f32; 3],
+    /// Body part (slot 0) 4×4 bone world matrices (`SkinPart+4`), including 2-bone leg IK and board-locked feet
+    pub body_world_mats: Vec<[[f32; 4]; 4]>,
+    /// Body part (slot 0) 4×4 bone matrices in rider-local animation space (`f0^-1 * world`) for Bevy skinning
+    pub body_local_mats: Vec<[[f32; 4]; 4]>,
+    /// Board part (slot 1) 4×4 world matrix (`SkinPart+4`)
+    pub board_world_mat: [[f32; 4]; 4],
+    /// Board part (slot 1) 4×4 matrix in rider-local animation space (`f0^-1 * world`) for Bevy skinning
+    pub board_local_mat: [[f32; 4]; 4],
+    /// `CollBody_UpdateFromBones` 0x2361b0 built from `body_world_mats[0..19][3]`
+    pub coll_body: crate::collbody::CollBody,
+    /// True when `Boarder_SetSkinChildMatrices` 0x2083e8 (pure FK) ran instead of `Boarder_BuildBoneMatrices` 0x2083f8 (leg IK)
+    pub skin_child: bool,
+}
+
+/// Per-rider skin metadata tracked beside `pf::Mem`.
+struct RiderSkinMeta {
+    parts: Vec<(i32, usize)>,
+    unscaled_bones: Vec<(i32, u32, Vec<[u8; 0x54]>)>,
+    unscaled_ik: Vec<([f32; 3], u32)>,
+    scale: f32,
+    last_pose: Option<PoseSnapshot>,
+}
+
+fn rigid_inv(f: [[f32; 4]; 4]) -> [[f32; 4]; 4] {
+    let dot3 = |a: [f32; 4], b: [f32; 4]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let t = f[3];
+    [
+        [f[0][0], f[1][0], f[2][0], 0.0],
+        [f[0][1], f[1][1], f[2][1], 0.0],
+        [f[0][2], f[1][2], f[2][2], 0.0],
+        [-dot3(f[0], t), -dot3(f[1], t), -dot3(f[2], t), 1.0],
+    ]
+}
+
+fn apply_row_mat(a: &[[f32; 4]; 4], v: [f32; 4]) -> [f32; 4] {
+    [0, 1, 2, 3].map(|i| ((a[0][i] * v[0] + a[1][i] * v[1]) + a[2][i] * v[2]) + a[3][i] * v[3])
+}
+
+fn mul_row_mat(a: &[[f32; 4]; 4], b: &[[f32; 4]; 4]) -> [[f32; 4]; 4] {
+    b.map(|row| apply_row_mat(a, row))
+}
+
+fn read_mat4(m: &Mem, at: u32) -> [[f32; 4]; 4] {
+    std::array::from_fn(|r| std::array::from_fn(|c| f32::from_bits(m.r32(at + 0x10 * r as u32 + 4 * c as u32))))
+}
+
 /// Live animation host holding the game's `AnimData` bank (`0x3211a8`) and up to [`MAX_RIDERS`] rider
-/// controllers (`rider+0x46c0`) + `PoseBlend` objects (`rider+0x7c0`) in `pf::Mem`.
+/// controllers (`rider+0x46c0`) + `PoseBlend` objects (`rider+0x7c0`) + `SkinPart` world matrices in `pf::Mem`.
 pub struct AnimHost {
     mem: Mem,
     alloc: AllocState,
     riders_n: usize,
-    part_bones: Vec<Vec<(i32, usize)>>,
+    skins: Vec<RiderSkinMeta>,
 }
 
 impl AnimHost {
@@ -454,7 +557,7 @@ impl AnimHost {
             load::open_big(&mut mem, &mut env, BANK, 1, true, 0, 0);
         }
 
-        Ok(Self { mem, alloc, riders_n: 0, part_bones: Vec::new() })
+        Ok(Self { mem, alloc, riders_n: 0, skins: Vec::new() })
     }
 
     /// Construct from an open disc (`tricky_data::big::Files` with `/SLUS_203.26` read from the disc).
@@ -509,11 +612,17 @@ impl AnimHost {
         self.mem.w32(base + 0x1e4, 0x1a);
         self.mem.w32(ctl_ptr + 0x24, base);
 
-        // Bind `PoseBlend` objects at `rider+0x7c0 + k * 0x394` (`RiderSkin_Init` 0x206f80 + `RiderSkin_Bind`
-        // 0x207374 + `RiderSkin_Scale` 0x208250).
+        // Bind `PoseBlend` objects at `rider+0x7c0 + k * 0x394` and `SkinPart` structs at `rider+0x4494 + 4*part_id`
+        // (`RiderSkin_Init` 0x206f80 + `RiderSkin_Bind` 0x207198 + `RiderSkin_Scale` 0x208220 / `SkinPart_Scale` 0x2054f0).
+        for k in 0..17u32 {
+            self.mem.w32(base + 0x4494 + 4 * k, 0);
+            self.mem.w32(base + 0x44d8 + 4 * k, u32::MAX);
+        }
         let mut bone_cursor = base + RIDER_BONES_OFF;
+        let mut mat_cursor = base + RIDER_MATS_OFF;
         let mut mask_bit = 0u32;
-        let mut meta = Vec::with_capacity(parts.len());
+        let mut meta_parts = Vec::with_capacity(parts.len());
+        let mut unscaled_bones = Vec::with_capacity(parts.len());
         self.mem.w32(base + 0x7bc, parts.len() as u32);
         for (k, &(part_id, raw_bones)) in parts.iter().enumerate() {
             assert!(raw_bones.len() <= MAX_POSE_BONES, "animhost: part {part_id} has {} bones > {MAX_POSE_BONES}", raw_bones.len());
@@ -521,6 +630,11 @@ impl AnimHost {
             for bone in raw_bones {
                 for (o, &b) in bone.iter().enumerate() {
                     self.mem.w8(bone_cursor + o as u32, b);
+                }
+                // `SkinPart_Scale` 0x2054f0: scale each bone's bind offset (`+0x18..+0x24`) by `scale`
+                for axis in 0..3u32 {
+                    let v = f32::from_bits(self.mem.r32(bone_cursor + 0x18 + 4 * axis));
+                    self.mem.w32(bone_cursor + 0x18 + 4 * axis, (F(v) * F(scale)).0.to_bits());
                 }
                 bone_cursor += 0x54;
             }
@@ -531,15 +645,121 @@ impl AnimHost {
             self.mem.w32(p + 0x38c, raw_bones.len() as u32);
             self.mem.w32(p + 0x390, mask_bit);
             pose::begin(&mut self.mem, p);
+
+            // Minimal `SkinPart` (0x48 bytes) + `PartEntry` header (0x50 bytes) for `SkinPart_SetChildMatrices`,
+            // `Boarder_BuildBoneMatrices`, `Boarder_GetBoneWorldPos`, and `Boarder_UpdateSkeleton`.
+            if part_id >= 0 && (part_id as usize) < 17 && k < 4 {
+                let sp = base + RIDER_SKINPART_OFF + (k as u32) * RIDER_SKINPART_STRIDE;
+                let hdr = sp + 0x48;
+                self.mem.w16(hdr + 0x42, raw_bones.len() as u16);
+                self.mem.w16(hdr + 0x46, 0);
+                self.mem.w16(hdr + 0x48, 0);
+                self.mem.w8(hdr + 0x4a, part_id as u8);
+                self.mem.w32(sp, p);
+                self.mem.w32(sp + 4, mat_cursor);
+                self.mem.w32(sp + 0xc, hdr);
+                self.mem.w32(sp + 0x18, if raw_bones.is_empty() { 0 } else { skel_ptr });
+                self.mem.w32(sp + 0x1c, if part_id == 1 { base + RIDER_IK_OFF } else { 0 });
+                self.mem.w32(sp + 0x38, scale.to_bits());
+                self.mem.w32(sp + 0x3c, 1);
+                self.mem.w32(base + 0x4494 + 4 * part_id as u32, sp);
+                self.mem.w32(base + 0x44d8 + 4 * part_id as u32, k as u32);
+                mat_cursor += (raw_bones.len() as u32) * 0x40;
+            }
             mask_bit += raw_bones.len() as u32;
-            meta.push((part_id, raw_bones.len()));
+            meta_parts.push((part_id, raw_bones.len()));
+            unscaled_bones.push((part_id, skel_ptr, raw_bones.to_vec()));
         }
-        self.part_bones.push(meta);
+        self.skins.push(RiderSkinMeta {
+            parts: meta_parts,
+            unscaled_bones,
+            unscaled_ik: Vec::new(),
+            scale,
+            last_pose: None,
+        });
 
         let mut rng = || crate::rand::rand_game();
         let mut env = RuntimeEnv { alloc: &mut self.alloc, rand_game: &mut rng };
         ctl::construct(&mut self.mem, &mut env, ctl_ptr);
+        // `cBoarder::Init` 0x11a898..0x11ae64: capture bind-pose foot-to-board 3×3 rotations at `rider+0x3d0`/`0x3f4`
+        // from clip `0x1ff` at identity, then reset `AnimCtl` so the rider starts clean.
+        if self.mem.r32(base + 0x4494) != 0 && self.mem.r32(base + 0x4498) != 0 {
+            let saved_events = std::mem::take(&mut self.alloc.events);
+            {
+                let mut env = RuntimeEnv { alloc: &mut self.alloc, rand_game: &mut rng };
+                ctl::play_clip(&mut self.mem, &mut env, ctl_ptr, 0x1ff, 0, 5);
+                ctl::update_layers(&mut self.mem, &mut env, ctl_ptr, F(1.0));
+                crate::pose::init_foot_bindings(&mut self.mem, base, MATRIX);
+                ctl::reset(&mut self.mem, &mut env, ctl_ptr);
+            }
+            self.alloc.events = saved_events;
+        }
         slot
+    }
+
+    /// Install the board part's `.mpf` IK binding points (`SkinPart+0x1c`, count `header+0x46`, scaled by `scale`
+    /// as `SkinPart_Scale` 0x2054f0 does): index 0 = right binding, index 1 = left binding.
+    pub fn set_board_ik_points(&mut self, slot: usize, ik_points: &[([f32; 3], u32)]) {
+        let base = Self::rider_addr(slot);
+        let scale = self.skins[slot].scale;
+        self.skins[slot].unscaled_ik = ik_points.to_vec();
+        let n = ik_points.len().min(16);
+        let ik_addr = base + RIDER_IK_OFF;
+        for (i, &(pt, bone)) in ik_points.iter().take(n).enumerate() {
+            let at = ik_addr + (i as u32) * 0x10;
+            for k in 0..3u32 {
+                self.mem.w32(at + 4 * k, (F(pt[k as usize]) * F(scale)).0.to_bits());
+            }
+            self.mem.w32(at + 0xc, bone);
+        }
+        let sp = self.mem.r32(base + 0x4498);
+        if sp != 0 {
+            self.mem.w32(sp + 0x1c, ik_addr);
+            let hdr = self.mem.r32(sp + 0xc);
+            if hdr != 0 {
+                self.mem.w16(hdr + 0x46, n as u16);
+            }
+        }
+    }
+
+    /// Register a facial morph `PoseBlend` entry (`skel == 0`, `n = morph_count`) for `part_id` so
+    /// `AnimCtl_BlendPose` 0x15f7c8 runs `PoseBlend_EvalCurves` 0x2029d8 on clips that carry face curves.
+    pub fn add_morph_part(&mut self, slot: usize, part_id: i32, morph_count: usize) {
+        if morph_count == 0 {
+            return;
+        }
+        let base = Self::rider_addr(slot);
+        let k = self.skins[slot].parts.len();
+        if k >= 17 {
+            return;
+        }
+        let count = morph_count.min(30);
+        let p = base + 0x7c0 + 0x394 * k as u32;
+        self.mem.w32(p + 0x380, self.skins[slot].scale.to_bits());
+        self.mem.w32(p + 0x384, part_id as u32);
+        self.mem.w32(p + 0x388, 0);
+        self.mem.w32(p + 0x38c, count as u32);
+        self.mem.w32(p + 0x390, 0);
+        pose::begin(&mut self.mem, p);
+        if part_id >= 0 && (part_id as usize) < 17 {
+            self.mem.w32(base + 0x44d8 + 4 * part_id as u32, k as u32);
+        }
+        self.skins[slot].parts.push((part_id, count));
+        self.mem.w32(base + 0x7bc, self.skins[slot].parts.len() as u32);
+    }
+
+    /// Read the evaluated facial morph channel weights (`PoseBlend+0x210..`, written by `PoseBlend_EvalCurves`
+    /// 0x2029d8) for a morph part registered via [`Self::add_morph_part`].
+    pub fn read_morph_weights(&self, slot: usize, part_id: i32) -> Vec<f32> {
+        let Some(meta) = self.skins.get(slot) else { return Vec::new() };
+        let Some((k, &(_, n))) = meta.parts.iter().enumerate().find(|(_, &(pid, _))| pid == part_id) else {
+            return Vec::new();
+        };
+        let p = Self::rider_addr(slot) + 0x7c0 + 0x394 * k as u32;
+        if self.mem.r32(p + 0x388) != 0 {
+            return Vec::new();
+        }
+        (0..n as u32).map(|j| f32::from_bits(self.mem.r32(p + 0x210 + 4 * j))).collect()
     }
 
     /// `Boarder_ResetAnim` 0x117170 -> `AnimCtl_Reset` 0x15ee30 on `slot`.
@@ -707,8 +927,11 @@ impl AnimHost {
 
     /// Read the blended Euler rotations and translations out of `PoseBlend` object `part_idx` (`0` = body, `1` = board).
     pub fn read_pose(&self, slot: usize, part_idx: usize) -> Option<BlendedPose> {
-        let &(part, nbones) = self.part_bones.get(slot)?.get(part_idx)?;
+        let &(part, nbones) = self.skins.get(slot)?.parts.get(part_idx)?;
         let p = Self::rider_addr(slot) + 0x7c0 + 0x394 * part_idx as u32;
+        if self.mem.r32(p + 0x388) == 0 {
+            return None;
+        }
         let mut rot = Vec::with_capacity(nbones);
         let mut trans = Vec::with_capacity(nbones);
         for b in 0..nbones as u32 {
@@ -718,6 +941,111 @@ impl AnimHost {
             trans.push(t);
         }
         Some(BlendedPose { part, rot, trans })
+    }
+
+    /// Pivot bone translation (`PoseBlend[bone_ix].trans[0]`, `rider + bone_ix * 0x394 + 0x8c8`) in cm.
+    pub fn pivot_pos(&self, slot: usize) -> [f32; 3] {
+        let base = Self::rider_addr(slot);
+        let bone_ix = self.mem.r32(base + 0x44d8);
+        let ix = if bone_ix < 17 { bone_ix } else { 0 };
+        let at = base + ix * 0x394 + 0x8c8;
+        [
+            f32::from_bits(self.mem.r32(at)),
+            f32::from_bits(self.mem.r32(at + 4)),
+            f32::from_bits(self.mem.r32(at + 8)),
+        ]
+    }
+
+    /// Run `Boarder_UpdatePose` 0x129628 + `Boarder_UpdateSkeleton` 0x12ae18 + `CollBody_UpdateFromBones`
+    /// 0x2361b0 on `slot` and cache the resulting world/local bone matrices, `board_bone_frame`, and `CollBody`.
+    pub fn update_pose(&mut self, slot: usize, inp: &PoseUpdateIn) -> PoseSnapshot {
+        let base = Self::rider_addr(slot);
+        self.mem.w32(base + 0x424, inp.motion);
+        self.mem.w32(base + 0x428, inp.state);
+        self.mem.w32(base + 0x420, inp.class);
+        for k in 0..4u32 {
+            self.mem.w32(base + 0x2c0 + 4 * k, inp.up[k as usize].to_bits());
+            self.mem.w32(base + 0x2a0 + 4 * k, inp.normal[k as usize].to_bits());
+        }
+        self.mem.w32(base + 0x1cc, inp.x1cc.to_bits());
+
+        let pivot = self.pivot_pos(slot);
+        let pose_in = crate::pose::PoseIn {
+            quat: inp.quat,
+            steer: inp.steer,
+            motion: inp.motion,
+            class: inp.class,
+            pos: inp.pos,
+            up: inp.up,
+            height: inp.height,
+            side: inp.side,
+            lean: inp.lean,
+            lean_scale: inp.scale,
+            spin: inp.spin,
+            flip: inp.flip,
+            pivot_z: pivot[2],
+        };
+
+        let clip0 = self.clip(slot, 0);
+        let clip_type0 = self.clip_type(slot, 0);
+        let has_ik = self.skins[slot].unscaled_ik.len() >= 2;
+        let skin_child = !has_ik
+            || (inp.state == 1 && clip0 != 0x1fc)
+            || clip0 == 0x291
+            || clip0 == 0x2ab
+            || clip_type0 == 0x10;
+
+        let (f0, f_final, bone_frame) = crate::pose::update_pose(
+            &mut self.mem,
+            base,
+            &pose_in,
+            skin_child,
+            inp.x1c0,
+            inp.natural_stance,
+            base + RIDER_POSE_SCRATCH,
+        );
+
+        let f0_inv = rigid_inv(f0);
+        let body_sp = self.mem.r32(base + 0x4494);
+        let body_n = if body_sp != 0 { self.mem.r16(self.mem.r32(body_sp + 0xc) + 0x42) as usize } else { 0 };
+        let body_mats_addr = if body_sp != 0 { self.mem.r32(body_sp + 4) } else { 0 };
+        let mut body_world_mats = Vec::with_capacity(body_n);
+        let mut body_local_mats = Vec::with_capacity(body_n);
+        let mut bone_positions = Vec::with_capacity(body_n);
+        for b in 0..body_n {
+            let wm = read_mat4(&self.mem, body_mats_addr + (b as u32) * 0x40);
+            bone_positions.push(wm[3]);
+            body_local_mats.push(mul_row_mat(&f0_inv, &wm));
+            body_world_mats.push(wm);
+        }
+        let board_world_mat = bone_frame;
+        let board_local_mat = mul_row_mat(&f0_inv, &board_world_mat);
+
+        let mut coll_body = crate::collbody::CollBody::new();
+        coll_body.init_rider(inp.scale);
+        if bone_positions.len() >= 19 {
+            coll_body.update_from_bones(&bone_positions);
+        }
+
+        let snap = PoseSnapshot {
+            board_frame_raw: f0,
+            board_frame: f_final,
+            board_bone_frame: bone_frame,
+            pivot,
+            body_world_mats,
+            body_local_mats,
+            board_world_mat,
+            board_local_mat,
+            coll_body,
+            skin_child,
+        };
+        self.skins[slot].last_pose = Some(snap.clone());
+        snap
+    }
+
+    /// Last cached [`PoseSnapshot`] from [`Self::update_pose`].
+    pub fn pose_snapshot(&self, slot: usize) -> Option<PoseSnapshot> {
+        self.skins.get(slot)?.last_pose.clone()
     }
 
     /// Drain sound / clip-start events accumulated during `play_clip` and `update_layers`.
@@ -750,6 +1078,28 @@ impl AnimHost {
         self.mem.w32(stats_ptr + 0x5c, character);
         self.mem.w32(stats_ptr + 0x60, scale.to_bits());
         self.mem.w32(base + 0x420, board_class);
+        // If `scale` changed after `add_rider`, re-scale `PoseBlend+0x380`, bone offsets, and IK points cleanly.
+        if (self.skins[slot].scale - scale).abs() > 1e-6 {
+            self.skins[slot].scale = scale;
+            let nparts = self.skins[slot].parts.len();
+            for k in 0..nparts {
+                self.mem.w32(base + 0x7c0 + 0x394 * k as u32 + 0x380, scale.to_bits());
+            }
+            for &(_, skel_ptr, ref bones) in &self.skins[slot].unscaled_bones {
+                for (i, raw) in bones.iter().enumerate() {
+                    let dst = skel_ptr + (i as u32) * 0x54;
+                    for axis in 0..3u32 {
+                        let o = 0x18 + 4 * axis as usize;
+                        let v = f32::from_le_bytes(raw[o..o + 4].try_into().unwrap());
+                        self.mem.w32(dst + o as u32, (F(v) * F(scale)).0.to_bits());
+                    }
+                }
+            }
+            let ik = self.skins[slot].unscaled_ik.clone();
+            if !ik.is_empty() {
+                self.set_board_ik_points(slot, &ik);
+            }
+        }
     }
 
     /// Reset `SpinState_UpdateTrickClips` rider state (`+0x1e4 = 0x1a`, `+0x1e8 = 0`, `+0x1ec = 0`).
@@ -915,5 +1265,17 @@ impl RiderAnim {
     }
     pub fn read_pose(&self, part_idx: usize) -> Option<BlendedPose> {
         self.lock().read_pose(self.slot, part_idx)
+    }
+    pub fn read_morph_weights(&self, part_id: i32) -> Vec<f32> {
+        self.lock().read_morph_weights(self.slot, part_id)
+    }
+    pub fn pivot_pos(&self) -> [f32; 3] {
+        self.lock().pivot_pos(self.slot)
+    }
+    pub fn update_pose(&self, inp: &PoseUpdateIn) -> PoseSnapshot {
+        self.lock().update_pose(self.slot, inp)
+    }
+    pub fn pose_snapshot(&self) -> Option<PoseSnapshot> {
+        self.lock().pose_snapshot(self.slot)
     }
 }

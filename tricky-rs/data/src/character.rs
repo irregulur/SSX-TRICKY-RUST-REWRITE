@@ -35,7 +35,14 @@ pub struct Bone { pub name: String, pub parent: i32, pub slot: i8, pub raw: Opti
 pub struct Vert { pub pos: Vec3, pub nrm: Vec3, pub uv: Vec2, pub w: [(u16, f32); 4] }
 /// All triangles that share one texture ("suit", "boot", "head", "helm", "bord").
 pub struct Part { pub texture: String, pub verts: Vec<Vert> }
-pub struct CharModel { pub bones: Vec<Bone>, pub parts: Vec<Part> }
+pub struct CharModel {
+    pub bones: Vec<Bone>,
+    pub parts: Vec<Part>,
+    /// IK/attachment points copied from `.mpf` parts (`SkinPart+0x1c`, e.g. board binding points 0=right, 1=left).
+    pub ik_points: Vec<([f32; 3], u32)>,
+    /// Parts with facial morph targets `(skin_slot, morph_count)` (`PartEntry+0x4a`, `+0x48`).
+    pub morph_slots: Vec<(i8, usize)>,
+}
 
 /// What the rider is doing, as far as the pose cares.
 #[derive(Clone, Copy, Default)]
@@ -95,7 +102,14 @@ impl CharModel {
                 raw.meshes.push(mesh);
             }
         }
-        Self::from_raw(&raw)
+        let mut model = Self::from_raw(&raw);
+        for p in parts {
+            model.ik_points.extend_from_slice(&p.ik_points);
+            if p.morph_count > 0 {
+                model.morph_slots.push((p.slot, p.morph_count));
+            }
+        }
+        model
     }
 
     /// A rider from the player's disc (row E4a): the closest level of detail of `BdrLoad_BuildSkin`
@@ -164,7 +178,7 @@ impl CharModel {
                 });
             }
         }
-        Self { bones, parts }
+        Self { bones, parts, ik_points: Vec::new(), morph_slots: Vec::new() }
     }
 
     fn bone(&self, name: &str) -> Option<usize> { self.bones.iter().position(|b| b.name == name) }
@@ -414,6 +428,25 @@ impl CharModel {
             posed.push(if b.parent >= 0 { posed[b.parent as usize] * local } else { local });
         }
         posed.iter().zip(&self.bones).map(|(p, b)| *p * b.inv_bind).collect()
+    }
+    /// Skinning matrices directly from posed bone 4×4 matrices (row-vector layout from `Boarder_UpdatePose`
+    /// 0x129628 / `Boarder_BuildBoneMatrices` 0x2083f8, transformed into rider-local animation space) with the
+    /// scaled inverse-bind matrices `RiderSkin_Bind` 0x207198 builds (`S(scale) * inv_bind`). Extra child bones
+    /// beyond `posed_bones.len()` (goggles, eyes, hair) inherit their parent's posed matrix with scaled bind offset.
+    pub fn skin_bone_matrices(&self, posed_bones: &[[[f32; 4]; 4]], scale: f32) -> Vec<Mat4> {
+        let mut posed: Vec<Mat4> = Vec::with_capacity(self.bones.len());
+        let s_mat = Mat4::from_scale(Vec3::splat(scale));
+        for (i, b) in self.bones.iter().enumerate() {
+            let m = if let Some(mat) = posed_bones.get(i) {
+                Mat4::from_cols_array_2d(mat)
+            } else {
+                let mut local = b.local;
+                local.w_axis = (local.w_axis.truncate() * scale).extend(1.0);
+                if b.parent >= 0 { posed[b.parent as usize] * local } else { local }
+            };
+            posed.push(m);
+        }
+        posed.iter().zip(&self.bones).map(|(p, b)| *p * s_mat * b.inv_bind).collect()
     }
     /// The board follows its own animated node.
     pub fn skin_board(&self, s: &Sample) -> Vec<Mat4> {

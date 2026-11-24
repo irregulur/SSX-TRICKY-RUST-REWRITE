@@ -175,3 +175,245 @@ pub fn board_corners(bone: [V4; 4], class: u32, natural_stance: u32, scale: f32)
     let half = mul(bone[2], w * scale);
     [add(fwd, half), sub(fwd, half), add(rear, half), sub(rear, half)]
 }
+
+use crate::animcurve::sin_cos as sin_cos_ee;
+use crate::animseq::{div as div_ee, sqrt as sqrt_ee};
+use crate::pf::Mem;
+use crate::ps2f::F;
+
+type VF4 = [F; 4];
+type MF4 = [VF4; 4];
+
+fn rf(m: &Mem, a: u32) -> F {
+    F(f32::from_bits(m.r32(a)))
+}
+fn wf(m: &mut Mem, a: u32, v: F) {
+    m.w32(a, v.0.to_bits());
+}
+fn rv(m: &Mem, a: u32) -> VF4 {
+    [0, 1, 2, 3].map(|k| rf(m, a + 4 * k))
+}
+fn wv(m: &mut Mem, a: u32, v: VF4) {
+    for (k, x) in v.into_iter().enumerate() {
+        wf(m, a + 4 * k as u32, x);
+    }
+}
+fn rm(m: &Mem, a: u32) -> MF4 {
+    [0, 1, 2, 3].map(|r| rv(m, a + 0x10 * r))
+}
+fn wm(m: &mut Mem, a: u32, v: &MF4) {
+    for (r, row) in v.iter().enumerate() {
+        wv(m, a + 0x10 * r as u32, *row);
+    }
+}
+fn apply_f(a: &MF4, v: VF4) -> VF4 {
+    [0, 1, 2, 3].map(|i| ((a[0][i] * v[0] + a[1][i] * v[1]) + a[2][i] * v[2]) + a[3][i] * v[3])
+}
+fn mul_f(a: &MF4, b: &MF4) -> MF4 {
+    b.map(|row| apply_f(a, row))
+}
+fn dot4_f(a: VF4, b: VF4) -> F {
+    let p = [0, 1, 2, 3].map(|k| a[k] * b[k]);
+    ((p[0] + p[1]) + F(1.0) * p[2]) + F(1.0) * p[3]
+}
+fn cross_f(a: VF4, b: VF4) -> VF4 {
+    [a[1] * b[2] - b[1] * a[2], a[2] * b[0] - b[2] * a[0], a[0] * b[1] - b[0] * a[1], F(0.0)]
+}
+fn mul3x3_rows(a: [[F; 3]; 3], b: [[F; 3]; 3]) -> [[F; 3]; 3] {
+    // Matches 0x11aa80..0x11ae5c and 0x12a788..0x12ab60: out[r][c] = (b[0][c]*a[r][0] + b[1][c]*a[r][1]) + b[2][c]*a[r][2]
+    let mut out = [[F(0.0); 3]; 3];
+    for c in 0..3 {
+        for r in 0..3 {
+            out[r][c] = (b[0][c] * a[r][0] + b[1][c] * a[r][1]) + b[2][c] * a[r][2];
+        }
+    }
+    out
+}
+
+/// `Boarder_UpdateSkeleton` 0x12ae18(rider, on_snow): sets the board part's world matrix from `rider+0x4aa0` via
+/// `RiderSkin_SetRootMatrix` 0x2083d8; in ground motion (`rider+0x424 == 2`), tilts the board so its x row is
+/// orthogonal to `rider+0x2c0` (up) and, if `rider+0x1cc > 0`, shifts its position along `rider+0x2a0` (normal) ×
+/// `+0x1cc`; finally copies the 4×4 board bone world matrix to `rider+0x4a60` (`board_bone_frame`).
+pub fn update_skeleton(m: &mut Mem, rider: u32) {
+    crate::riderskin::set_root_matrix(m, rider + 0x79c, rider + 0x4aa0);
+    let board_part = m.r32(rider + 0x4498);
+    let board_mat = if board_part != 0 { m.r32(board_part + 4) } else { 0 };
+    if board_mat == 0 {
+        return;
+    }
+    if m.r32(rider + 0x424) == 2 {
+        let up = rv(m, rider + 0x2c0);
+        let x = rv(m, board_mat);
+        let axis = cross_f(up, x);
+        let alen = sqrt_ee(dot4_f(axis, axis));
+        if F(f32::from_bits(0x322b_cc77)) < alen {
+            let inv = div_ee(F(1.0), alen);
+            let n = axis.map(|v| v * inv);
+            let lim = F(f32::from_bits(0x3f7f_ff58));
+            let c_alen = if lim < alen { lim } else { alen };
+            let d = dot4_f(up, x);
+            let asin_v = crate::math::asin_ee(c_alen);
+            let half_pi = F(f32::from_bits(0x3fc9_0fdb));
+            let theta = if F(0.0) < d { -(half_pi - asin_v) } else { half_pi - asin_v };
+            let (s, c) = sin_cos_ee(theta);
+            let b = rm(m, board_mat);
+            let saved = [b[0], b[1], b[2], [F(0.0), F(0.0), F(0.0), F(1.0)]];
+            let (ax, ay, az) = (n[0], n[1], n[2]);
+            let one_c = F(1.0) - c;
+            let (f2, f3, f4) = (one_c * ax, one_c * ay, one_c * az);
+            let (f8, f5, f7) = (s * ax, s * ay, s * az);
+            let rot = [
+                [f2 * ax + c, f3 * ax - f7, f4 * ax + f5, F(0.0)],
+                [f2 * ay + f7, f3 * ay + c, f4 * ay - f8, F(0.0)],
+                [f2 * az - f5, f3 * az + f8, f4 * az + c, F(0.0)],
+                b[3],
+            ];
+            let res = mul_f(&rot, &saved);
+            wm(m, board_mat, &res);
+        }
+        let lift = rf(m, rider + 0x1cc);
+        if F(0.0) < lift {
+            let norm = rv(m, rider + 0x2a0);
+            let base = [F(0.0), F(0.0), F(0.0), F(1.0)];
+            let v = [0, 1, 2, 3].map(|k| base[k] + norm[k] * lift);
+            let b = rm(m, board_mat);
+            let p = apply_f(&b, v);
+            wv(m, board_mat + 0x30, p);
+        }
+    }
+    let b = rm(m, board_mat);
+    wm(m, rider + 0x4a60, &b);
+}
+
+/// Captures the rider's bind-pose foot-to-board 3×3 rotation matrices at `rider+0x3d0` (right foot, bone 15) and
+/// `rider+0x3f4` (left foot, bone 18) as `cBoarder::Init` 0x11a8b8..0x11ae5c computes them after posing clip
+/// `0x1ff` at identity: `foot_local = foot_rot * board_rot^T`.
+pub fn init_foot_bindings(m: &mut Mem, rider: u32, ident_addr: u32) {
+    crate::riderskin::set_root_matrix(m, rider + 0x79c, ident_addr);
+    crate::riderskin::set_skin_child_matrices(m, rider + 0x79c, ident_addr);
+    let body_part = m.r32(rider + 0x4494);
+    let board_part = m.r32(rider + 0x4498);
+    if body_part == 0 || board_part == 0 {
+        return;
+    }
+    let body_mats = m.r32(body_part + 4);
+    let board_mat = m.r32(board_part + 4);
+    let b = rm(m, board_mat);
+    let bt = [
+        [b[0][0], b[1][0], b[2][0]],
+        [b[0][1], b[1][1], b[2][1]],
+        [b[0][2], b[1][2], b[2][2]],
+    ];
+    for &(bone_off, dst_off) in &[(0x3c0u32, 0x3d0u32), (0x480u32, 0x3f4u32)] {
+        let f = rm(m, body_mats + bone_off);
+        let f3 = [[f[0][0], f[0][1], f[0][2]], [f[1][0], f[1][1], f[1][2]], [f[2][0], f[2][1], f[2][2]]];
+        let rel = mul3x3_rows(f3, bt);
+        for r in 0..3u32 {
+            for c in 0..3u32 {
+                wf(m, rider + dst_off + (r * 3 + c) * 4, rel[r as usize][c as usize]);
+            }
+        }
+    }
+}
+
+/// Applies the stored foot-to-board binding 3×3 matrices (`rider+0x3d0` -> bone 15 `r_foot` at `+0x3c0`,
+/// `rider+0x3f4` -> bone 18 `l_foot` at `+0x480`) against the current board world matrix (`Boarder_UpdatePose`
+/// 0x12a6c4..0x12abf4), keeping both boots locked flat to the snowboard bindings after 2-bone leg IK.
+pub fn apply_foot_bindings(m: &mut Mem, rider: u32) {
+    let body_part = m.r32(rider + 0x4494);
+    let board_part = m.r32(rider + 0x4498);
+    if body_part == 0 || board_part == 0 {
+        return;
+    }
+    let body_mats = m.r32(body_part + 4);
+    let board_mat = m.r32(board_part + 4);
+    let b = rm(m, board_mat);
+    let b3 = [[b[0][0], b[0][1], b[0][2]], [b[1][0], b[1][1], b[1][2]], [b[2][0], b[2][1], b[2][2]]];
+    for &(src_off, bone_off) in &[(0x3d0u32, 0x3c0u32), (0x3f4u32, 0x480u32)] {
+        let mut l = [[F(0.0); 3]; 3];
+        for r in 0..3u32 {
+            for c in 0..3u32 {
+                l[r as usize][c as usize] = rf(m, rider + src_off + (r * 3 + c) * 4);
+            }
+        }
+        let rot = mul3x3_rows(l, b3);
+        let dst = body_mats + bone_off;
+        for r in 0..3u32 {
+            for c in 0..3u32 {
+                wf(m, dst + r * 0x10 + c * 4, rot[r as usize][c as usize]);
+            }
+        }
+    }
+}
+
+/// Full `Boarder_UpdatePose` 0x129628 for normal riders (`stats+0x78 == 0`):
+/// 1. Builds `rider+0x4aa0` via [`board_frame`].
+/// 2. Runs [`update_skeleton`] (`Boarder_UpdateSkeleton` 0x12ae18) -> board world matrix & `rider+0x4a60`.
+/// 3. If `skin_child`, poses all body bones by FK (`Boarder_SetSkinChildMatrices` 0x2083e8); else shifts
+///    `rider+0x4ad0` by `x1c0 * scale * up` in motions 2/4, resolves left/right board binding world targets via
+///    `Boarder_GetBoneWorldPos` 0x208398 (part 1, points 1 and 0), runs `Boarder_BuildBoneMatrices` 0x2083f8
+///    (FK bones 0..12 + 2-bone leg IK on 16..18 and 13..15), and locks both feet via [`apply_foot_bindings`].
+/// 4. Moves `rider+0x4ad0` to world pivot (`apply(f, pivot)`) and writes `board_corners` to `rider+0x5760`.
+/// Returns `(board_frame_before_pivot, board_frame_final, board_bone_frame)`.
+pub fn update_pose(
+    m: &mut Mem,
+    rider: u32,
+    p: &PoseIn,
+    skin_child: bool,
+    x1c0: f32,
+    natural_stance: u32,
+    scratch: u32,
+) -> ([[f32; 4]; 4], [[f32; 4]; 4], [[f32; 4]; 4]) {
+    let f0 = board_frame(p);
+    for (r, row) in f0.iter().enumerate() {
+        for (c, &v) in row.iter().enumerate() {
+            m.w32(rider + 0x4aa0 + 0x10 * r as u32 + 4 * c as u32, v.to_bits());
+        }
+    }
+    let bone_ix = m.r32(rider + 0x44d8);
+    let piv_at = rider + bone_ix.wrapping_mul(0x394) + 0x8c8;
+    let pivot = [
+        f32::from_bits(m.r32(piv_at)),
+        f32::from_bits(m.r32(piv_at + 4)),
+        f32::from_bits(m.r32(piv_at + 8)),
+    ];
+    update_skeleton(m, rider);
+    let mut f = f0;
+    if skin_child {
+        crate::riderskin::set_skin_child_matrices(m, rider + 0x79c, rider + 0x4aa0);
+    } else {
+        let p1 = [pivot[0], pivot[1], pivot[2], 1.0];
+        let mut b = p1;
+        if p.motion == 2 || p.motion == 4 {
+            for k in 0..4 {
+                b[k] = b[k] + (p.up[k] * x1c0) * p.lean_scale;
+            }
+        }
+        let mut c = [0.0f32; 4];
+        for k in 0..4 {
+            c[k] = (b[k] - p1[k]) + [0.0, 0.0, 0.0, 1.0][k];
+        }
+        f[3] = apply(f, c);
+        for (k, &v) in f[3].iter().enumerate() {
+            m.w32(rider + 0x4ad0 + 4 * k as u32, v.to_bits());
+        }
+        crate::limbik::boarder_bone_world_pos(m, scratch, rider + 0x79c, 1, 1, rider + 0x4a60);
+        crate::limbik::boarder_bone_world_pos(m, scratch + 0x10, rider + 0x79c, 1, 0, rider + 0x4a60);
+        crate::limbik::build_bone_matrices(m, rider + 0x79c, rider + 0x4aa0, scratch, scratch + 0x10);
+        apply_foot_bindings(m, rider);
+    }
+    f[3] = apply(f, [pivot[0], pivot[1], pivot[2], 1.0]);
+    for (k, &v) in f[3].iter().enumerate() {
+        m.w32(rider + 0x4ad0 + 4 * k as u32, v.to_bits());
+    }
+    let bone_frame: [[f32; 4]; 4] = std::array::from_fn(|r| {
+        std::array::from_fn(|c| f32::from_bits(m.r32(rider + 0x4a60 + 0x10 * r as u32 + 4 * c as u32)))
+    });
+    let corners = board_corners(bone_frame, p.class, natural_stance, p.lean_scale);
+    for (r, row) in corners.iter().enumerate() {
+        for (c, &v) in row.iter().enumerate() {
+            m.w32(rider + 0x5760 + 0x10 * r as u32 + 4 * c as u32, v.to_bits());
+        }
+    }
+    (f0, f, bone_frame)
+}

@@ -614,7 +614,49 @@ impl Rider {
         anim.set_stance(self.switch as u32);
         let init_clip = if self.grounded { 0x1ff } else { 0x223 };
         anim.play_clip(init_clip, 0, 5, &mut crate::rand::rand_game);
+        anim.sync_rider(&self.anim_inputs());
+        anim.update_layers(0.0, &mut crate::rand::rand_game);
+        let pin = self.pose_update_in();
+        anim.update_pose(&pin);
         self.anim = Some(anim);
+    }
+
+    /// Build [`crate::animhost::PoseUpdateIn`] from the rider's current physics & orientation state.
+    pub(crate) fn pose_update_in(&self) -> crate::animhost::PoseUpdateIn {
+        let o = match &self.att {
+            Some((o, _)) => *o,
+            None => orient::placed_attitude(placed_heading(self.yaw), None),
+        };
+        let motion = if self.reset.is_some() {
+            4
+        } else if self.crashed > 0.0 {
+            if self.motion == 6 { 6 } else { 5 }
+        } else if self.rail.is_some() {
+            3
+        } else if self.grounded {
+            2
+        } else {
+            1
+        };
+        crate::animhost::PoseUpdateIn {
+            quat: o.q,
+            steer: self.steer,
+            motion,
+            state: self.ctl,
+            class: self.stats.kind as u32,
+            natural_stance: self.data.goofy as u32,
+            pos: ground_tick::to_game(self.pos, 100.0, 1.0),
+            up: self.up,
+            normal: ground_tick::game_dir(self.normal),
+            height: self.body_height,
+            side: o.side,
+            lean: self.lean[0],
+            scale: self.stats.scale,
+            spin: self.spin,
+            flip: self.flip,
+            x1c0: 0.0,
+            x1cc: 0.0,
+        }
     }
 
     /// Build the `AnimMode_*` (4..11) rider inputs from the rider's current state.
@@ -1465,11 +1507,15 @@ impl Rider {
             a.flush_ended(&mut crate::rand::rand_game);
         }
         vf7::tick(self, world, rails, input, ctl_input, dt, resetting);
-        // `cPostAI::vf1` 0x114780 -> `Boarder_UpdateAnimLayers` 0x117180 (`AnimCtl_UpdateLayers` 0x15f390 -> `AnimCtl_BlendPose` 0x15f7c8)
+        // `cPostAI::vf1` 0x114780 -> `Boarder_UpdateAnimLayers` 0x117180 (`AnimCtl_UpdateLayers` 0x15f390 ->
+        // `AnimCtl_BlendPose` 0x15f7c8) -> `Boarder_UpdatePose` 0x129628 -> `Boarder_UpdateSkeleton` 0x12ae18 ->
+        // `CollBody_UpdateFromBones` 0x2361b0 (rows G5d2–G5d4).
         if let Some(a) = self.anim.clone() {
             let inp = self.anim_inputs();
             a.sync_rider(&inp);
             a.update_layers(dt * 60.0, &mut crate::rand::rand_game);
+            let pin = self.pose_update_in();
+            a.update_pose(&pin);
         }
         self.anim_tick = self.anim_tick.wrapping_add(1);
         // `cPlayer::vf7` 0x153390: after `cBoarder::vf7` 0x117198, update the player's vibration object
@@ -1964,6 +2010,10 @@ impl Rider {
             None => orient::placed_attitude(placed_heading(self.yaw), None),
         };
         let motion = if self.crashed > 0.0 { 5 } else if self.rail.is_some() { 3 } else if self.grounded { 2 } else { 1 };
+        let (spin, flip, pivot_z) = match &self.anim {
+            Some(a) => (self.spin, self.flip, a.pivot_pos()[2]),
+            None => (0.0, 0.0, 0.0),
+        };
         crate::pose::board_frame(&crate::pose::PoseIn {
             quat: o.q,
             steer: self.steer,
@@ -1975,9 +2025,9 @@ impl Rider {
             side: o.side,
             lean: self.lean[0],
             lean_scale: self.stats.scale,
-            spin: 0.0,
-            flip: 0.0,
-            pivot_z: 0.0,
+            spin,
+            flip,
+            pivot_z,
         })
     }
     /// The take-off into the spin state as the game makes it (row G1a5b3b1): `Takeoff_SetSpinRates` 0x126e30
@@ -2037,12 +2087,16 @@ impl Rider {
             return;
         }
         let Some((o, y)) = self.att else { return };
+        let bone = match &self.anim {
+            Some(a) => a.pivot_pos(),
+            None => [0.0, 0.0, 91.7 * self.stats.scale],
+        };
         let mut r = crate::spin::SpinRider {
             quat: o.q,
             spin: self.spin,
             flip: self.flip,
             pos: ground_tick::to_game(self.pos, 100.0, 1.0),
-            bone: [0.0, 0.0, 91.7 * self.stats.scale],
+            bone,
             ..Default::default()
         };
         if let Some(o2) = crate::spin::spin_exit(&mut r) {
@@ -2351,12 +2405,17 @@ impl Rider {
     /// away ([`crate::air_motion::wall_push`], [`crate::air_motion::wall_bump`]), or the crash. STANDIN: the body
     /// on the bind pose ([`Rider::bind_body`]'s, row G5), and the crash as the port's air-wall wipe-out
     fn air_wall(&mut self, world: &CollisionWorld, course: &crate::course_ground::CourseGround) {
-        let o = match &self.att {
-            Some((o, _)) => *o,
-            None => orient::placed_attitude(placed_heading(self.yaw), None),
+        let mut body = match self.anim.as_ref().and_then(|a| a.pose_snapshot()) {
+            Some(snap) => snap.coll_body,
+            None => {
+                let o = match &self.att {
+                    Some((o, _)) => *o,
+                    None => orient::placed_attitude(placed_heading(self.yaw), None),
+                };
+                let up = self.board_frame()[2];
+                ground_tick::bind_body_at(ground_tick::to_game(self.pos, 100.0, 1.0), o.fwd, up, self.stats.scale)
+            }
         };
-        let up = self.board_frame()[2];
-        let mut body = ground_tick::bind_body_at(ground_tick::to_game(self.pos, 100.0, 1.0), o.fwd, up, self.stats.scale);
         body.x24 = 0xcf;
         let mut q = crate::worldboarder::WorldBoarder::new(&body, 0);
         let (t, h) = course.ray_cast(&mut q, world.showoff, None, &|i| world.course_skips(i));
@@ -2401,6 +2460,9 @@ impl Rider {
     /// the bone on the rail, and with y up `Rail_TryCapture`'s window, 30 cm along y ± 45, takes a board from 15 cm
     /// over the rail to 75 cm under it, and one falling onto it passes its "not passed" test)
     pub fn board_bone_frame(&self) -> [[f32; 4]; 4] {
+        if let Some(snap) = self.anim.as_ref().and_then(|a| a.pose_snapshot()) {
+            return snap.board_bone_frame;
+        }
         let f = self.board_frame();
         [f[1], f[2], f[0], f[3]]
     }
