@@ -238,7 +238,7 @@ address,size,name,system,status
 0x1166f0,184,Boarder_GatherWorldEmitters,boarder,checked
 0x1167a8,124,StaticInit_AIWorld2,ai,checked
 0x116828,360,cBoarder::cBoarder,boarder,ported
-0x116990,132,cBoarder::~cBoarder,boarder,not started
+0x116990,132,cBoarder::~cBoarder,boarder,checked
 0x116a18,76,Boarder_ResetSkin,boarder,ported
 0x116a68,28,Boarder_SetRiderInfo,boarder,ported
 0x116a88,44,Boarder_InitSkinMem,boarder,ported
@@ -265,7 +265,7 @@ address,size,name,system,status
 0x11a098,688,Boarder_TeleportToInstance,boarder,checked
 0x11a348,1100,cBoarder::vf10_11a348,boarder,checked
 0x11a798,8,cBoarder::EmitBrakeSpray,boarder,ported
-0x11a7a0,8,cBoarder::vf12_11a7a0,boarder,not started
+0x11a7a0,8,cBoarder::vf12_11a7a0,boarder,checked
 0x11a7a8,8,Boarder_ResetRender,boarder,ported
 0x11a7b0,32,Boarder_LaunchFromGate,boarder,checked
 0x11a7d0,108,Boarder_SetStartState,boarder,checked
@@ -332,84 +332,84 @@ address,size,name,system,status
 0x11f628,324,cBoarderHandler::__tf,runtime,host
 0x11f770,4648,cBoarderHandler::~cBoarderHandler,boarder,not started
 0x120998,84,cWipeOutRecoverControl::__tf,runtime,host
-0x1209f0,224,cWipeOutRecoverControl::~cWipeOutRecoverControl,boarder,not started
+0x1209f0,224,cWipeOutRecoverControl::~cWipeOutRecoverControl,boarder,checked
 0x120ad0,84,cWipeOutControl::__tf,runtime,host
-0x120b28,224,cWipeOutControl::~cWipeOutControl,boarder,not started
+0x120b28,224,cWipeOutControl::~cWipeOutControl,boarder,checked
 0x120c08,84,cGetupFromSitControl::__tf,runtime,host
-0x120c60,224,cGetupFromSitControl::~cGetupFromSitControl,boarder,not started
+0x120c60,224,cGetupFromSitControl::~cGetupFromSitControl,boarder,checked
 0x120d40,84,cSitAndWaitControl::__tf,runtime,host
-0x120d98,224,cSitAndWaitControl::~cSitAndWaitControl,boarder,not started
+0x120d98,224,cSitAndWaitControl::~cSitAndWaitControl,boarder,checked
 0x120e78,92,cSpinControl::__tf,runtime,host
-0x120ed8,224,cSpinControl::~cSpinControl,boarder,not started
+0x120ed8,224,cSpinControl::~cSpinControl,boarder,checked
 0x120fb8,92,cRailSlideControl::__tf,runtime,host
-0x121018,224,cRailSlideControl::~cRailSlideControl,boarder,not started
+0x121018,224,cRailSlideControl::~cRailSlideControl,boarder,checked
 0x1210f8,92,cPrewindControl::__tf,runtime,host
-0x121158,224,cPrewindControl::~cPrewindControl,boarder,not started
+0x121158,224,cPrewindControl::~cPrewindControl,boarder,checked
 0x121238,92,cNaturalAirControl::__tf,runtime,host
-0x121298,224,cNaturalAirControl::~cNaturalAirControl,boarder,not started
+0x121298,224,cNaturalAirControl::~cNaturalAirControl,boarder,checked
 0x121378,92,cLandNormalControl::__tf,runtime,host
-0x1213d8,224,cLandNormalControl::~cLandNormalControl,boarder,not started
+0x1213d8,224,cLandNormalControl::~cLandNormalControl,boarder,checked
 0x1214b8,84,cLandHardControl::__tf,runtime,host
-0x121510,224,cLandHardControl::~cLandHardControl,boarder,not started
+0x121510,224,cLandHardControl::~cLandHardControl,boarder,checked
 0x1215f0,84,cJumpControl::__tf,runtime,host
-0x121648,224,cJumpControl::~cJumpControl,boarder,not started
+0x121648,224,cJumpControl::~cJumpControl,boarder,checked
 0x121728,84,cGateLaunchControl::__tf,runtime,host
-0x121780,224,cGateLaunchControl::~cGateLaunchControl,boarder,not started
+0x121780,224,cGateLaunchControl::~cGateLaunchControl,boarder,checked
 0x121860,92,cGateAnticipateControl::__tf,runtime,host
-0x1218c0,224,cGateAnticipateControl::~cGateAnticipateControl,boarder,not started
+0x1218c0,224,cGateAnticipateControl::~cGateAnticipateControl,boarder,checked
 0x1219a0,92,cLessonWaitControl::__tf,runtime,host
-0x121a00,224,cLessonWaitControl::~cLessonWaitControl,boarder,not started
+0x121a00,224,cLessonWaitControl::~cLessonWaitControl,boarder,checked
 0x121ae0,84,cGate2BaseControl::__tf,runtime,host
-0x121b38,224,cGate2BaseControl::~cGate2BaseControl,boarder,not started
+0x121b38,224,cGate2BaseControl::~cGate2BaseControl,boarder,checked
 0x121c18,92,cResetWaitControl::__tf,runtime,host
-0x121c78,224,cResetWaitControl::~cResetWaitControl,boarder,not started
+0x121c78,224,cResetWaitControl::~cResetWaitControl,boarder,checked
 0x121d58,92,cFinishLineControl::__tf,runtime,host
-0x121db8,224,cFinishLineControl::~cFinishLineControl,boarder,not started
+0x121db8,224,cFinishLineControl::~cFinishLineControl,boarder,checked
 0x121e98,84,cFakieCruiseControl::__tf,runtime,host
-0x121ef0,224,cFakieCruiseControl::~cFakieCruiseControl,boarder,not started
+0x121ef0,224,cFakieCruiseControl::~cFakieCruiseControl,boarder,checked
 0x121fd0,84,cChangeFakieControl::__tf,runtime,host
-0x122028,224,cChangeFakieControl::~cChangeFakieControl,boarder,not started
+0x122028,224,cChangeFakieControl::~cChangeFakieControl,boarder,checked
 0x122108,92,cCruiseControl::__tf,runtime,host
-0x122168,224,cCruiseControl::~cCruiseControl,boarder,not started
+0x122168,224,cCruiseControl::~cCruiseControl,boarder,checked
 0x122248,92,cBumpControl::__tf,runtime,host
-0x1222a8,224,cBumpControl::~cBumpControl,boarder,not started
+0x1222a8,224,cBumpControl::~cBumpControl,boarder,checked
 0x122388,84,cVoidControl::__tf,runtime,host
-0x1223e0,224,cVoidControl::~cVoidControl,boarder,not started
+0x1223e0,224,cVoidControl::~cVoidControl,boarder,checked
 0x1224c0,92,cWipeOutRecoverMotion::__tf,runtime,host
-0x122520,224,cWipeOutRecoverMotion::~cWipeOutRecoverMotion,boarder,not started
+0x122520,224,cWipeOutRecoverMotion::~cWipeOutRecoverMotion,boarder,checked
 0x122600,92,cWipeOutMotion::__tf,runtime,host
-0x122660,224,cWipeOutMotion::~cWipeOutMotion,boarder,not started
+0x122660,224,cWipeOutMotion::~cWipeOutMotion,boarder,checked
 0x122740,84,cStaticMotion::__tf,runtime,host
-0x122798,224,cStaticMotion::~cStaticMotion,boarder,not started
+0x122798,224,cStaticMotion::~cStaticMotion,boarder,checked
 0x122878,92,cRailSlideMotion::__tf,runtime,host
-0x1228d8,224,cRailSlideMotion::~cRailSlideMotion,boarder,not started
+0x1228d8,224,cRailSlideMotion::~cRailSlideMotion,boarder,checked
 0x1229b8,92,cGroundMotion::__tf,runtime,host
-0x122a18,224,cGroundMotion::~cGroundMotion,boarder,not started
+0x122a18,224,cGroundMotion::~cGroundMotion,boarder,checked
 0x122af8,92,cAirMotion::__tf,runtime,host
-0x122b58,224,cAirMotion::~cAirMotion,boarder,not started
-0x122d60,8,cBoarder::vf20_122d60,boarder,not started
-0x122d68,8,cBoarder::vf19_122d68,boarder,not started
-0x122d70,8,cBoarder::vf18_122d70,boarder,not started
-0x122d78,8,cBoarder::vf17_122d78,boarder,not started
-0x122d80,8,cBoarder::vf16_122d80,boarder,not started
-0x122d88,8,cBoarder::vf15_122d88,boarder,not started
-0x122d90,8,cBoarder::vf14_122d90,boarder,not started
-0x122e20,16,cBoarder::vf13_122e20,boarder,not started
-0x122e50,8,cBoarder::vf9_122e50,boarder,not started
+0x122b58,224,cAirMotion::~cAirMotion,boarder,checked
+0x122d60,8,cBoarder::vf20_122d60,boarder,checked
+0x122d68,8,cBoarder::vf19_122d68,boarder,checked
+0x122d70,8,cBoarder::vf18_122d70,boarder,checked
+0x122d78,8,cBoarder::vf17_122d78,boarder,checked
+0x122d80,8,cBoarder::vf16_122d80,boarder,checked
+0x122d88,8,cBoarder::vf15_122d88,boarder,checked
+0x122d90,8,cBoarder::vf14_122d90,boarder,checked
+0x122e20,16,cBoarder::vf13_122e20,boarder,checked
+0x122e50,8,cBoarder::vf9_122e50,boarder,checked
 0x122eb0,92,cBoarder::__tf,runtime,host
 0x122f10,180,Boarder_InitEaseRecords,boarder,checked
-0x122fc8,8,cBoarder::vf6_122fc8,boarder,not started
-0x122fd0,8,cBoarder::vf5_122fd0,boarder,not started
-0x122fd8,8,cBoarder::vf4_122fd8,boarder,not started
-0x122fe0,8,cBoarder::vf3_122fe0,boarder,not started
-0x122fe8,8,cBoarder::vf2_122fe8,boarder,not started
-0x122ff0,8,cBoarder::vf1_122ff0,boarder,not started
-0x122ff8,36,cBoarderCache::~cBoarderCache,boarder,not started
+0x122fc8,8,cBoarder::vf6_122fc8,boarder,checked
+0x122fd0,8,cBoarder::vf5_122fd0,boarder,checked
+0x122fd8,8,cBoarder::vf4_122fd8,boarder,checked
+0x122fe0,8,cBoarder::vf3_122fe0,boarder,checked
+0x122fe8,8,cBoarder::vf2_122fe8,boarder,checked
+0x122ff0,8,cBoarder::vf1_122ff0,boarder,checked
+0x122ff8,36,cBoarderCache::~cBoarderCache,boarder,checked
 0x123020,64,cBoarderCache::__tf,runtime,host
 0x123060,56,RiderSkin_InitMem,render,not started
 0x123098,8,BroadphaseProxy_SetBoxFromMinMax,world,ported
-0x1230a0,28,Score_Destruct,scoring,not started
-0x1230c0,28,AirPredict_Destruct,boarder,not started
+0x1230a0,28,Score_Destruct,scoring,checked
+0x1230c0,28,AirPredict_Destruct,boarder,checked
 0x1230e0,16,EaseRecord_Init,boarder,ported
 0x1231d8,44,Vec4_ScaleCopy4,common,checked
 0x123278,80,cBoarderState::__tf,runtime,host
@@ -4212,7 +4212,7 @@ address,size,name,system,status
 0x236050,212,CollBody_InitRider,wipeout,checked
 0x236128,8,CollBody_SetSkeleton,wipeout,not started
 0x236130,96,CollBody_Copy,wipeout,not started
-0x236190,28,CollBody_Destruct,wipeout,not started
+0x236190,28,CollBody_Destruct,wipeout,checked
 0x2361b0,660,CollBody_UpdateFromBones,wipeout,checked
 0x236448,80,CollBody_Translate,wipeout,checked
 0x236498,152,CollBody_Transform,wipeout,checked

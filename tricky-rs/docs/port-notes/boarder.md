@@ -1993,3 +1993,21 @@ counts at +8 (buttons), +0xc (grabs), +0x10 (axes); pairs of words, 8 bytes a pa
 read the count again after each `Pad_ParseButtonNames(cfg, list)`. `cPadDevice` (table 0x385868 at +0x38): +0x30 =
 -1, +8 = 1, +0xc..+0x34 zero; its vf1 answers 0, vf2 0.0, vf3..vf7 nothing. `cPS2Device::~cPS2Device` closes its pad
 port (+0x3c, slot +0x40) first; its vf8 answers 0x2c.
+
+## The boarder's destructors and empty virtuals (row G1x; `game/src/boarder_life.rs`, `tests/boarder_life.rs`, proven)
+
+Checked in the runner (14,700 cases, 13 of 13 mutants; one more, the boarder's own table written before the cache's,
+is equivalent: nothing reads it in between).
+- The 22 states' and 6 motions' destructors (0x1209f0..0x122b58, 224 bytes each) are one gcc body for a class with
+  a virtual base (the boarder). Each differs only in its table (0x366300..0x367590, 0xb0 apart), where the object
+  keeps the boarder's address (+0, +0xc, +0x10, +0x14, +0x18, +0x20, +0x60, +0x70) and a distance (0x10..0x100).
+  The boarder's table becomes the class's. With `how` 0 the boarder instead gets a copy of that table on the stack
+  (0xb0 bytes at sp − 0xe0) with its first adjust moved by `object − (boarder − distance)`. So a destroyed state
+  leaves its boarder pointing into a dead stack frame, as in the game. Bit 1 destroys the boarder, bit 0 deletes
+  the object.
+- `cBoarder::~cBoarder` 0x116990: table 0x367640, `Boarder_ResetSkin(b, 1)`, then with 2 the score (+0x5820),
+  the air prediction (+0x57b0), the shape list (+0x4838), the skin (+0x79c) and the collision body (+0x470), then
+  `cBoarderCache::~cBoarderCache` 0x122ff8 (table 0x3676f0, deleted on bit 0). `Score_Destruct` 0x1230a0,
+  `AirPredict_Destruct` 0x1230c0 and `CollBody_Destruct` 0x236190 only delete on bit 0.
+- `cBoarder`'s small virtuals: vf6 0x122fc8 and vf5 0x122fd0 answer 0; vf13 0x122e20 answers 1.0. vf12, vf20..vf14,
+  vf9 and vf4..vf1 do nothing.
