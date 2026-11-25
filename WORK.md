@@ -88,7 +88,7 @@ matches the original.
 | C13 | World Circuit show-off: clock, checkpoints, medals | unowned | C0, E12 | | [repo] README: show-off medals "still mine" |
 | C14 | Single event, freeride and practice modes | unowned | C0, G9 | | [est] |
 | C16 | Unlockables: characters, outfits, boards, the hidden ones, and the button cheats | unowned | C12, E10 | | [repo] |
-| C11e | The tutorial in the app: game mode 6 on the `trick` course (the course's level files from the disc, E3a4, the mode switch in `main.rs`), the pad map swap at start and exit, and the lessons' effect on the trick book (C15) | any | C11b, C11c, C11d, E3a4 | | Gap of C11 |
+| C11e | The tutorial in the app: game mode 6 on the `trick` course (the course's level files from the disc, E3a4, the mode switch in `main.rs`), the pad map swap at start and exit, and the lessons' effect on the trick book (C15) | any | C11b, C11c, C11d, E3a4 | irregulur/neon (2026-11-24) | Gap of C11 |
 
 ## P4 Finishing
 
