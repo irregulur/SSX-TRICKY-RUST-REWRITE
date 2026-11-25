@@ -4291,16 +4291,16 @@ address,size,name,system,status
 0x23c7c8,76,File_GetUnpackedSize,files,ported
 0x23c818,184,File_DecompressBuffer,files,ported
 0x23c8d0,252,cAsyncBigFile::vf10_23c8d0,files,checked
-0x23c9d0,56,cMemoryBigFile::cMemoryBigFile,files,not started
-0x23ca08,72,cMemoryBigFile::~cMemoryBigFile,files,not started
-0x23ca50,32,cMemoryBigFile::vf7_23ca50,files,not started
-0x23ca70,48,cMemoryBigFile::vf1_23ca70,files,not started
-0x23caa0,56,cMemoryBigFile::vf2_23caa0,files,not started
-0x23cad8,152,cMemoryBigFile::vf10_23cad8,files,not started
-0x23cb70,8,cMemoryBigFile::vf6_23cb70,files,not started
-0x23cb78,8,cMemoryBigFile::vf11_23cb78,files,not started
-0x23cb80,564,cMemoryBigFile::vf12_23cb80,files,not started
-0x23cdb8,568,cMemoryBigFile::vf13_23cdb8,files,not started
+0x23c9d0,56,cMemoryBigFile::cMemoryBigFile,files,checked
+0x23ca08,72,cMemoryBigFile::~cMemoryBigFile,files,checked
+0x23ca50,32,cMemoryBigFile::vf7_23ca50,files,checked
+0x23ca70,48,cMemoryBigFile::vf1_23ca70,files,checked
+0x23caa0,56,cMemoryBigFile::vf2_23caa0,files,checked
+0x23cad8,152,cMemoryBigFile::vf10_23cad8,files,checked
+0x23cb70,8,cMemoryBigFile::vf6_23cb70,files,checked
+0x23cb78,8,cMemoryBigFile::vf11_23cb78,files,checked
+0x23cb80,564,cMemoryBigFile::vf12_23cb80,files,checked
+0x23cdb8,568,cMemoryBigFile::vf13_23cdb8,files,checked
 0x23cff0,80,cMemoryBigFile::__tf,runtime,host
 0x23d080,8,cAsyncBigFile::vf5_23d080,files,checked
 0x23d088,64,cAsyncBigFile::__tf,runtime,host
@@ -6357,14 +6357,14 @@ address,size,name,system,status
 0x2cbc88,128,BIG_Identify,lib-big,ported
 0x2cbd08,184,BIG_HeaderSize,lib-big,ported
 0x2cbdc0,588,BIG_Lookup,lib-big,ported
-0x2cc010,28,BIG_Find,lib-big,not started
-0x2cc030,48,BIG_GetFileOffset,lib-big,not started
-0x2cc060,72,BIG_GetFileDataByIndex,lib-big,not started
-0x2cc0a8,48,BIG_GetFileData,lib-big,ported
+0x2cc010,28,BIG_Find,lib-big,checked
+0x2cc030,48,BIG_GetFileOffset,lib-big,checked
+0x2cc060,72,BIG_GetFileDataByIndex,lib-big,checked
+0x2cc0a8,48,BIG_GetFileData,lib-big,checked
 0x2cc0d8,72,BIG_FindEntry,lib-big,ported
-0x2cc120,144,BIG_GetFileDataList,lib-big,not started
+0x2cc120,144,BIG_GetFileDataList,lib-big,checked
 0x2cc1b0,184,BIG_GetFileCount,lib-big,ported
-0x2cc268,84,BIG_GetFileName,lib-big,not started
+0x2cc268,84,BIG_GetFileName,lib-big,checked
 0x2cc2c0,100,HostFs_Init,lib-file,ported
 0x2cc328,28,FileSys_SetRootThunk,lib-file,host
 0x2cc348,28,FileSys_GetRootThunk,lib-file,host

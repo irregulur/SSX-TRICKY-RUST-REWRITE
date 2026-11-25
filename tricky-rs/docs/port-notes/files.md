@@ -1166,3 +1166,31 @@ material, is equivalent because nothing in the block can change it). The resolve
 - Checked in the runner (19 functions; 6,300 cases on a random request table, the name maker, the read starter
   and `AsyncFile_Finish` stood in on both sides); 37 of 38 mutants. The survivor is equivalent: the constructor reads the
   file count again after `RecMutex_Create`, which does not change it.
+
+## The in-memory BIG file class and the BIG wrappers (row E2e; `game/src/memorybig.rs`, `tests/memorybig.rs`, proven)
+
+- `cMemoryBigFile` (table 0x3a4120; two made by `vf1_263b30` 0x263b30) is a `cAsyncBigFile` (row E2d) whose
+  archive is loaded whole: vf1 0x23ca70(f, name, w) puts `File_LoadAlloc` 0x2c8018(name, w) at +0x14, vf2 0x23caa0
+  frees it (`EAMem_Free`). It uses the same request table (vf15, vf14 are the base class's), but:
+  - vf6 (start reads) does nothing and vf11 (read?) answers 1;
+  - vf7 drops a leading `|` from the name (the base class adds one);
+  - vf12 0x23cb80(f, i, flags): the first time, the entry is found by the request's name (`BIG_Find` into two
+    words on the stack, 0 first: offset, size), +0x1c = archive + offset, then unpacked (`Compress_DecodeApi`)
+    when `Compress_UnpackedSizeApi` gives a size, else copied (the entry's size), into memory got as in the base
+    class (pool on 0x40000000, else `EAMem_Alloc` named 0x3a4110, filled with 0 or 0xdeadc0ed when it comes). +0x1c
+    is cleared (nothing freed: it points into the archive) and the memory kept at +0x20;
+  - vf13 0x23cdb8(f, i, flags, name): 0 when +0x20 is set; else the same, handed over (+0x20 left 0). The `name`
+    argument is not used: the memory is always named 0x3a4110;
+  - vf10 0x23cad8(f, i): one holder fewer; at none, the data freed (`Mem_Free`) and cleared, the request zeroed
+    (no lock, no read to stop).
+  - The destructor clears +0, frees the archive, then runs the base class's destructor.
+- The BIG wrappers (over `BIG_Lookup` 0x2cbdc0(big, name, index, &offset, &size), which answers the entry's name or
+  0): `BIG_Find` 0x2cc010 passes its five arguments on. `BIG_GetFileOffset` 0x2cc030(big, name): the offset (0 first,
+  no lookup without a name). `BIG_GetFileData` 0x2cc0a8: big + offset, or 0 for offset 0. `BIG_GetFileDataByIndex`
+  0x2cc060: big + offset when found, else 0. Both offset lookups pass gp − 0x7f90 (0x3bb960) for the size, a word
+  nobody reads. `BIG_GetFileDataList` 0x2cc120(big, "a,b,c", out): each name's data into the words from `out`,
+  each comma made 0 for the lookup and put back. `BIG_GetFileName` 0x2cc268(big, index, out): the name copied,
+  `out` answered; else `out` emptied and 0.
+- Checked in the runner (16 functions, 4,800 cases; `BIG_Lookup` stood in on both sides: it answers a name or 0 and
+  fills the offset and size words it is given when it finds the entry; the stack starts
+  with junk so the cleared words show); 29 of 29 mutants.

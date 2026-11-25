@@ -209,6 +209,7 @@ pub mod course_resolve;
 pub mod patch_cache;
 pub mod course_dma;
 pub mod asyncbig;
+pub mod memorybig;
 pub mod effects;
 pub mod emitter;
 pub mod impact;

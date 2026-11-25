@@ -59,7 +59,8 @@ pub const NAME: u32 = 0x3a4110;
 /// What fresh allocations are filled with when the flags' top bit is clear
 pub const FILL: u32 = 0xdead_c0ed;
 
-fn req(i: u32) -> u32 {
+/// Request `i`'s address
+pub fn req(i: u32) -> u32 {
     REQUESTS.wrapping_add(i.wrapping_mul(REQUEST))
 }
 
@@ -73,7 +74,7 @@ fn vcall(m: &mut Mem, e: &mut dyn BigEnv, f: u32, off: u32, rest: &[u32]) -> u32
 }
 
 /// `strcpy` 0x2fd14c
-fn strcpy(m: &mut Mem, to: u32, from: u32) {
+pub fn strcpy(m: &mut Mem, to: u32, from: u32) {
     let mut k = 0u32;
     loop {
         let b = m.r8(from.wrapping_add(k));
