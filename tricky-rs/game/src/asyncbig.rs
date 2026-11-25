@@ -1,4 +1,5 @@
-//! The async BIG file class (`cAsyncBigFile`, board row E2d) and the BIG archive's reset. Every `cAsyncBigFile`
+//! The async BIG file class (`cAsyncBigFile`, board row E2d) and the BIG archive's init, reset, open, close and
+//! delete, the request table's clear and the read buffers' unpacking (row E2g). Every `cAsyncBigFile`
 //! shares one table of 100 requests (0x5c bytes each at 0x343a58) and one lock (0x343a50, made by the first file and
 //! destroyed by the last, counted at 0x343a54). A request:
 //!
@@ -112,6 +113,87 @@ pub fn archive_reset(m: &mut Mem, e: &mut dyn BigEnv, a: u32) {
     m.w32(a + 0x88, u32::MAX);
     e.call(m, EAMEM_SET, &[a + 4, 0, 0x81]);
     m.w32(a, 0);
+}
+
+/// `FileSys_OpenSync`, `FileSys_MountBig`, `FileSys_UnmountBig`, `memset`
+pub const FS_OPEN_SYNC: u32 = 0x2c9018;
+pub const FS_MOUNT_BIG: u32 = 0x2c8f50;
+pub const FS_UNMOUNT_BIG: u32 = 0x2c8fc0;
+pub const MEMSET: u32 = 0x2fb468;
+/// The memory flags word (0x3bb978) an archive's open sets to its flags for the while (what the word does is
+/// inferred: `game_helpers::QUIET`)
+pub const MEM_FLAGS: u32 = 0x3bb978;
+
+/// `BigArchive_Delete` 0x23bb98(a, flags): closed; deleted with flag 1 (`Mem_Delete`)
+pub fn archive_delete(m: &mut Mem, e: &mut dyn BigEnv, a: u32, flags: u32) {
+    archive_close(m, e, a);
+    if flags & 1 != 0 {
+        e.call(m, MEM_DELETE, &[a]);
+    }
+}
+
+/// `BigArchive_Open` 0x23bc28(a, name, flags): the name copied to +4, then with the memory flags word set to
+/// `flags`: opened (`FileSys_OpenSync`(+4, 100)) and, when it is, mounted (`FileSys_MountBig`(+4, flags, 100,
+/// +0x88)); +0 whether both went (0 or 1), the word put back; +0
+pub fn archive_open(m: &mut Mem, e: &mut dyn BigEnv, a: u32, name: u32, flags: u32) -> u32 {
+    strcpy(m, a + 4, name);
+    let old = m.r32(MEM_FLAGS);
+    m.w32(MEM_FLAGS, flags);
+    let ok = e.call(m, FS_OPEN_SYNC, &[a + 4, 0x64]) != 0;
+    m.w32(a, ok as u32);
+    if ok {
+        let ok = e.call(m, FS_MOUNT_BIG, &[a + 4, flags, 0x64, a + 0x88]) != 0;
+        m.w32(a, ok as u32);
+    }
+    m.w32(MEM_FLAGS, old);
+    m.r32(a)
+}
+
+/// `BigArchive_Close` 0x23bcc0(a): when open (+0), unmounted (`FileSys_UnmountBig`(+0x88, 100)); reset; whether
+/// it unmounted (0 when not open)
+pub fn archive_close(m: &mut Mem, e: &mut dyn BigEnv, a: u32) -> u32 {
+    let mut ok = 0;
+    if m.r32(a) != 0 {
+        ok = (e.call(m, FS_UNMOUNT_BIG, &[m.r32(a + 0x88), 0x64]) != 0) as u32;
+    }
+    archive_reset(m, e, a);
+    ok
+}
+
+/// `BigFile_ClearTable` 0x23be28: the request table zeroed (`memset`, 0x23f0 bytes: 100 requests of 0x5c)
+pub fn clear_table(m: &mut Mem, e: &mut dyn BigEnv) {
+    e.call(m, MEMSET, &[REQUESTS, 0, 0x23f0]);
+}
+
+/// `cAsyncBigFile::vf2` 0x23bea0 and `vf3` 0x23be98: nothing
+pub fn vf2() {}
+pub fn vf3() {}
+
+/// `File_GetUnpackedSize` 0x23c7c8(f, i): request `i`'s read buffer's (+0x1c) unpacked size
+/// (`Compress_UnpackedSizeApi`), or when it is not packed its size (`EAMem_GetSize`)
+pub fn unpacked_size(m: &mut Mem, e: &mut dyn BigEnv, i: u32) -> u32 {
+    let at = req(i).wrapping_add(0x1c);
+    let n = e.call(m, COMPRESS_UNPACKED_SIZE, &[m.r32(at)]);
+    if n != 0 {
+        return n;
+    }
+    e.call(m, EAMEM_GET_SIZE, &[m.r32(at)])
+}
+
+/// `File_DecompressBuffer` 0x23c818(f, i, dst): request `i`'s read buffer (+0x1c) unpacked into `dst`
+/// (`Compress_DecodeApi`) or, not packed, copied whole (`EAMem_GetSize`, `EAMem_Copy`); then freed (`EAMem_Free`)
+/// and +0x1c, +0x20 cleared
+pub fn decompress_buffer(m: &mut Mem, e: &mut dyn BigEnv, i: u32, dst: u32) {
+    let at = req(i).wrapping_add(0x1c);
+    if e.call(m, COMPRESS_UNPACKED_SIZE, &[m.r32(at)]) != 0 {
+        e.call(m, COMPRESS_DECODE, &[m.r32(at), dst]);
+    } else {
+        let n = e.call(m, EAMEM_GET_SIZE, &[m.r32(at)]);
+        e.call(m, EAMEM_COPY, &[dst, m.r32(at), n]);
+    }
+    e.call(m, EAMEM_FREE, &[m.r32(at)]);
+    m.w32(at, 0);
+    m.w32(req(i).wrapping_add(0x20), 0);
 }
 
 /// `cAsyncBigFile::cAsyncBigFile` 0x23bd10(f): its table, +0 = 1, +4 = 0, one more file on the lock (made by the

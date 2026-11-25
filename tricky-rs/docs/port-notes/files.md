@@ -1226,3 +1226,22 @@ material, is equivalent because nothing in the block can change it). The resolve
   second store into +0xc shows; the skin build logs the slot it is handed and sometimes clears one of its files);
   39 of 40 mutants. The survivor is equivalent: `BdrLoad_RequestRider` reads the word back from its stack for +0xc,
   where nothing else wrote.
+
+## The BIG archive's open, close and delete, the request table's clear, the read buffers (row E2g; `game/src/asyncbig.rs`, `tests/bigarchive.rs`, proven)
+
+- An archive (`BigArchive_Init` 0x23bb70, row E2d): +0 open, +4 its name (0x81 bytes), +0x88 the mount's handle.
+  `BigArchive_Open` 0x23bc28(a, name, flags): the name copied to +4 (`strcpy`); for the while, the word 0x3bb978
+  holds `flags` (the old value put back after; the word is read by the allocations, inferred); `FileSys_OpenSync`
+  0x2c9018(+4, 100), and only when that answers non-zero `FileSys_MountBig` 0x2c8f50(+4, flags, 100, +0x88); +0 is
+  1 when both went (written after each), and is the answer.
+- `BigArchive_Close` 0x23bcc0(a): when +0 is set, `FileSys_UnmountBig` 0x2c8fc0(+0x88's handle, 100); then
+  `BigArchive_Reset`; answers 1 when it unmounted (0 when it was not open). `BigArchive_Delete` 0x23bb98(a, flags):
+  closed, then `Mem_Delete` with flag 1.
+- `BigFile_ClearTable` 0x23be28: `memset` of the 100 requests (0x343a58, 0x23f0 bytes). `cAsyncBigFile` vf2
+  0x23bea0 and vf3 0x23be98 do nothing.
+- `File_GetUnpackedSize` 0x23c7c8(f, i): request `i`'s read buffer (+0x1c): `Compress_UnpackedSizeApi`, else (not
+  packed) `EAMem_GetSize`. `File_DecompressBuffer` 0x23c818(f, i, dst): the same choice, then
+  `Compress_DecodeApi`(buffer, dst) or `EAMem_Copy`(dst, buffer, size); the buffer freed (`EAMem_Free`), +0x1c and
+  +0x20 cleared. The file argument is not used in either.
+- Checked in the runner (8 functions, 4,000 cases; the file system, memory and compression calls stood in on both
+  sides; the opens and mounts log the flags word they see); 23 of 23 mutants.
