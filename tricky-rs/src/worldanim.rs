@@ -658,11 +658,11 @@ pub fn world_anim(
             let mode_name = match game.event {
                 ui::Event::Race => "RaceMode",
                 ui::Event::ShowOff => "ShowoffMode",
-                ui::Event::FreeRide => "FreerideMode",
+                ui::Event::FreeRide | ui::Event::Tutorial => "FreerideMode",
             };
             let ev = course.run_script_named(mode_name, &mut tricky_game::rand::rand_game);
             wa.apply_cell_events(ev, level, &mut anims, &mut world.0, &mut rails.0);
-            if game.event == ui::Event::FreeRide {
+            if matches!(game.event, ui::Event::FreeRide | ui::Event::Tutorial) {
                 let ev = course.run_script_named("NoCountdown", &mut tricky_game::rand::rand_game);
                 wa.apply_cell_events(ev, level, &mut anims, &mut world.0, &mut rails.0);
             }
@@ -711,7 +711,7 @@ pub fn world_anim(
     if r.state == RaceState::Countdown && !r.intro && game.screen == ui::Screen::Playing && r.countdown < 2.5 && !wa.counting {
         wa.counting = true;
         wa.ended_countdown = false;
-        if game.event != ui::Event::FreeRide {
+        if !matches!(game.event, ui::Event::FreeRide | ui::Event::Tutorial) {
             if let Some(course) = &course {
                 let name = if course.find_script("StartCountdown").is_some() { "StartCountdown" } else { "CountDownStart" };
                 let ev = course.run_script_named(name, &mut tricky_game::rand::rand_game);
@@ -724,7 +724,7 @@ pub fn world_anim(
     if wa.counting && !wa.ended_countdown && r.state == RaceState::Running {
         wa.ended_countdown = true;
         if let Some(course) = &course {
-            if game.event != ui::Event::FreeRide {
+            if !matches!(game.event, ui::Event::FreeRide | ui::Event::Tutorial) {
                 let ev = course.run_script_named("EndCountdown", &mut tricky_game::rand::rand_game);
                 wa.apply_cell_events(ev, level, &mut anims, &mut world.0, &mut rails.0);
             }

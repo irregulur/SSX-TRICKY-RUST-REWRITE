@@ -11,7 +11,7 @@ use bevy::prelude::*;
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Screen { Menu, Playing, Paused, Results }
 #[derive(Clone, Copy, PartialEq, Debug)]
-pub enum Event { Race, ShowOff, FreeRide }
+pub enum Event { Race, ShowOff, FreeRide, Tutorial }
 /// A circuit race is two heats and a final (`Circuit_AfterRaceAdvanceHeat`): the top three go through.
 pub const ROUND_COUNT: usize = 3;
 /// Show-off medal scores (gold, silver, bronze) and time limit (s) per track: the game's course table (0x332f28),
@@ -157,9 +157,9 @@ impl CareerRes {
     pub fn course(key: &str) -> Option<u32> {
         tricky_data::aip::big_name(key).and_then(tricky_game::courses::by_file).map(|c| c.number)
     }
-    /// The game mode of an event: a World Circuit race (4) or show-off (5), or freeride (7)
+    /// The game mode of an event: World Circuit race (4) or show-off (5), trick tutorial (6), or freeride (7)
     pub fn mode(event: Event) -> u32 {
-        match event { Event::Race => 4, Event::ShowOff => 5, Event::FreeRide => 7 }
+        match event { Event::Race => 4, Event::ShowOff => 5, Event::Tutorial => 6, Event::FreeRide => 7 }
     }
     /// The character in slot 0, if a player is in it
     fn slot_character(&self) -> Option<u32> {
@@ -398,6 +398,7 @@ impl CareerRes {
         );
         match event {
             Event::ShowOff => c.record_best_score(ch as usize, course as usize, score as i32),
+            Event::Tutorial => {}
             _ => {
                 if let Some(t) = table[player_pos].1 { c.record_best_time(ch as usize, course as usize, (t * 100.0) as i32); }
                 if event == Event::FreeRide { c.record_best_score(ch as usize, course as usize, score as i32); }
@@ -775,7 +776,7 @@ pub struct Game {
     pub text: crate::loc::GameText,
 }
 impl Default for Game {
-    fn default() -> Self { Self { screen: Screen::Menu, event: match std::env::var("TRICKY_EVENT").as_deref() { Ok("showoff") => Event::ShowOff, Ok("freeride") => Event::FreeRide, _ => Event::Race }, round: 0, points: 0, levels: None, rivals: None, attitude: Default::default(), lineup: true, since: 0.0, table: Vec::new(), place: 0, master: false, cursor: 0, pause_cursor: 0, row: 0, board: std::env::var("TRICKY_BOARD").ok().and_then(|b| b.parse().ok()).unwrap_or(0), track_step: 0, flow: tricky_game::fe_flow::Flow::new(), text: crate::loc::GameText::empty() } }
+    fn default() -> Self { Self { screen: Screen::Menu, event: match std::env::var("TRICKY_EVENT").as_deref() { Ok("showoff") => Event::ShowOff, Ok("freeride") => Event::FreeRide, Ok("tutorial") => Event::Tutorial, _ => Event::Race }, round: 0, points: 0, levels: None, rivals: None, attitude: Default::default(), lineup: true, since: 0.0, table: Vec::new(), place: 0, master: false, cursor: 0, pause_cursor: 0, row: 0, board: std::env::var("TRICKY_BOARD").ok().and_then(|b| b.parse().ok()).unwrap_or(0), track_step: 0, flow: tricky_game::fe_flow::Flow::new(), text: crate::loc::GameText::empty() } }
 }
 impl Game {
     pub fn opponents(&self) -> usize { if self.screen != Screen::Menu && self.event != Event::Race { 0 } else { HEAT - 1 } }
@@ -833,7 +834,7 @@ pub fn setup_ui(mut commands: Commands) {
 /// entries directly against the career block via `Career::trick_book_check` and `DATA/TUTORIAL/TRICKDEF.DAT`
 /// (`Trick_GetInfo` `0x154638`), pushing score message `0x11` and `RiderSpeech::TrickBookDone` (`Sfx_OnTrickBookDone`
 /// `0x2190f0`), and saving the career. Falls back to `book.check_fallback` when `TRICKY_DISC` is absent.
-pub fn trick_book(mut rider: ResMut<RiderRes>, lib: Res<CharLib>, mut book: ResMut<crate::book::Book>, game: Res<Game>, mut career: ResMut<CareerRes>) {
+pub fn trick_book(mut rider: ResMut<RiderRes>, lib: Res<CharLib>, mut book: ResMut<crate::book::Book>, game: Res<Game>, mut career: ResMut<CareerRes>, mut tutorial: ResMut<crate::tutorial::TutorialHost>) {
     let me = lib.chars.get(lib.player).map(|c| c.name.clone()).unwrap_or_default();
     let tb = game.text.trick_book();
     if book.defs.is_some() {
@@ -841,10 +842,16 @@ pub fn trick_book(mut rider: ResMut<RiderRes>, lib: Res<CharLib>, mut book: ResM
         if rider.0.trick_book_checks.is_empty() { return; }
         let ids: Vec<[u32; 2]> = std::mem::take(&mut rider.0.trick_book_checks);
         career.ensure_player(CareerRes::character(&me));
+        let lesson_trick = if game.event == Event::Tutorial { tutorial.active_trick() } else { None };
         let mut changed = false;
         for id in ids {
             let r = &mut rider.0;
-            let out = book.check_career(&mut career.0, &mut r.sc, id, true, None);
+            let out = book.check_career(&mut career.0, &mut r.sc, id, true, lesson_trick);
+            if out.lesson_done {
+                tutorial.on_trick_seen();
+                r.speech.push(tricky_game::rider::RiderSpeech::TrickBookDone);
+                r.trick_timer = r.trick_timer.max(3.0);
+            }
             if out.book_done {
                 changed = true;
                 r.speech.push(tricky_game::rider::RiderSpeech::TrickBookDone);
@@ -879,7 +886,7 @@ pub fn trick_book(mut rider: ResMut<RiderRes>, lib: Res<CharLib>, mut book: ResM
 }
 
 /// Menu and results input. Riding input is read in `ride`.
-pub fn menus(keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, time: Res<Time>, mut game: ResMut<Game>, mut lib: ResMut<CharLib>, mode: Res<Mode>, mut career: ResMut<CareerRes>, mut roster: ResMut<RosterRes>, list: Res<LevelList>, book: Res<crate::book::Book>) {
+pub fn menus(keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, time: Res<Time>, mut game: ResMut<Game>, mut lib: ResMut<CharLib>, mode: Res<Mode>, mut career: ResMut<CareerRes>, mut roster: ResMut<RosterRes>, list: Res<LevelList>, book: Res<crate::book::Book>, tutorial: Res<crate::tutorial::TutorialHost>) {
     game.since += time.delta_secs();
     if *mode != Mode::Ride { return; }
     let pad = |b: GamepadButton| pads.iter().any(|p| p.just_pressed(b));
@@ -908,13 +915,14 @@ pub fn menus(keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, time: Res<T
             else if ok && game.since > 0.2 {
                 game.since = 0.0;
                 if let tricky_game::fe_flow::Outcome::Race(c) = game.flow.accept() {
-                    // the choices handed to the app (row G9u3): the event, the course, the first player's rider and board
+                    // the choices handed to the app (row G9u3, C11e): the event, the course, the first player's rider and board
                     game.event = event_of(c.game_mode);
-                    game.cursor = match game.event { Event::Race => 0, Event::ShowOff => 1, Event::FreeRide => 2 };
+                    game.cursor = match game.event { Event::Race => 0, Event::ShowOff => 1, Event::FreeRide => 2, Event::Tutorial => 3 };
                     let name = crate::trickdata::RIDERS[(c.rider[0] as usize).min(11)].name;
                     if let Some(k) = lib.chars.iter().position(|ch| ch.name.eq_ignore_ascii_case(name)) { lib.player = k; }
                     game.board = (c.board[0] as usize).min(11);
-                    if let Some(i) = course_dir(&list, c.course as u32) { game.track_step = i as i32 - list.current as i32; }
+                    let target_course = if game.event == Event::Tutorial { 10 } else { c.course as u32 };
+                    if let Some(i) = course_dir(&list, target_course) { game.track_step = i as i32 - list.current as i32; }
                     career.reset_circuit(&mut roster);
                     game.round = 0;
                     game.screen = Screen::Playing;
@@ -923,7 +931,14 @@ pub fn menus(keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, time: Res<T
             }
         }
         Screen::Playing => {
-            if back { game.screen = Screen::Paused; game.since = 0.0; game.pause_cursor = 0; }
+            // In Tutorial mode while a tutorial menu or dialog is open, Back/Esc is consumed by `cLessonMan`;
+            // Start (or Esc while riding an attempt) opens the pause menu.
+            let pause_btn = if game.event == Event::Tutorial && tutorial.menu_open() {
+                pad(GamepadButton::Start)
+            } else {
+                back
+            };
+            if pause_btn { game.screen = Screen::Paused; game.since = 0.0; game.pause_cursor = 0; }
         }
         Screen::Paused => {
             if up { game.pause_cursor = (game.pause_cursor + 2) % 3; }
@@ -982,11 +997,12 @@ pub fn menus(keys: Res<ButtonInput<KeyCode>>, pads: Query<&Gamepad>, time: Res<T
     }
 }
 
-/// The app's event for the game mode word (0x32de8c): freeride and the trick tutorial ride free, the show-offs show off,
-/// the races and the time challenge race
+/// The app's event for the game mode word (0x32de8c): 6 is Trick Tutorial (row C11e), 1/7 freeride, 3/5 show-off,
+/// others race
 pub fn event_of(game_mode: u32) -> Event {
     match game_mode {
-        1 | 6 => Event::FreeRide,
+        6 => Event::Tutorial,
+        1 | 7 => Event::FreeRide,
         3 | 5 => Event::ShowOff,
         _ => Event::Race,
     }
@@ -1003,7 +1019,7 @@ pub fn course_dir(list: &LevelList, number: u32) -> Option<usize> {
 
 pub fn hud(
     game: Res<Game>, race: Res<RaceRes>, list: Res<LevelList>, time: Res<Time>, (smooth, tick): (Res<SmoothDt>, Res<crate::GameTick>), rider: Res<RiderRes>,
-    opponents: Res<Opponents>, lib: Res<CharLib>, mode: Res<Mode>, (career, roster, book): (Res<CareerRes>, Res<RosterRes>, Res<crate::book::Book>),
+    opponents: Res<Opponents>, lib: Res<CharLib>, mode: Res<Mode>, (career, roster, book, tutorial): (Res<CareerRes>, Res<RosterRes>, Res<crate::book::Book>, Res<crate::tutorial::TutorialHost>),
     mut texts: Query<(&mut Text, &HudItem, &mut TextColor)>, mut segs: Query<(&mut Node, &mut BackgroundColor, &BoostSeg)>, mut shown: Local<f32>,
     mut panel: Single<&mut Visibility, (With<PanelBox>, Without<HudRoot>)>, mut root: Single<&mut Visibility, (With<HudRoot>, Without<PanelBox>)>,
     mut fps: Local<(f32, f32, u32)>,
@@ -1017,8 +1033,13 @@ pub fn hud(
     let track_folder = list.dirs.get(list.current).and_then(|d| d.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     let track = game.text.course_name_by_folder(&track_folder);
     let me = lib.chars.get(lib.player).map(|c| crate::proper(&c.name)).unwrap_or_else(|| "Rider".into());
+    let tut_panel = if game.event == Event::Tutorial && game.screen == Screen::Playing {
+        tutorial.panel_text(&book, &career.0, &game.text)
+    } else {
+        None
+    };
     **root = if playing { Visibility::Inherited } else { Visibility::Hidden };
-    **panel = if riding && game.screen != Screen::Playing { Visibility::Inherited } else { Visibility::Hidden };
+    **panel = if riding && (game.screen != Screen::Playing || tut_panel.is_some()) { Visibility::Inherited } else { Visibility::Hidden };
 
     // the shown level slews 0.005 a tick (the game's frame, `GameTick`) towards the meter; each segment is a
     // fourteenth, grows from 0.2 to full size as it fills, and takes its band's colour
@@ -1052,6 +1073,7 @@ pub fn hud(
                 // show-off runs against the clock
                 Event::ShowOff => clock((showoff(&track_key(&list)).1 + race.0.bonus - race.0.time).max(0.0)).to_string(),
                 Event::FreeRide => format!("{}{}", clock(race.0.time), race.0.best.map(|b| format!("   best {}", clock(b))).unwrap_or_default()),
+                Event::Tutorial => clock(race.0.time),
             },
             HudItem::Score => {
                 let goal = if game.event == Event::ShowOff {
@@ -1143,7 +1165,7 @@ pub fn hud(
                     format!("{menu}\n{l_edging} {:.0}  {l_speed} {:.0}  {l_stability} {:.0}  {l_tricks} {:.0}\n{best}\n{} {}\n{}\n\nUp / Down, Enter    Esc    M: {status}",
                         st.edging * 100.0, st.speed * 100.0, st.stability * 100.0, st.tricks * 100.0, game.text.points_label(), career.points(), book.summary(&career.0, &me, &game.text))
                 }
-                Screen::Playing => String::new(),
+                Screen::Playing => tut_panel.clone().unwrap_or_default(),
                 Screen::Paused => {
                     let row = |i: usize, s: String| if game.pause_cursor == i { format!(">  {s}  <") } else { s };
                     format!("{}\n\n{}\n{}\n{}", game.text.pause_title(), row(0, game.text.pause_continue()), row(1, game.text.pause_restart()), row(2, game.text.pause_quit()))
@@ -1186,7 +1208,7 @@ pub fn hud(
                             game.text.medal_lower(0), sh[0], game.text.medal_lower(1), sh[1], game.text.medal_lower(2), sh[2],
                             game.text.opt_restart(), game.text.opt_quit())
                     }
-                    Event::FreeRide => String::new(),
+                    Event::FreeRide | Event::Tutorial => String::new(),
                 },
             },
         };

@@ -197,6 +197,11 @@ impl PadHost {
         self.configs[self.config_idx.min(1)].clone()
     }
 
+    /// Parsed `BTNMAP<n>.DAT` config by index (`0` = default map for `LessonMan_Init` 0x14aaa0 `Pad_LoadButtonMap(0)`).
+    pub fn config(&self, idx: usize) -> Option<&PadConfig> {
+        self.configs.get(idx).and_then(|c| c.as_ref())
+    }
+
     /// `cInput +0x1cc` "shown" button masks for the rider's active map (`Input_SetShownButton` 0x179850).
     #[allow(dead_code)]
     pub fn shown_buttons(&self, rider: &Rider) -> [u32; 0x29] {

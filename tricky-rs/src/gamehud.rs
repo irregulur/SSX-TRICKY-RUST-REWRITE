@@ -808,6 +808,7 @@ pub fn game_hud(
         ui::Event::Race => tricky_game::courses::Mode::CircuitRace,
         ui::Event::ShowOff => tricky_game::courses::Mode::CircuitShowoff,
         ui::Event::FreeRide => tricky_game::courses::Mode::Freeride,
+        ui::Event::Tutorial => tricky_game::courses::Mode::Tutorial,
     } as u32;
     let folder = list.dirs.get(list.current).and_then(|d| d.file_name()).map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
     let course = tricky_game::courses::COURSES

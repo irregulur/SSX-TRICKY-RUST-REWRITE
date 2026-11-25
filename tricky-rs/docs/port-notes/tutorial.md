@@ -199,3 +199,25 @@ the pad config between two stand-ins that write nothing).
 - `cTrickInfo` vf1/vf3/vf5 do nothing, vf4 answers 0.0, its destructor sets the table 0x36fad0 at +0x24.
 - `cLessonOverlay::Draw` 0x1b8548(ov) is `DrawPage(race+0x34, ov)` (the overlay is the font set);
   `cLessonControllerOverlay::Draw` 0x1b8560 does nothing. Both in the same test.
+
+## Trick Tutorial in the app (row C11e, done 2026-11-24)
+
+- `tricky-rs/game/src/rider.rs`: added `Rider::pad_tables: Option<PadTables>` (`Pad_SetConfig` 0x17a2f8 override
+  applied in `Rider::button_map`) and `Rider::trick_slots()` (`TRICK_SLOTS[ch][board_class][k][0]` 0x333098).
+- `tricky-rs/src/padhost.rs`: exposed `PadHost::config(idx)` so `TutorialHost::start` always reads `BTNMAP0.DAT`
+  (`Pad_LoadButtonMap(0)`) regardless of which map the player picked.
+- `tricky-rs/src/tutorial.rs`: `TutorialHost` drives `RaceLesson` (`cAI::vf1` 0x1126f0 modes 6..10) and `Lesson`
+  (`LessonMan_Init` 0x14aaa0 -> `Lesson::start`, `cLessonMan::vf1` 0x14b9b8), mounts `data/tutorial/<rider>.big`
+  from `TRICKY_DISC` and unpacks `|data\tutorial\<rider><NN>.inp` (`tricky_data::inp::{Inp, Playback}`), swaps
+  `Rider::pad_tables` via `LessonPads` on `State::Preview` Enter (`0x14e138`) / Exit (`0x14e2b0`) and tutorial exit,
+  feeds recorded `PadDevice` frames (`0x14b7c8` / `0x14b8a8`) during Preview, applies `Lesson_SetupRider` (`0x14b768`:
+  page 5 -> `boost = 1.0, uber_timer = 20.0`, else `0.0, 0.0`), draws `fxrand::lesson_path_var` (`Audio_OnRaceGo`
+  `0x215288` mode 6), and renders localized `Loc_GetString` (`0x2c5160`) + `TRICKDEF.DAT` tutorial menus/dialogs.
+- `tricky-rs/src/{ui,main,gamehud,worldanim}.rs`: added `ui::Event::Tutorial` (`CareerRes::mode == 6`,
+  `courses::Mode::Tutorial`, `event_of(6)` -> `Event::Tutorial`, `TRICKY_SCREEN=tutorial` / `TRICKY_EVENT=tutorial`,
+  and front-end `fe_flow` `game_mode == 6` switching onto course 10 `trick` from the disc `E3a4`), wired `ui::trick_book`
+  to pass `tutorial.active_trick()` into `Book::check_career` (`Score_TrickBookCheck` 0x1579e0 -> `Lesson_SetTrickSeen`
+  `0x14c2a8` without ticking career bits during tutorial), and signalled `Lesson_SetAttemptDone` (`0x14d930`) on finish.
+- Verified on real `TRICKY_DISC` in `tutorial::tests` (`trick` course + `CourseGround`, `BTNMAP1` -> `BTNMAP0` ->
+  `BTNMAP1` swap, `Mac.big` -> `Mac01.inp` full playback to `PreviewEnd`, Perform `Score_TrickBookCheck` lesson gate,
+  and page 5 uber boost/timer).

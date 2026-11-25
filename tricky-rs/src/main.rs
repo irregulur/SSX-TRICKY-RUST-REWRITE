@@ -31,6 +31,7 @@ mod coursemusic;
 mod pathmusic;
 mod racespeech;
 mod padhost;
+mod tutorial;
 mod editor;
 use tricky_game::rivals;
 mod rider;
@@ -544,7 +545,14 @@ fn main() {
     }
     dirs.sort();
     if dirs.is_empty() { dirs.push(full.clone()); }
-    let current = dirs.iter().position(|d| *d == full).unwrap_or(0);
+    let mut current = dirs.iter().position(|d| *d == full).unwrap_or(0);
+    if matches!(std::env::var("TRICKY_SCREEN").as_deref(), Ok("tutorial"))
+        || matches!(std::env::var("TRICKY_EVENT").as_deref(), Ok("tutorial"))
+    {
+        if let Some(i) = dirs.iter().position(|d| d.file_name().is_some_and(|n| n.eq_ignore_ascii_case("trick"))) {
+            current = i;
+        }
+    }
     let Loaded { level, world, rails, line, start, yaw: start_yaw, course, paths, tube, cml, stage, finish_area } = loaded;
     let ai_paths = tricky_game::aiglue::paths_of(&level.ai);
     let ai_start_paths = tricky_game::aiglue::start_paths_of(&level.ai);
@@ -577,6 +585,7 @@ fn main() {
     .init_resource::<ui::RosterRes>()
     .insert_resource(levels)
     .insert_resource(padhost::PadHost::load())
+    .init_resource::<tutorial::TutorialHost>()
     .init_resource::<book::Book>()
     .init_resource::<boardsound::RiderLoops>()
     .init_resource::<hudsprites::HudSprites>()
@@ -590,6 +599,7 @@ fn main() {
         match std::env::var("TRICKY_SCREEN").as_deref() {
             Ok("play") => ui::Game { screen: ui::Screen::Playing, text, ..default() },
             Ok("free") => ui::Game { screen: ui::Screen::Playing, event: ui::Event::FreeRide, text, ..default() },
+            Ok("tutorial") => ui::Game { screen: ui::Screen::Playing, event: ui::Event::Tutorial, text, ..default() },
             Ok("results") => { let mut g = ui::Game { screen: ui::Screen::Playing, text, ..default() }; g.finish(vec![("Elise".into(), Some(151.2), false), ("You".into(), Some(153.9), true), ("Mac".into(), None, false)]); g }
             _ => ui::Game { text, ..default() },
         }
@@ -1340,7 +1350,7 @@ fn trick_only_ramps(game: Res<ui::Game>, mut world: ResMut<World>, mut rails: Re
     if world.0.showoff != on { world.0.showoff = on; }
     // the event's start-up scripts (RaceMode / ShowoffMode / FreerideMode): race-only or show-off-only
     // objects, the start gate in free ride, and the rails each event switches
-    let k = match game.event { ui::Event::Race => 0, ui::Event::ShowOff => 1, ui::Event::FreeRide => 2 };
+    let k = match game.event { ui::Event::Race => 0, ui::Event::ShowOff => 1, ui::Event::FreeRide | ui::Event::Tutorial => 2 };
     let key = (game.event, world.0.len());
     if *last != Some(key) {
         *last = Some(key);
@@ -1355,7 +1365,7 @@ fn trick_only_ramps(game: Res<ui::Game>, mut world: ResMut<World>, mut rails: Re
             let mode_name = match game.event {
                 ui::Event::Race => "RaceMode",
                 ui::Event::ShowOff => "ShowoffMode",
-                ui::Event::FreeRide => "FreerideMode",
+                ui::Event::FreeRide | ui::Event::Tutorial => "FreerideMode",
             };
             let mut apply = |ev: tricky_game::cellhost::CellEvents| {
                 for se in ev.script_events {
@@ -1372,7 +1382,7 @@ fn trick_only_ramps(game: Res<ui::Game>, mut world: ResMut<World>, mut rails: Re
                 }
             };
             apply(course.run_script_named(mode_name, &mut tricky_game::rand::rand_game));
-            if game.event == ui::Event::FreeRide {
+            if matches!(game.event, ui::Event::FreeRide | ui::Event::Tutorial) {
                 apply(course.run_script_named("NoCountdown", &mut tricky_game::rand::rand_game));
             }
         } else {
@@ -1862,7 +1872,7 @@ fn ride(
     mut opponents: ResMut<Opponents>, lib: Res<CharLib>, mut props: ResMut<Props>,
     (mut game, list, mut career, mut roster): (ResMut<ui::Game>, Res<LevelList>, ResMut<ui::CareerRes>, ResMut<ui::RosterRes>),
     mut ride_local: Local<(f32, Option<rider::AiDriver>, bool)>, wa: Option<ResMut<worldanim::WorldAnim>>,
-    mut pad_host: ResMut<padhost::PadHost>, mut rumble_out: EventWriter<bevy::input::gamepad::GamepadRumbleRequest>,
+    (mut pad_host, mut tutorial): (ResMut<padhost::PadHost>, ResMut<tutorial::TutorialHost>), mut rumble_out: EventWriter<bevy::input::gamepad::GamepadRumbleRequest>,
 ) {
     // the AI skill clock, autoplay driver, and TRICKY_RESTARTAT latch
     let (skill_clock, auto, restarted) = &mut *ride_local;
@@ -1885,7 +1895,8 @@ fn ride(
         reset: false,
     };
     let playing = game.screen == ui::Screen::Playing;
-    let mut restart = keys.just_pressed(KeyCode::Enter) && playing && game.since > 0.3;
+    let is_tutorial = game.event == ui::Event::Tutorial;
+    let mut restart = !is_tutorial && keys.just_pressed(KeyCode::Enter) && playing && game.since > 0.3;
     let mut unstick = keys.just_pressed(KeyCode::Backspace);
     for (_, pad) in &pads {
         let x = pad.get(GamepadAxis::LeftStickX).unwrap_or(0.0);
@@ -1901,7 +1912,7 @@ fn ride(
         input.tweak |= pad.pressed(GamepadButton::West);
         input.grab |= pad.pressed(GamepadButton::LeftTrigger) as u8 | (pad.pressed(GamepadButton::RightTrigger) as u8) << 1
             | (pad.pressed(GamepadButton::LeftTrigger2) as u8) << 2 | (pad.pressed(GamepadButton::RightTrigger2) as u8) << 3;
-        restart |= pad.just_pressed(GamepadButton::Start) && playing && game.since > 0.3;
+        restart |= !is_tutorial && pad.just_pressed(GamepadButton::Start) && playing && game.since > 0.3;
         unstick |= pad.just_pressed(GamepadButton::Select);
     }
     input.steer = input.steer.clamp(-1.0, 1.0);
@@ -2005,7 +2016,24 @@ fn ride(
             o.rider.stats.bytes = tricky_game::stats::ai_bytes(&tricky_game::stats::BASE[i], &tricky_game::stats::CAPS[i], Some(rivals[i]), game.master);
         }
     }
-    if game.screen == ui::Screen::Menu { race.0.restart(); }
+    if game.screen == ui::Screen::Menu {
+        race.0.restart();
+        if tutorial.active {
+            tutorial.exit(r);
+        }
+    } else if !is_tutorial && tutorial.active {
+        tutorial.exit(r);
+    }
+    // Start or restart Trick Tutorial (`LessonMan_Init` 0x14aaa0, mode 6 on `trick` course, row C11e)
+    if is_tutorial && playing && (!tutorial.active || restart) {
+        r.pad_cfg = pad_host.active_config();
+        let mut player_map = r.button_map();
+        let rider_idx = row_of(mine);
+        let map0 = pad_host.config(0).cloned();
+        let slots = r.trick_slots();
+        tutorial.start(rider_idx, &mut player_map, map0.as_ref(), slots, &mut tricky_game::rand::rand_fx);
+        r.pad_tables = tutorial.active_pad_tables();
+    }
     // paused: nothing moves
     if game.screen == ui::Screen::Paused { return; }
     let waiting = race.0.state == RaceState::Countdown;
@@ -2179,10 +2207,55 @@ fn ride(
     // the game's tick: the race counts 60 a second (race+0x18, docs/checking.md F4b1) and every boarder moves
     // dt = timescale/60 a tick (boarder+0x12c; the player's is 1, the AI's `o.driver.time_scale`). Whole ticks
     // only, the frame time left over carried to the next frame; a hitch runs at most 0.1 s of ticks (`GameTick`).
+    let mut tut_edges_once = if is_tutorial && playing && tutorial.active {
+        tutorial::TutorialHost::menu_edges_from_input(&keys, first_pad.map(|(_, p)| p), tutorial.lesson.menu_level)
+    } else {
+        0
+    };
     for _ in 0..tick.n {
         lerp.mark(r);
         for o in opponents.0.iter_mut() { o.draw.mark(&o.rider); }
         let dt = TICK;
+        if is_tutorial && playing && tutorial.active {
+            let edges = std::mem::take(&mut tut_edges_once);
+            let tact = tutorial.tick(edges, !r.last_trick.is_empty(), false, &mut tricky_game::rand::rand_fx);
+            if tact.pad_swap.is_some() {
+                r.pad_tables = tutorial.active_pad_tables();
+            }
+            if tact.reset_scene || tact.restart_rider {
+                let at = r.spawn;
+                r.respawn(at);
+                r.sc = tricky_game::rider::new_score();
+                r.score = 0;
+                r.last_trick.clear();
+                race.0.restart();
+            }
+            if let Some((boost, uber)) = tact.set_speed {
+                r.boost = boost;
+                r.uber_timer = uber;
+            }
+            if tact.clear_trick_text {
+                r.last_trick.clear();
+                r.trick_timer = 0.0;
+            }
+            if tact.race_mode == Some(3) {
+                race.0.state = RaceState::Running;
+                race.0.countdown = 0.0;
+            }
+            if tact.rider_finish {
+                r.vel = Vec3::new(0.0, r.vel.y.min(0.0), 0.0);
+            }
+            if tact.exit_to_menu {
+                tutorial.exit(r);
+                game.screen = ui::Screen::Menu;
+                game.lineup = true;
+                break;
+            }
+            if !tutorial.is_riding_attempt() {
+                r.vel = Vec3::new(0.0, r.vel.y.min(0.0), 0.0);
+                continue;
+            }
+        }
         // TRICKY_AUTOPLAY: the player's rider drives itself (for screenshots and checks)
         let autoplay = !waiting && std::env::var("TRICKY_AUTOPLAY").is_ok();
         let input = if autoplay {
@@ -2201,9 +2274,12 @@ fn ride(
         // `Boarder_RequestReset` asks none past the finish, +0x418)
         let allow_reset = !waiting && !held && r.fin.is_none();
         let input = Input { reset: std::mem::take(&mut reset_once) && allow_reset, ..input };
-        // Row E10c3: drive the player's pad through `Input_ReadDevices` -> `InputRecorder_Playback` -> `Ps2Pad::play`
-        // and the disc's parsed `BTNMAP<n>.DAT` (`input::parse_button_map` / `input::bind` / `controls::Mapper`).
-        if !autoplay && !waiting && !held && r.gate_state != 9 && r.fin.is_none() {
+        // Row E10c3 & C11e: drive the player's pad through `Input_ReadDevices` -> `InputRecorder_Playback` ->
+        // `Ps2Pad::play` and `BTNMAP<n>.DAT`, or swap in the recorded `PadDevice` during `State::Preview` (`0x14b7c8`).
+        if let Some(rec_dev) = tutorial.preview_pad() {
+            r.pad_tables = tutorial.active_pad_tables();
+            r.set_host_pad(rec_dev, pad_host.active_config());
+        } else if !autoplay && !waiting && !held && r.gate_state != 9 && r.fin.is_none() {
             let rec = padhost::bevy_to_record(&keys, first_pad.map(|(_, p)| p), allow_reset);
             pad_host.step_tick(rec);
             r.set_host_pad(pad_host.pad_dev(), pad_host.active_config());
@@ -2214,6 +2290,7 @@ fn ride(
         r.rumble_muted = !playing || waiting;
         let p_reset_adv = r.reset.map(|s| s.advance);
         r.step(&world.0, &rails.0, input, dt);
+        tutorial.after_controls();
         if let Some(motors) = pad_host.sync_rumble(&mut r.pad_rumble, first_pad.is_some()) {
             if let Some((gp, _)) = first_pad {
                 padhost::PadHost::emit_bevy_rumble(gp, motors, &mut rumble_out);
@@ -2232,10 +2309,14 @@ fn ride(
             ui::Event::Race => tricky_game::courses::Mode::CircuitRace,
             ui::Event::ShowOff => tricky_game::courses::Mode::CircuitShowoff,
             ui::Event::FreeRide => tricky_game::courses::Mode::Freeride,
+            ui::Event::Tutorial => tricky_game::courses::Mode::Tutorial,
         } as u32;
         let others: Vec<(Vec3, Vec3)> = opponents.0.iter().map(|o| (o.rider.pos, o.rider.vel)).collect();
         race.0.place_scores = std::iter::once(&*r).chain(opponents.0.iter().map(|o| &o.rider)).map(|x| tricky_game::race::PlaceScore::of(&x.sc)).collect();
         race.0.update(r, &others, dt);
+        if is_tutorial && (race.0.state == RaceState::Finished || race.0.hooks.contains(&Hook::Finish(0))) {
+            tutorial.on_rider_finish();
+        }
         if race.0.state != RaceState::Countdown {
             race.0.tick_player_follow(r);
         }
@@ -2547,7 +2628,7 @@ fn ride(
                 race.0.post_scripts.clear();
                 race.0.post = 1;
             }
-            Some(cml) if !quiet && race.0.finish_area.is_some() && game.event != ui::Event::FreeRide => {
+            Some(cml) if !quiet && race.0.finish_area.is_some() && !matches!(game.event, ui::Event::FreeRide | ui::Event::Tutorial) => {
                 // STANDIN: fallback post-race selection when `TRICKY_DISC` is absent (no `/SLUS_203.26` for `EndRace`).
                 let me = rivals::index(lib.chars.get(lib.player).map_or("", |c| c.name.as_str()));
                 let rival = opponents.0.iter().enumerate()
@@ -2563,7 +2644,7 @@ fn ride(
             _ => race.0.post = 3,
         }
     }
-    if playing && stopped && race.0.state == RaceState::Finished && race.0.post == 3 && game.event != ui::Event::FreeRide {
+    if playing && stopped && race.0.state == RaceState::Finished && race.0.post == 3 && !matches!(game.event, ui::Event::FreeRide | ui::Event::Tutorial) {
         let me = lib.chars.get(lib.player).map(|c| proper(&c.name)).unwrap_or_else(|| "Rider".into());
         game.finish(standings(&race.0, &opponents.0, &lib, &me));
     }
@@ -3257,7 +3338,7 @@ fn chase_camera(
         let quiet = std::env::var("TRICKY_INTRO").is_err() && (std::env::var("TRICKY_SIM").is_ok() || std::env::var("TRICKY_NOINTRO").is_ok() || std::env::var("TRICKY_SHOT").is_ok());
         if let (Some(cml), false) = (race.0.cml.clone(), quiet) {
             // STANDIN: fallback pre-race script picks when `TRICKY_DISC` is absent (no `/SLUS_203.26` for `PreRace`).
-            let fly = match game.event { ui::Event::Race => "RaceLoaded", ui::Event::ShowOff => "ShowLoaded", ui::Event::FreeRide => "FreeLoaded" };
+            let fly = match game.event { ui::Event::Race => "RaceLoaded", ui::Event::ShowOff => "ShowLoaded", ui::Event::FreeRide | ui::Event::Tutorial => "FreeLoaded" };
             let stg = format!("STG_COM_{}", 1 + fx_pick(4));
             let gat = format!("GAT_6COM_{}", 1 + fx_pick(4));
             let race_ev = game.event == ui::Event::Race;

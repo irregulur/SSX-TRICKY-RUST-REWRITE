@@ -516,6 +516,8 @@ pub struct Rider {
     /// parsed `DATA/CONFIG/BTNMAP<n>.DAT` (`Pad_ParseButtonMap` 0x179b18, row E10c3); when `Some`, `button_map()`
     /// binds it via `input::bind` (`Pad_SetupVibration` 0x152770) instead of `ButtonMap::btnmap`
     pub pad_cfg: Option<crate::input::PadConfig>,
+    /// optional `Pad_SetConfig` 0x17a2f8 table override (`input::LessonPads::swap`, row C11e: preview uses default map 0)
+    pub pad_tables: Option<crate::input::PadTables>,
     /// the vibration object `Pad_SetupVibration` 0x152770 allocates at `cPlayer +0x874` (`Vibration_Construct`
     /// 0x150a70, `Rumble_Add` 0x150be8, `Rumble_Impact` 0x150a80, `Rumble_Update` 0x150d18)
     pub vibration: crate::control::Rumble,
@@ -612,7 +614,7 @@ impl Rider {
                last_trick: String::new(), trick_timer: 0.0, crashed: 0.0, hard_land: 0.0, crouch_v: 0.0, brake_v: 0.0, jump_c: 0.0, jump_delay: 0.0, height: 0.0,
                course_dir: None, course_pts: None, wipe: None, crash_at: None, gm: None, crash_spray: None, land_puffs_vn: None, lean: [0.0; 3], up: [0.0, 0.0, 1.0, 0.0], recover: None, ai: false, down_t: 0.0, getup: -1.0, stumble: 0.0, wall_hit: None, speed_timer: 0.0, spin_timer: 0.0, spin_used: false, tube_class: u8::MAX, gate_p: 0.0, gate_hi: 0.0, gate_lo: 0.0, gate_still: 0.0, gate_target: 0.0, gate_speed: 0.0, gate_state: 8, gate_rock_dir: 0, band: (0.005, 0.0250417), spin_base: 0.0, flip_base: 0.0, late: false, cause: "", spin_ax: Axis::default(), flip_ax: Axis::default(), air_mode2: false, rail_off: 0.0, rail_time: 0.0, rail_halves: 0, boost_was: false, chain: 0,
                ubers: Vec::new(), uber: 0.0, uber_id: 0, uber_scored: false, letters: 0, multiplier: 1,
-               sc: new_score(), tick_acc: 0.0, full_count: 0, rail_kind: 0, rail_lean: 0.0, rail_goal0: 0.0, rail_committed: 0.0, show_parts: Vec::new(), speech: Vec::new(), hit_by: u32::MAX, grab_scored: false, grab_tw: false, hit_wait: 0, att: None, last_hit: Default::default(), impact: 0.0, impact_n: [0.0; 4], knocks: 0.0, slot: 0, place_ray: None, hit_kind: 0, land_time: 0.0, takeoffs: 0, rail_blend: 0.0, rail_word: 0, rail_grid: false, rail_hit: [0.0; 4], spin_st: None, pad_dev: Default::default(), pad_from_host: false, pad_cfg: None, vibration: Default::default(), pad_rumble: Default::default(), rumble_muted: false, land_point: [0.0; 4], land_vel: [0.0; 4], land_word: u32::MAX, land_normal: [0.0, 0.0, 1.0, 0.0], takeoff_wind: (0.0, 0.0), ctl: control_tick::CRUISE, cruise: Default::default(), land_normal_ctl: Default::default(), natural_air_ctl: Default::default(), rail_ctl: Default::default(), rail_turn_t: 0.0, prewind_started: 0, trick_ctl: Default::default(), rec: Default::default(), boost_lvl: 0.0, reset_flag: 0, reset_req: None, reset: None, reset_acc: 0.0, fade: (1.0, 0.0), reset_ctx: ResetCtx::default(),
+               sc: new_score(), tick_acc: 0.0, full_count: 0, rail_kind: 0, rail_lean: 0.0, rail_goal0: 0.0, rail_committed: 0.0, show_parts: Vec::new(), speech: Vec::new(), hit_by: u32::MAX, grab_scored: false, grab_tw: false, hit_wait: 0, att: None, last_hit: Default::default(), impact: 0.0, impact_n: [0.0; 4], knocks: 0.0, slot: 0, place_ray: None, hit_kind: 0, land_time: 0.0, takeoffs: 0, rail_blend: 0.0, rail_word: 0, rail_grid: false, rail_hit: [0.0; 4], spin_st: None, pad_dev: Default::default(), pad_from_host: false, pad_cfg: None, pad_tables: None, vibration: Default::default(), pad_rumble: Default::default(), rumble_muted: false, land_point: [0.0; 4], land_vel: [0.0; 4], land_word: u32::MAX, land_normal: [0.0, 0.0, 1.0, 0.0], takeoff_wind: (0.0, 0.0), ctl: control_tick::CRUISE, cruise: Default::default(), land_normal_ctl: Default::default(), natural_air_ctl: Default::default(), rail_ctl: Default::default(), rail_turn_t: 0.0, prewind_started: 0, trick_ctl: Default::default(), rec: Default::default(), boost_lvl: 0.0, reset_flag: 0, reset_req: None, reset: None, reset_acc: 0.0, fade: (1.0, 0.0), reset_ctx: ResetCtx::default(),
                vf7: crate::boarder_tick::TickRider { active: 1, time_scale: 1.0, speed_limit: SPEED_CAP * 100.0, ..Default::default() }, speed_sum: 0.0, speed_samples: 0.0, anim: None, clip_markers: None, anim_tick: 0,
                predict: crate::air::Predict { word: u32::MAX, normal: [0.0, 0.0, 1.0, 0.0], ..Default::default() },
                air_surface_ticks: 0, land_fall: 0.0, celebrate_idx: 0, air_side: [0.0; 4] };
@@ -2367,18 +2369,29 @@ impl Rider {
         self.pad_dev.read(ps2, Some([byte(input.steer), ly, 128, 128]));
     }
 
-    /// The rider's button map as `Pad_SetupVibration` 0x152770 binds it (rows G1a5b3b2b, E10c3): when `self.pad_cfg`
-    /// was parsed from the disc's `DATA/CONFIG/BTNMAP<n>.DAT` (`input::parse_button_map`), binds it via `input::bind`
-    /// (including `cInput +0x1cc` `shown` buttons) with the 15 grab combos bound to column 0 of `TRICK_SLOTS[ch][kind]`
-    /// (0x333098); falls back to `ButtonMap::btnmap(0, slots)` only when running without the disc.
-    pub fn button_map(&self) -> crate::controls::ButtonMap {
+    /// The 15 grab trick slots (`TRICK_SLOTS[ch][board_class][k][0]`, 0x333098) for this rider.
+    pub fn trick_slots(&self) -> [u16; 15] {
         let ch = RIDERS.iter().position(|r| r.name == self.data.name).unwrap_or(0);
         let rows = &tricky_data::trick_slots::TRICK_SLOTS[ch][(self.stats.kind as usize).min(2)];
-        let slots = std::array::from_fn(|k| rows[k][0]);
-        match &self.pad_cfg {
+        std::array::from_fn(|k| rows[k][0])
+    }
+
+    /// The rider's button map as `Pad_SetupVibration` 0x152770 binds it (rows G1a5b3b2b, E10c3, C11e): when
+    /// `self.pad_cfg` was parsed from the disc's `DATA/CONFIG/BTNMAP<n>.DAT` (`input::parse_button_map`), binds it
+    /// via `input::bind` (including `cInput +0x1cc` `shown` buttons) with the 15 grab combos bound to column 0 of
+    /// `TRICK_SLOTS[ch][kind]` (0x333098); falls back to `ButtonMap::btnmap(0, slots)` only when running without the
+    /// disc. When `self.pad_tables` is set (`Pad_SetConfig` 0x17a2f8, e.g. `LessonPads::swap` during a tutorial
+    /// preview), applies those tables over the bound map.
+    pub fn button_map(&self) -> crate::controls::ButtonMap {
+        let slots = self.trick_slots();
+        let mut map = match &self.pad_cfg {
             Some(cfg) => crate::input::bind(cfg, slots),
             None => crate::controls::ButtonMap::btnmap(0, slots),
+        };
+        if let Some(tables) = &self.pad_tables {
+            crate::input::set_config(&mut map, tables);
         }
+        map
     }
 
     /// An air tick of the spin state on the game's code (row G1a5b3b1): the pad word `cPlayer::GetControls` makes
