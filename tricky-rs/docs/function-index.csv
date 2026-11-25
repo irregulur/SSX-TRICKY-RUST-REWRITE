@@ -4265,32 +4265,32 @@ address,size,name,system,status
 0x23b588,44,Vec4_ScaleCopy30,common,checked
 0x23b6b0,56,Tri_ContainsPointVu0,world,ported
 0x23b6e8,964,Collide_SphereBox,world,ported
-0x23bb70,40,BigArchive_Init,files,ported
+0x23bb70,40,BigArchive_Init,files,checked
 0x23bb98,76,BigArchive_Delete,files,ported
-0x23bbe8,60,BigArchive_Reset,files,not started
+0x23bbe8,60,BigArchive_Reset,files,checked
 0x23bc28,152,BigArchive_Open,files,ported
 0x23bcc0,80,BigArchive_Close,files,ported
-0x23bd10,128,cAsyncBigFile::cAsyncBigFile,files,ported
-0x23bd90,148,cAsyncBigFile::~cAsyncBigFile,files,ported
+0x23bd10,128,cAsyncBigFile::cAsyncBigFile,files,checked
+0x23bd90,148,cAsyncBigFile::~cAsyncBigFile,files,checked
 0x23be28,20,BigFile_ClearTable,files,ported
-0x23be90,8,cAsyncBigFile::vf1_23be90,files,not started
+0x23be90,8,cAsyncBigFile::vf1_23be90,files,checked
 0x23be98,8,cAsyncBigFile::vf3_23be98,files,ported
 0x23bea0,8,cAsyncBigFile::vf2_23bea0,files,ported
-0x23bea8,8,cAsyncBigFile::vf4_23bea8,files,not started
-0x23beb0,100,AsyncBigFile_FinishRead,files,not started
-0x23bf18,244,AsyncFile_CompleteRequest,files,not started
-0x23c010,64,cAsyncBigFile::vf8_23c010,files,not started
-0x23c050,52,cAsyncBigFile::vf9_23c050,files,not started
-0x23c088,264,cAsyncBigFile::vf6_23c088,files,not started
-0x23c190,64,cAsyncBigFile::vf7_23c190,files,not started
-0x23c1d0,64,cAsyncBigFile::vf14_23c1d0,files,not started
-0x23c210,352,cAsyncBigFile::vf15_23c210,files,not started
-0x23c370,36,cAsyncBigFile::vf11_23c370,files,not started
-0x23c398,548,cAsyncBigFile::vf12_23c398,files,not started
-0x23c5c0,516,cAsyncBigFile::vf13_23c5c0,files,not started
+0x23bea8,8,cAsyncBigFile::vf4_23bea8,files,checked
+0x23beb0,100,AsyncBigFile_FinishRead,files,checked
+0x23bf18,244,AsyncFile_CompleteRequest,files,checked
+0x23c010,64,cAsyncBigFile::vf8_23c010,files,checked
+0x23c050,52,cAsyncBigFile::vf9_23c050,files,checked
+0x23c088,264,cAsyncBigFile::vf6_23c088,files,checked
+0x23c190,64,cAsyncBigFile::vf7_23c190,files,checked
+0x23c1d0,64,cAsyncBigFile::vf14_23c1d0,files,checked
+0x23c210,352,cAsyncBigFile::vf15_23c210,files,checked
+0x23c370,36,cAsyncBigFile::vf11_23c370,files,checked
+0x23c398,548,cAsyncBigFile::vf12_23c398,files,checked
+0x23c5c0,516,cAsyncBigFile::vf13_23c5c0,files,checked
 0x23c7c8,76,File_GetUnpackedSize,files,ported
 0x23c818,184,File_DecompressBuffer,files,ported
-0x23c8d0,252,cAsyncBigFile::vf10_23c8d0,files,not started
+0x23c8d0,252,cAsyncBigFile::vf10_23c8d0,files,checked
 0x23c9d0,56,cMemoryBigFile::cMemoryBigFile,files,not started
 0x23ca08,72,cMemoryBigFile::~cMemoryBigFile,files,not started
 0x23ca50,32,cMemoryBigFile::vf7_23ca50,files,not started
@@ -4302,7 +4302,7 @@ address,size,name,system,status
 0x23cb80,564,cMemoryBigFile::vf12_23cb80,files,not started
 0x23cdb8,568,cMemoryBigFile::vf13_23cdb8,files,not started
 0x23cff0,80,cMemoryBigFile::__tf,runtime,host
-0x23d080,8,cAsyncBigFile::vf5_23d080,files,not started
+0x23d080,8,cAsyncBigFile::vf5_23d080,files,checked
 0x23d088,64,cAsyncBigFile::__tf,runtime,host
 0x23d160,520,BlockMan_Init,common,ported
 0x23d368,68,Pool_Destroy,common,ported

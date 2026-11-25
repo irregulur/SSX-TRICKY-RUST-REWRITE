@@ -1129,3 +1129,40 @@ material, is equivalent because nothing in the block can change it). The resolve
 - Checked in the runner (4,000 cases, half each; random headers with real record lists for the index tables, random
   arrays with counts 0 to 3 and elements on two tables with adjusts 0, 0x10, −8); 19 of 19 mutants (two of them, wrong strides in the free, loop for ever and were
   killed by a time limit).
+
+## The async BIG file class (row E2d; `game/src/asyncbig.rs`, `tests/asyncbig.rs`, proven)
+
+- `cAsyncBigFile` (table 0x3a41a8; files at `cGame`+0xfc / +0x110, `AnimData`+0x710, and the base of
+  `cMemoryBigFile`) reads files by name through EA's async file calls (`AsyncFile_*` 0x2c5e20..0x2c6278). All files
+  share one table of 100 requests of 0x5c bytes at 0x343a58 (cleared by `BigFile_ClearTable` 0x23be28) and one
+  lock (`RecMutex` at 0x343a50, made by the first constructor, destroyed by the last destructor, the count at
+  0x343a54). The request's fields are in the module's doc comment; its state is 0 free, 1 waiting, 2 reading,
+  3 read.
+- The virtuals as read (their slots in the table: vf6 +0x38, vf7 +0x40, vf8 +0x48, vf9 +0x50):
+  - vf15 0x23c210(f, name, w, cb, arg), the request: the name made by vf7 (`|` put in front unless there is one)
+    into a 128-byte buffer on its stack; a request in any state but free with the same name gets one more holder
+    (+0x58) and its number is the answer. Else the first free one is filled (state 1, one holder) and the answer
+    is its number, or −1 with none free. Both of those run vf6.
+  - vf6 0x23c088(f), start: nothing when the file reads one at a time (+0xc) and one runs (+8), or when +0 is 0.
+    Each of the file's waiting requests becomes reading and gets its handle from vf8 (`AsyncFile_Load`(name, +0x10)
+    with `AsyncBigFile_FinishRead` 0x23beb0 as callback). It stops when that read is already over (state 3) or,
+    one at a time, after the first (+8 = 1).
+  - `AsyncBigFile_FinishRead`: under the lock, `AsyncFile_Finish` fills two words on its stack (the buffer and a
+    second word); `AsyncFile_CompleteRequest` 0x23bf18 marks every reading request with that handle read, keeps the
+    buffer at +0x1c and the word at +0x14, runs its callback (+4) with (+8, buffer), clears the file's +8 and runs
+    vf6 again when the file reads one at a time.
+  - vf11 0x23c370(f, i): read or not. vf14 0x23c1d0: how many requests are waiting or reading (all files).
+  - vf12 0x23c398(f, i, flags): the data, made the first time (vf13 0x23c5c0(f, i, flags, name) makes it every
+    time and hands it over, +0x20 cleared). The buffer is unpacked (`Compress_DecodeApi` 0x2c2f90) when
+    `Compress_UnpackedSizeApi` 0x2c3190 gives a size, else copied whole. The memory comes from the pool 0x345e48
+    (`MemPool_Alloc`) with flag 0x40000000, else `EAMem_Alloc`(name, size, flags & 0x3ffffff). When it comes, it
+    is filled with 0 (flags negative) or 0xdeadc0ed. The buffer is then freed. A failed allocation is still
+    unpacked or copied into (address 0).
+  - vf10 0x23c8d0(f, i), release: one holder fewer; at none (or fewer), under the lock: vf9 (cancel and finish the
+    read) when reading, the buffer and data freed, the request zeroed, the file's +8 cleared.
+  - vf1, vf4 empty; vf5 answers +0. The destructor runs vf2 (empty) when +0 is set.
+- `BigArchive_Reset` 0x23bbe8 (the other BIG reader's state, `BigArchive_*`): +0x88 = −1, 0x81 bytes from +4
+  cleared, +0 = 0. `BigArchive_Init` 0x23bb70 resets.
+- Checked in the runner (19 functions; 6,300 cases on a random request table, the name maker, the read starter
+  and `AsyncFile_Finish` stood in on both sides); 37 of 38 mutants. The survivor is equivalent: the constructor reads the
+  file count again after `RecMutex_Create`, which does not change it.
