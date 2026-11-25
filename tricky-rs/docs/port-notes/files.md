@@ -1262,3 +1262,22 @@ material, is equivalent because nothing in the block can change it). The resolve
   mid-entry or late), each with 6 lookups by number and by name (other case, prefixes, absent), with and without
   the out words; the original's `stricmp` and `strlen` run as they are; 18 of 18 mutants (one, `stricmp`
   without its end test, by hanging).
+
+## The memory library's fill, copy, move and checksum (row E2i; `game/src/eamem.rs`, `career::crc16`, `tests/eamem.rs`, proven)
+
+- `EAMem_Set` 0x2cc808(p, v, n): a fill from the word `v` (not a byte): a byte (v's low byte) to reach a 2-byte
+  boundary, a half (v's low half) to reach 4, a word to reach 8, then 64 bytes a step (`v` twice per doubleword),
+  16, words, a half, a byte; each step only with enough left. So a fill starting at an odd address puts v's low
+  byte there and its low half next, not the word's byte pattern. `n` ≤ 0 fills nothing.
+- `EAMem_Copy` 0x2ce114(d, s, n): forward. Under 18 bytes byte by byte; else bytes until `d` is on 16 (the loop
+  would stop with the count at 0, the byte read and not written: unreachable from 18), then with `s` on 16 too
+  128 bytes a step as two `lq`×4 then `sq`×4 halves, 8 a step (`ld`/`sd`), then bytes; with `s` off 16, bytes.
+  An overlapping copy forward (d a little past s) therefore repeats the source in 64- or 8-byte runs, as on the PS2.
+- `Mem_Move` 0x2ce228(d, s, n): backward byte by byte when s < d < s + n (unsigned), else `EAMem_Copy`.
+- `Crc_Compute16` 0x2ce04c(p, n) is `career::crc16` (CRC-16/ARC tables at 0x34f0f8 / 0x34f1f8, from 0xeafb).
+- Checked in the runner: 20,000 cases, every alignment, counts 0 to 0x300 and negative, sources overlapping the
+  destination either way (729 backward moves), checksums of 0 to 0x80 bytes. 30 mutants: 17 killed, 13
+  equivalent: they change only which store size writes the same bytes (the fill's 64- and 16-byte steps, its
+  alignment steps at the edge counts, the copy's byte path for counts under 128, where a 16-aligned source and
+  destination can only overlap 16 or more apart, its 8-byte steps split in two), an unreachable return, the move's
+  edge cases d = s and d = s + n (both copies give the same bytes), and the checksum's 4-byte step at exactly 4.

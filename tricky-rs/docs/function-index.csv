@@ -6375,7 +6375,7 @@ address,size,name,system,status
 0x2cc680,172,HostFs_ServiceRead,lib-file,host
 0x2cc730,108,HostFs_Write,lib-file,host
 0x2cc7a0,100,FileSys_DevGetSize,lib-file,host
-0x2cc808,300,EAMem_Set,lib-eamem,ported
+0x2cc808,300,EAMem_Set,lib-eamem,checked
 0x2cc938,32,EAMem_Zero,lib-eamem,host
 0x2cc958,40,Compress_Alloc,lib-eamem,ported
 0x2cc980,28,Compress_Free,lib-eamem,host
@@ -6404,9 +6404,9 @@ address,size,name,system,status
 0x2cde70,152,EAMem_CheckInHeap,lib-eamem,host
 0x2cdf08,204,EAMem_ValidateHeap,lib-eamem,host
 0x2cdfd8,116,EAMem_ValidateAll,lib-eamem,ported
-0x2ce04c,200,Crc_Compute16,lib-eamem,ported
-0x2ce114,272,EAMem_Copy,lib-eamem,ported
-0x2ce228,112,Mem_Move,lib-eamem,ported
+0x2ce04c,200,Crc_Compute16,lib-eamem,checked
+0x2ce114,272,EAMem_Copy,lib-eamem,checked
+0x2ce228,112,Mem_Move,lib-eamem,checked
 0x2ce2c0,8,Mem_IsReadable,lib-eamem,host
 0x2ce2c8,220,Debug_Fatal,lib-eamem,host
 0x2ce3c0,48,DebugOut_SetEnabledRaw,lib-eamem,host
