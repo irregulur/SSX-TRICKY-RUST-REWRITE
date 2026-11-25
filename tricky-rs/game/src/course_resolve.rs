@@ -2,7 +2,8 @@
 //! the instances' and particle instances' index tables at +8 / +0xc and its table at +0x10. Each step prints its
 //! name (`Course_DebugPrint`, which prints nothing), walks `n` records and turns their numbers and offsets into
 //! pointers, through the course's getters or the resolver's own virtuals. Every call out goes through
-//! [`ResolveEnv`].
+//! [`ResolveEnv`]. Row E3j adds the header pass (`ResolveDataHeader`) and the course's collision free
+//! (`Course_FreeCollision`).
 
 use crate::pf::Mem;
 
@@ -324,4 +325,155 @@ pub fn vf33(m: &mut Mem, r: u32, x: u32) -> u32 {
     let v = if k == u32::MAX { 0 } else { m.r32((k << 2).wrapping_add(m.r32(r + 0xc))) };
     m.w32(x + 0x44, v);
     1
+}
+
+/// The header's words printed by `ResolveDataHeader`, each with its name's text (0x3a67d0 the format)
+const HEADER_WORDS: [u32; 32] = [
+    0x3a6930, 0x3a6738, 0x3a6948, 0x3a6958, 0x3a6970, 0x3a6980, 0x3a6998, 0x3a6770, 0x3a69a8, 0x3a69c0, 0x3a69d8,
+    0x3a69e8, 0x3a6a00, 0x3a6a10, 0x3a6a20, 0x3a6a30, 0x3a6a48, 0x3a6a58, 0x3a6a68, 0x3a6a88, 0x3a6a98, 0x3a6ab0,
+    0x3a6ac0, 0x3a6ad0, 0x3a6ae8, 0x3a6b00, 0x3a6870, 0x3a6b18, 0x3a68c0, 0x3a6b38, 0x3a6b50, 0x3a6b60,
+];
+
+/// `cCourseResolve_Common::ResolveDataHeader` 0x252e18(r, h): the header `h` printed (its three version bytes, the
+/// kind byte +3, which must be 0 to 3 or the answer is 0, then the words +4..+0x80); its offsets made pointers
+/// when set and handed with their counts to the virtuals: +0x50, +0x54 (+0x98 with the count +0x18), the index
+/// tables (`CourseResolve_IndexTable08` 0x254e58 / `0C` 0x254e98, run after +0x64 is made a pointer), +0x50 again
+/// (+0x108, count +0x14), +0x68/+0x6c (+0x68 then +0x70, count +0x2c), +0x70/+0x74 (+0xb8, +0xc0, count +0x30),
+/// +0x40, +0x44, +0x48 (+0x60, count +0xc), +0x4c (+0xb0, count +0x10), +0x58, +0x5c/+0x60 (+0xe0 count +0x20,
+/// +0xe8 count +0x24), +0x78/+0x7c (+0xf0, +0xf8, count +0x38), +0x80 (+0x118); 1
+pub fn resolve_data_header(m: &mut Mem, e: &mut dyn ResolveEnv, r: u32, h: u32) -> u32 {
+    print(m, e, &[0x3a68d8]);
+    let b = |m: &Mem, k: u32| m.r8(h + k) as i8 as i32 as u32;
+    let v = [b(m, 0), b(m, 1), b(m, 2)];
+    print(m, e, &[0x3a6568, v[0], v[1], v[2]]);
+    let text = match m.r8(h + 3) as i8 {
+        0 => 0x3a68f0,
+        1 => 0x3a6900,
+        2 => 0x3a6910,
+        3 => 0x3a6920,
+        _ => return 0,
+    };
+    print(m, e, &[text]);
+    for (k, t) in HEADER_WORDS.iter().enumerate() {
+        let w = m.r32(h + 4 + 4 * k as u32);
+        print(m, e, &[0x3a67d0, *t, w]);
+    }
+    // the offset at `at` made a pointer when set: `Some(pointer)`
+    let fix = |m: &mut Mem, at: u32| {
+        let o = m.r32(h + at);
+        (o != 0).then(|| {
+            let p = o.wrapping_add(h);
+            m.w32(h + at, p);
+            p
+        })
+    };
+    fix(m, 0x50);
+    if let Some(p) = fix(m, 0x54) {
+        let n = m.r32(h + 0x18);
+        vcall(m, e, r, 0x98, &[n, p]);
+    }
+    fix(m, 0x64);
+    crate::course_lookup::index_table_08(m, r);
+    crate::course_lookup::index_table_0c(m, r);
+    let p = m.r32(h + 0x50);
+    if p != 0 {
+        let n = m.r32(h + 0x14);
+        vcall(m, e, r, 0x108, &[n, p]);
+    }
+    // a pair: the second offset decides, the first is made a pointer with it (without a test of its own)
+    let pair = |m: &mut Mem, e: &mut dyn ResolveEnv, a: u32, n_at: u32, v1: u32, v2: u32| {
+        if let Some(q) = fix(m, a + 4) {
+            let p = m.r32(h + a).wrapping_add(h);
+            m.w32(h + a, p);
+            let n = m.r32(h + n_at);
+            vcall(m, e, r, v1, &[n, p, q]);
+            let n = m.r32(h + n_at);
+            let q = m.r32(h + a + 4);
+            vcall(m, e, r, v2, &[n, q]);
+        }
+    };
+    pair(m, e, 0x68, 0x2c, 0x68, 0x70);
+    pair(m, e, 0x70, 0x30, 0xb8, 0xc0);
+    fix(m, 0x40);
+    fix(m, 0x44);
+    if let Some(p) = fix(m, 0x48) {
+        let n = m.r32(h + 0xc);
+        vcall(m, e, r, 0x60, &[n, p]);
+    }
+    if let Some(p) = fix(m, 0x4c) {
+        let n = m.r32(h + 0x10);
+        vcall(m, e, r, 0xb0, &[n, p]);
+    }
+    fix(m, 0x58);
+    if let Some(p) = fix(m, 0x5c) {
+        let q = m.r32(h + 0x60).wrapping_add(h);
+        m.w32(h + 0x60, q);
+        let n = m.r32(h + 0x20);
+        vcall(m, e, r, 0xe0, &[n, p, q]);
+        let n = m.r32(h + 0x24);
+        let (p, q) = (m.r32(h + 0x5c), m.r32(h + 0x60));
+        vcall(m, e, r, 0xe8, &[n, p, q]);
+    }
+    pair(m, e, 0x78, 0x38, 0xf0, 0xf8);
+    if let Some(p) = fix(m, 0x80) {
+        vcall(m, e, r, 0x118, &[p]);
+    }
+    print(m, e, &[0x3a66e8]);
+    1
+}
+
+/// `Mem_Free` 0x14a040
+pub const MEM_FREE: u32 = 0x14a040;
+/// `SphereTreeBufCache`'s table, `SphereTreeBufCache_FreeAll` 0x238dd0 and its destructor 0x23b520
+pub const SPHERE_CACHE_VT: u32 = 0x3a40f8;
+pub const SPHERE_CACHE_FREE_ALL: u32 = 0x238dd0;
+pub const SPHERE_CACHE_DESTRUCT: u32 = 0x23b520;
+
+/// `Course_FreeCollision` 0x25fd40(c) (`sp` the stack pointer on entry): +0x14 and +0x20 freed and cleared; the
+/// array at +0x18 (8 bytes each, its count 0x10 bytes before it) emptied from the end (`Mem_DeleteIfFlag9`
+/// 0x260fa0 with 0: nothing), freed from its count and cleared; +0x24 freed and cleared; the array at +0x1c (0x150
+/// bytes each) destroyed from the end through each one's virtual +8 with 0, freed and cleared (both loops read the
+/// array again each time); then a `SphereTreeBufCache` made on the stack (`sp` − 0x50), emptied
+/// (`SphereTreeBufCache_FreeAll`) and destroyed (with 2)
+pub fn free_collision(m: &mut Mem, e: &mut dyn ResolveEnv, c: u32, sp: u32) {
+    let free = |m: &mut Mem, e: &mut dyn ResolveEnv, at: u32| {
+        let p = m.r32(c + at);
+        if p != 0 {
+            e.call(m, MEM_FREE, &[p]);
+            m.w32(c + at, 0);
+        }
+    };
+    free(m, e, 0x14);
+    free(m, e, 0x20);
+    let a = m.r32(c + 0x18);
+    if a != 0 {
+        let mut s = a.wrapping_add(m.r32(a.wrapping_sub(0x10)) << 3);
+        let mut a = a;
+        while a != s {
+            s = s.wrapping_sub(8);
+            // `Mem_DeleteIfFlag9`(s, 0) (`copies::delete_if`): deletes nothing
+            a = m.r32(c + 0x18);
+        }
+        e.call(m, MEM_FREE, &[a.wrapping_sub(0x10)]);
+        m.w32(c + 0x18, 0);
+    }
+    free(m, e, 0x24);
+    let a = m.r32(c + 0x1c);
+    if a != 0 {
+        let mut s = m.r32(a.wrapping_sub(0x10)).wrapping_mul(0x150).wrapping_add(a);
+        let mut a = a;
+        while a != s {
+            s = s.wrapping_sub(0x150);
+            let vt = m.r32(s);
+            let me = s.wrapping_add(m.r16(vt + 8) as i16 as u32);
+            e.call(m, m.r32(vt + 0xc), &[me, 0]);
+            a = m.r32(c + 0x1c);
+        }
+        e.call(m, MEM_FREE, &[a.wrapping_sub(0x10)]);
+        m.w32(c + 0x1c, 0);
+    }
+    let frame = sp.wrapping_sub(0x50);
+    m.w32(frame, SPHERE_CACHE_VT);
+    e.call(m, SPHERE_CACHE_FREE_ALL, &[frame]);
+    e.call(m, SPHERE_CACHE_DESTRUCT, &[frame, 2]);
 }

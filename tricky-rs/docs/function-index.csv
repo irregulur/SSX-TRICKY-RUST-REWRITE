@@ -4585,7 +4585,7 @@ address,size,name,system,status
 0x252748,152,cCourseResolve_Common::ResolveTGroups,race,ported
 0x2527e0,932,cCourseResolve_Common::ResolveTGroup,race,ported
 0x252b88,656,cCourseResolve_Common::ResolveINode,race,ported
-0x252e18,1512,cCourseResolve_Common::ResolveDataHeader,race,not started
+0x252e18,1512,cCourseResolve_Common::ResolveDataHeader,race,checked
 0x253400,200,cCourseResolve_Common::ResolveInstances,race,checked
 0x2534c8,116,cCourseResolve_Common::ResolveParticleInstances,race,checked
 0x253540,112,cCourseResolve_Common::ResolveModelPointers,race,checked
@@ -4712,7 +4712,7 @@ address,size,name,system,status
 0x25edf0,1704,Course_LoadRenderData,race,ported
 0x25f498,252,Course_Unload,race,ported
 0x25f598,1960,Course_LoadSphereTrees,race,checked
-0x25fd40,308,Course_FreeCollision,race,not started
+0x25fd40,308,Course_FreeCollision,race,checked
 0x25fe78,64,Instance_GetEventScript,world,checked
 0x25feb8,20,Course_GetEffectHeader,race,ported
 0x25fed0,400,World_CellActivate_RunPersistant,world,checked

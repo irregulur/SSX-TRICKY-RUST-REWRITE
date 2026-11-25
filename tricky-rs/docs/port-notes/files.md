@@ -1102,3 +1102,30 @@ material, is equivalent because nothing in the block can change it). The resolve
   the table's +0x24, `CellList_Destruct`(+0x3c, 2), the patch cache's destructor, `~cCourseResolve` 0x186168.
 - Checked in the runner (12 functions, 15 of 15 mutants; chains of random CNT / REF / END tags with random junk bits; models whose
   contexts' chains are a lone END, which both rewrites leave as they were).
+
+## The resolver's header pass and the collision free (row E3j; `game/src/course_resolve.rs`, `tests/course_header.rs`, proven)
+
+- `cCourseResolve_Common::ResolveDataHeader` 0x252e18(r, h) (no direct caller: a virtual of the resolver): prints
+  the header (`Course_DebugPrint`, a no-op): its three version bytes (signed), the kind byte +3 (0 to 3, each its
+  own text; any other kind answers 0 with nothing resolved), then the 32 words +4..+0x80 with their names. Then
+  each offset that is not 0 becomes a pointer (`h` + offset) and goes with its count to one of the resolver's
+  virtuals (table +0x10, adjust at `off`, function at `off + 4`):
+  - +0x50 (no call yet); +0x54 → +0x98(count +0x18, p); +0x64; then `CourseResolve_IndexTable08` 0x254e58 and
+    `0C` 0x254e98 (E3f; they read the course at r+4, so they see +0x54 / +0x64 already resolved);
+  - +0x50 again (already a pointer) → +0x108(count +0x14, p);
+  - pairs whose second offset decides, the first made a pointer with it untested: +0x68/+0x6c → +0x68(count
+    +0x2c, a, b) then +0x70(count, b); +0x70/+0x74 → +0xb8, +0xc0 (count +0x30); +0x78/+0x7c → +0xf0, +0xf8
+    (count +0x38); the counts and pointers are read again for the second call;
+  - +0x40, +0x44 (no call); +0x48 → +0x60(count +0xc, p); +0x4c → +0xb0(count +0x10, p); +0x58 (no call);
+  - +0x5c decides, +0x60 made a pointer with it → +0xe0(count +0x20, a, b), +0xe8(count +0x24, a, b);
+  - +0x80 → +0x118(p). Then a closing print; answers 1.
+- `Course_FreeCollision` 0x25fd40(c) (from `Course_Unload` 0x25f498): `Mem_Free` 0x14a040 on +0x14 and +0x20 (each
+  cleared after); the array at +0x18 (8 bytes each, gcc's `new[]` count 0x10 bytes before it) walked from the end
+  through `Mem_DeleteIfFlag9` 0x260fa0 with 0 (which deletes nothing; our port leaves the call out), then freed
+  from its count and cleared; +0x24 freed; the array at +0x1c (0x150 bytes each) destroyed from the end through
+  each element's virtual +8 (with 0), freed and cleared. Both loops read the array's pointer again on every step.
+  Last, a `SphereTreeBufCache` (table 0x3a40f8) is made on its own stack (sp − 0x50), emptied
+  (`SphereTreeBufCache_FreeAll` 0x238dd0) and destroyed (0x23b520 with 2).
+- Checked in the runner (4,000 cases, half each; random headers with real record lists for the index tables, random
+  arrays with counts 0 to 3 and elements on two tables with adjusts 0, 0x10, −8); 19 of 19 mutants (two of them, wrong strides in the free, loop for ever and were
+  killed by a time limit).
