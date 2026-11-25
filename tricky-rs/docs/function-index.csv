@@ -4557,19 +4557,19 @@ address,size,name,system,status
 0x251a28,112,SplinePathNode_Load,ai,checked
 0x251a98,136,SplinePathNode_IsVisible,ai,not started
 0x251b20,124,StaticInit_Spline,boarder,checked
-0x251ba0,36,cBxCache::cBxCache,world,not started
-0x251bc8,88,cBxCache::~cBxCache,world,not started
-0x251c20,244,CacheBuffer_Init,world,not started
-0x251d18,88,CacheBuffer_Free,world,not started
+0x251ba0,36,cBxCache::cBxCache,world,checked
+0x251bc8,88,cBxCache::~cBxCache,world,checked
+0x251c20,244,CacheBuffer_Init,world,checked
+0x251d18,88,CacheBuffer_Free,world,checked
 0x251d70,72,PatchCache_Age,world,checked
-0x251db8,168,CacheBuffer_Evict,world,not started
-0x251e60,68,CacheBuffer_Touch,world,not started
-0x251ea8,52,cAIFwdDiffCache::cAIFwdDiffCache,ai,not started
-0x251ee0,20,cAIFwdDiffCache::~cAIFwdDiffCache,ai,not started
-0x251ef8,84,CollCache_Init,world,not started
-0x251f50,216,CacheBuffer_Lookup,world,not started
+0x251db8,168,CacheBuffer_Evict,world,checked
+0x251e60,68,CacheBuffer_Touch,world,checked
+0x251ea8,52,cAIFwdDiffCache::cAIFwdDiffCache,ai,checked
+0x251ee0,20,cAIFwdDiffCache::~cAIFwdDiffCache,ai,checked
+0x251ef8,84,CollCache_Init,world,checked
+0x251f50,216,CacheBuffer_Lookup,world,checked
 0x252028,120,CacheBuffer_ClearEntry,world,checked
-0x2520a0,28,CacheBuffer_EvictThunk,world,not started
+0x2520a0,28,CacheBuffer_EvictThunk,world,checked
 0x2520c8,80,cAIFwdDiffCache::__tf,runtime,host
 0x252128,64,cBxCache::__tf,runtime,host
 0x2521e8,52,cCourseResolve_Common::cCourseResolve_Common,race,checked

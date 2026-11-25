@@ -1053,3 +1053,23 @@ material, is equivalent because nothing in the block can change it). The resolve
   - Materials 0x254600: 0x48 each, handed to the virtual +0x110.
   - `ResolveMeshContext` 0x253b58 only answers 1. vf33 0x254678: `x`+0x44 becomes a particle instance from the +0xc
     table (0 for -1).
+
+## The patch and collision caches (row E3h; `game/src/patch_cache.rs`, `tests/patch_cache.rs`, proven)
+
+- A cache (`cBxCache`, `cAIFwdDiffCache` derives from it with only its own table 0x3a6508): +0 `n` records, +4
+  their size, +8 `n` 8-byte entries, +0xc the records, +0x10 the table (0x3a6518). The world's is at `cWorld`+0x28
+  (built by `cCourseResolve`'s constructor 0x25ece8, sized by `CollCache_Init` from `Course_LoadRenderData`,
+  freed by `Course_Unload` and `World_Destruct`); `cAIWorld::vf1` ages the one at 0x3464b0 each tick.
+- `CacheBuffer_Init` 0x251c20 frees first, then allocates records (name 0x3a64e8) and entries (0x3a64f8) with
+  `EAMem_Alloc`, fills each it got with 0xdeadc0ed (`EAMem_Set`) and zeroes the entries; `CollCache_Init` uses
+  0x1cd0-byte records and clears each record's key (+0).
+- An entry is (hits this tick, last tick's hits − 1): `CacheBuffer_Touch` adds a hit (capped below 2000000000),
+  `PatchCache_Age` moves hits − 1 to the second word and clears the first.
+- `CacheBuffer_Evict` takes the first entry whose two words sum to ≤ 0, otherwise the smallest sum (first of
+  equals; when no sum is under 2000000000, entry 0), sets its hits to 2 and answers its record. With `n` ≤ 0 it
+  still writes entry 0.
+- `CacheBuffer_Lookup` (from `World_LookupCollCache` 0x25c750) finds the record whose key is the patch (its
+  address) and touches it; on a miss it evicts one, stores the key, runs the VU0 patch program on the patch's
+  coefficients (key+0x50), clears the record (`CacheBuffer_ClearEntry`: words +0, +0x10, +0x20 of 81 0x40-byte
+  blocks from +0x650 and 9 from +0x1a90 set to 1e10) and copies VU0's output to +0x10.
+- Checked in the runner (13 functions, 13 of 14 mutants killed, one equivalent; `Mem_Free`, `Mem_Delete`, `EAMem_*` and the VU0 calls stood in).
