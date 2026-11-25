@@ -38,6 +38,7 @@ state machine and the renderer are ours. Nothing has been checked against the or
 | E1b2h | The order the world's nodes are made and ticked in (the game's node list: `BxList_Add` 0x17d4e8 links new nodes at the head, cells waking, script order; the port uses instance and script-op order), and what else draws from `Rand_Game` before the race init reseeds it | unowned | E1b2b | | Gap of E1b2b / E1b2e; overlaps E9b2 |
 | E1b2r2 | Split of E1b2r: the remaining `E1b2r` hook gated on `G10`: `worldsound.rs`' ambient and speech draws on the game's stream (`fxrand::lesson_path_var` was wired in `C11e`) | any | E1b2r1 | | Split of E1b2r; overlaps G10 |
 | E3 | Level files read by our code, as the game reads them, replacing the SSX-Library JSON project folder (`level.rs`) | unowned | E2b | | [repo] level-editing.md. Split before claiming: |
+| E2i | Split of E2: the memory library the file code calls: `EAMem_Set` 0x2cc808, `EAMem_Copy` 0x2ce114, `Mem_Move` 0x2ce228 ported on the game's bytes in `tricky-rs/game/src/eamem.rs`, and `Crc_Compute16` 0x2ce04c (`career::crc16`), checked in the runner | unowned | E2a | irregulur/lynx (2026-11-25) | Split of E2 |
 | E6 | Loading and memory: what the game loads when (load screens, course switch), only as far as it changes behaviour | unowned | E1 | | [est] |
 | E7 | World: terrain tessellation as the game does it, world cells (`World_CellActivate_RunPersistant` 0x25fed0), instance queries `World_QueryInstances` 0x25b878, ray casts `World_RayCast` 0x25aff8 / `World_RayCastInstance` 0x25bf48 | unowned | E3a | | [repo] Split: E7a, E7b, E7c. `collide.rs` (triangle grid of the drawn mesh) is a stand-in for these |
 | E7c3j | Gap of E7c3i: a wipe-out of a rider that lands upside down (alaska, TRICKY_OLDAI, t 110.0: up (−0.08, −0.16, −0.98) in the game's axes) builds the ragdoll's body from the bind pose (`bind_body_at`, `rider/wipeout.rs`, STANDIN for `CollBody_UpdateFromBones` 0x2361b0, G5) under the snow, and the first `Ragdoll_Contacts` 0x10e190 pushes it 3.1 m out along the normal: read the game's body and push for a head-first landing (PINE) and match it | unowned | E7c3i | | Gap of E7c3i |
@@ -1883,3 +1884,4 @@ matches the original.
 - 2026-11-25 irregulur/lynx: E2g done.
 - 2026-11-25 irregulur/lynx: split E2h (the BIG library, checked in the runner) out of E2
 - 2026-11-25 irregulur/lynx: E2h done.
+- 2026-11-25 irregulur/lynx: split E2i (the memory library's fill, copy, move and checksum) out of E2
