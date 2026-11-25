@@ -1026,3 +1026,30 @@ course at +4.
   record counted at course +0x18 / +0x28, starting at +0x54 / +0x64. Each record is a word count, then that many
   words. They answer 1.
 - `Course_DebugPrint` 0x255310 only spills its arguments.
+
+## The course resolver's steps (row E3g; `game/src/course_resolve.rs`, `tests/course_resolve.rs`, proven)
+
+Checked in the runner (8,400 cases, 15 of 16 mutants; the other, the material block's count read again after each
+material, is equivalent because nothing in the block can change it). The resolver `cCourseResolve_Common` (table
+0x3a7058 at +0x10) keeps the course at +4 and the instances' and particle instances' index tables at +8 / +0xc.
+- Constructor and destructor: the table, then the virtual at +0x18 (`Reset` 0x2522a0: +0xc, +0, +4, +8 cleared)
+  through vf1 / vf3. The destructor deletes on bit 0.
+- `ResolveDataOnly` 0x252408(r, course): 4 without a course, 6 with more than 4000 particle instances (course
+  +0x2c, signed). Else the index tables go on its own stack frame (0x4e30 bytes: +8 at the frame, +0xc 16,000 bytes
+  up), the course is kept, and the virtual +0x58 runs on it. The answer is 1 when that virtual answers 0, else 0.
+- Each step prints its name with `Course_DebugPrint` (strings 0x3a6b70.., which print nothing) and answers 1:
+  - `ResolveInstances` 0x253400, 0x100 bytes each: +0xc0 by id (0x2522e0), +0xf4 cleared, +0xf0 from the index
+    table, +0xc4 / +0xc8 instances by number (0x254a28), 0 when negative.
+  - `ResolveParticleInstances` 0x2534c8, 0x70 each: +0x40 by id, +0x64 cleared.
+  - Model and particle model pointers (0x253540 / 0x253b60) add the base to `n` words.
+  - Models and particle models (0x2535b0 / 0x253bd0): size-prefixed records handed to the virtual +0x78 / +0xc8.
+  - Particle model hierarchies 0x253d30, 0x10 each: the three words printed; +4 / +8 made pointers when set and
+    handed to the virtuals +0xd8 / +0xa0; +0xc the hierarchy, or 0x346440 for -1.
+  - Particle mesh 0x253e80: its fields printed, the two float triples through `__extendsfdf2`; +0x24 made a
+    pointer.
+  - Material blocks 0x253fb0: a count, then that many materials by number (0x254af0).
+  - Splines 0x254160: each segment's +0x20 becomes a spline. Spline segments 0x2541e8: each spline's +0x50 / +0x54
+    become splines (0 for -1) and +0x58 a segment.
+  - Materials 0x254600: 0x48 each, handed to the virtual +0x110.
+  - `ResolveMeshContext` 0x253b58 only answers 1. vf33 0x254678: `x`+0x44 becomes a particle instance from the +0xc
+    table (0 for -1).

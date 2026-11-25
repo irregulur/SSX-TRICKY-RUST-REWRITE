@@ -4572,43 +4572,43 @@ address,size,name,system,status
 0x2520a0,28,CacheBuffer_EvictThunk,world,not started
 0x2520c8,80,cAIFwdDiffCache::__tf,runtime,host
 0x252128,64,cBxCache::__tf,runtime,host
-0x2521e8,52,cCourseResolve_Common::cCourseResolve_Common,race,not started
-0x252220,88,cCourseResolve_Common::~cCourseResolve_Common,race,not started
-0x252278,40,cCourseResolve_Common::vf1_252278,race,not started
-0x2522a0,20,cCourseResolve_Common::Reset,race,not started
-0x2522b8,40,cCourseResolve_Common::vf3_2522b8,race,not started
+0x2521e8,52,cCourseResolve_Common::cCourseResolve_Common,race,checked
+0x252220,88,cCourseResolve_Common::~cCourseResolve_Common,race,checked
+0x252278,40,cCourseResolve_Common::vf1_252278,race,checked
+0x2522a0,20,cCourseResolve_Common::Reset,race,checked
+0x2522b8,40,cCourseResolve_Common::vf3_2522b8,race,checked
 0x2522e0,52,Course_LookupInstanceById,race,ported
 0x252318,52,Course_LookupParticleById,race,checked
 0x252350,184,cCourseResolve_Common::Resolve,race,checked
-0x252408,100,cCourseResolve_Common::ResolveDataOnly,race,not started
+0x252408,100,cCourseResolve_Common::ResolveDataOnly,race,checked
 0x252470,724,cCourseResolve_Common::ResolveTGroupHeader,race,checked
 0x252748,152,cCourseResolve_Common::ResolveTGroups,race,ported
 0x2527e0,932,cCourseResolve_Common::ResolveTGroup,race,ported
 0x252b88,656,cCourseResolve_Common::ResolveINode,race,ported
 0x252e18,1512,cCourseResolve_Common::ResolveDataHeader,race,not started
-0x253400,200,cCourseResolve_Common::ResolveInstances,race,not started
-0x2534c8,116,cCourseResolve_Common::ResolveParticleInstances,race,not started
-0x253540,112,cCourseResolve_Common::ResolveModelPointers,race,not started
-0x2535b0,124,cCourseResolve_Common::ResolveModels,race,not started
+0x253400,200,cCourseResolve_Common::ResolveInstances,race,checked
+0x2534c8,116,cCourseResolve_Common::ResolveParticleInstances,race,checked
+0x253540,112,cCourseResolve_Common::ResolveModelPointers,race,checked
+0x2535b0,124,cCourseResolve_Common::ResolveModels,race,checked
 0x253630,420,cCourseResolve_Common::ResolveModel,race,ported
 0x2537d8,472,cCourseResolve_Common::ResolveModelHierarchies,race,ported
 0x2539b0,420,cCourseResolve_Common::ResolveMesh,race,ported
-0x253b58,8,cCourseResolve_Common::ResolveMeshContext,race,not started
-0x253b60,112,cCourseResolve_Common::ResolveParticleModelPointers,race,not started
-0x253bd0,124,cCourseResolve_Common::ResolveParticleModels,race,not started
+0x253b58,8,cCourseResolve_Common::ResolveMeshContext,race,checked
+0x253b60,112,cCourseResolve_Common::ResolveParticleModelPointers,race,checked
+0x253bd0,124,cCourseResolve_Common::ResolveParticleModels,race,checked
 0x253c50,220,cCourseResolve_Common::ResolveParticleModel,race,ported
-0x253d30,332,cCourseResolve_Common::ResolveParticleModelHierarchies,race,not started
-0x253e80,304,cCourseResolve_Common::ResolveParticleMesh,race,not started
-0x253fb0,200,cCourseResolve_Common::ResolveMaterialBlocks,race,not started
+0x253d30,332,cCourseResolve_Common::ResolveParticleModelHierarchies,race,checked
+0x253e80,304,cCourseResolve_Common::ResolveParticleMesh,race,checked
+0x253fb0,200,cCourseResolve_Common::ResolveMaterialBlocks,race,checked
 0x254078,164,cCourseResolve_Common::ResolveAnimation,race,ported
 0x254120,60,cCourseResolve_Common::ResolveChannel,race,ported
-0x254160,132,cCourseResolve_Common::ResolveSplines,race,not started
-0x2541e8,192,cCourseResolve_Common::ResolveSplineSegments,race,not started
+0x254160,132,cCourseResolve_Common::ResolveSplines,race,checked
+0x2541e8,192,cCourseResolve_Common::ResolveSplineSegments,race,checked
 0x2542a8,112,cCourseResolve_Common::ResolveCameraPointers,camera,checked
 0x254318,124,cCourseResolve_Common::ResolveCameras,camera,checked
 0x254398,612,cCourseResolve_Common::ResolveCamera,camera,ported
-0x254600,120,cCourseResolve_Common::ResolveMaterials,race,not started
-0x254678,48,cCourseResolve_Common::vf33_254678,race,not started
+0x254600,120,cCourseResolve_Common::ResolveMaterials,race,checked
+0x254678,48,cCourseResolve_Common::vf33_254678,race,checked
 0x2546a8,708,cCourseResolve_Common::ResolveHashTable,race,ported
 0x2549f8,44,Course_GetPatch,race,ported
 0x254a28,40,Course_GetInstance,race,checked
