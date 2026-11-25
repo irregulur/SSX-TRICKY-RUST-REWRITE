@@ -829,10 +829,10 @@ address,size,name,system,status
 0x148188,64,cParticleNode::OnMessage,world,checked
 0x1481c8,8,cParticleNode::Draw,world,not started
 0x1481d0,72,cParticleNode::SaveSnapshot,world,checked
-0x148218,168,cCameraNode::cCameraNode,camera,not started
+0x148218,168,cCameraNode::cCameraNode,camera,checked
 0x1482c0,144,CamAnimFrame_Create,camera,ported
 0x148350,292,CamAnim_SetShot,camera,ported
-0x148478,76,cCameraNode::~cCameraNode,camera,not started
+0x148478,76,cCameraNode::~cCameraNode,camera,checked
 0x148560,284,cCollideEmitterNode::cCollideEmitterNode,world,not started
 0x148680,196,cCollideEmitterNode::cCollideEmitterNode,world,checked
 0x148748,328,CollideEmitterNode_CreateParticles,world,ported
@@ -858,7 +858,7 @@ address,size,name,system,status
 0x149270,84,cMovieNode::__tf,runtime,host
 0x1492c8,92,cCollideEmitterNode::__tf,runtime,host
 0x1493e8,92,cCameraNode::__tf,runtime,host
-0x149448,84,CameraNodeState_Destruct,camera,not started
+0x149448,84,CameraNodeState_Destruct,camera,checked
 0x1494a0,84,cParticleNode::__tf,runtime,host
 0x1494f8,84,cEmitterNode::__tf,runtime,host
 0x149550,92,cTrickTriggerNode::__tf,runtime,host
@@ -1437,12 +1437,12 @@ address,size,name,system,status
 0x16dbe8,124,StaticInit_CamScript,camera,checked
 0x16dc68,80,CamAnimation::__tf,runtime,host
 0x16dcb8,8,CamAnimation::~CamAnimation,camera,ported
-0x16dcc0,36,cOfflineObject::~cOfflineObject,game,not started
+0x16dcc0,36,cOfflineObject::~cOfflineObject,game,checked
 0x16dce8,64,cOfflineObject::__tf,runtime,host
 0x16dd68,60,CamCamera::CamCamera,camera,ported
 0x16dda8,16,CamCamera::GetView,camera,checked
 0x16ddb8,20,CamCamera::GetLens,camera,checked
-0x16ddd0,56,CamCamera_Update,camera,not started
+0x16ddd0,56,CamCamera_Update,camera,checked
 0x16de00,124,StaticInit_CamCamera,camera,checked
 0x16de80,80,CamCamera::__tf,runtime,host
 0x16ded0,8,CamCamera::~CamCamera,camera,ported
@@ -1464,14 +1464,14 @@ address,size,name,system,status
 0x16e6b0,60,CamDirector::CamDirector,camera,ported
 0x16e6f0,124,StaticInit_CamDirector,camera,checked
 0x16e770,80,CamDirector::__tf,runtime,host
-0x16e7c0,8,CamDirector::~CamDirector,camera,not started
+0x16e7c0,8,CamDirector::~CamDirector,camera,checked
 0x16e7f0,64,cOfflineObject::__tf,runtime,host
-0x16e8f0,16,Cam_SetShakeParams,camera,not started
+0x16e8f0,16,Cam_SetShakeParams,camera,checked
 0x16e900,4616,CamCamera_EvalPosition,camera,checked
 0x16fb08,856,Camera_CollidePush,camera,checked
 0x16fe60,1340,Camera_CollideWorld,camera,checked
 0x1703a0,20,CamView_SetTarget,camera,checked
-0x1703b8,8,CamView_Update,camera,not started
+0x1703b8,8,CamView_Update,camera,checked
 0x1703c0,124,StaticInit_Camera,camera,checked
 0x170440,44,Vec4_Scale,common,ported
 0x170470,60,CamPath::CamPath,camera,ported
@@ -1482,13 +1482,13 @@ address,size,name,system,status
 0x170ca8,1620,CamPath_Eval,camera,checked
 0x171308,124,StaticInit_CamPath,camera,checked
 0x171388,80,CamPath::__tf,runtime,host
-0x1713d8,8,CamPath::~CamPath,camera,not started
+0x1713d8,8,CamPath::~CamPath,camera,checked
 0x171410,64,cOfflineObject::__tf,runtime,host
 0x171500,268,CamRegion_CheckCondition,camera,checked
 0x171610,2068,CamRegion_IsInside,camera,checked
 0x171e28,176,CamRegion_CheckTrigger,camera,ported
 0x171f60,80,CamRegion::__tf,runtime,host
-0x171fb0,8,CamRegion::~CamRegion,camera,not started
+0x171fb0,8,CamRegion::~CamRegion,camera,checked
 0x171fe0,64,cOfflineObject::__tf,runtime,host
 0x1720c0,60,CamScene::CamScene,camera,ported
 0x172100,104,CamScene_GetActorPosition,camera,ported
@@ -1498,7 +1498,7 @@ address,size,name,system,status
 0x172268,64,cOfflineObject::__tf,runtime,host
 0x1722e8,3540,CamCamera_EvalLookAt,camera,checked
 0x1730c0,24,CamLens_SetHeight,camera,checked
-0x1730d8,8,CamLens_Update,camera,not started
+0x1730d8,8,CamLens_Update,camera,checked
 0x1730e0,124,StaticInit_CamCamera2,camera,checked
 0x1731f8,116,Camera_ResetRiderTrack,camera,checked
 0x173270,1456,Camera_TrackRider,camera,checked
@@ -1548,7 +1548,7 @@ address,size,name,system,status
 0x1779b8,660,World_GetStageAreaMarker,world,not started
 0x177d48,80,CamRegion::__tf,runtime,host
 0x177db0,28,Camera_Cut,camera,ported
-0x177dd8,232,cBxCamera::~cBxCamera,camera,not started
+0x177dd8,232,cBxCamera::~cBxCamera,camera,checked
 0x177ec0,64,cBxCamera::__tf,runtime,host
 0x177f00,80,CamScene::__tf,runtime,host
 0x177f58,80,CamPath::__tf,runtime,host
@@ -1558,7 +1558,7 @@ address,size,name,system,status
 0x1781c0,124,cCamControl::cCamControl,boarder,ported
 0x178240,100,cCamControl::~cCamControl,boarder,not started
 0x1782a8,40,Game_RegisterCamera,camera,checked
-0x1782d0,60,Camera_LoadCmlOnce,camera,not started
+0x1782d0,60,Camera_LoadCmlOnce,camera,checked
 0x178310,12,Camera_GetCommonCmlName,camera,ported
 0x178320,12,Camera_GetScriptsCmlName,camera,ported
 0x178330,184,Camera_GetCourseCmlName,camera,ported
@@ -1572,11 +1572,11 @@ address,size,name,system,status
 0x178a28,448,Camera_SetChaseParams,camera,checked
 0x178be8,472,Camera_AdjustChase,camera,checked
 0x178dc0,8,cCamControl::vf2_178dc0,boarder,not started
-0x178dc8,116,Camera_StaticDtor,camera,not started
+0x178dc8,116,Camera_StaticDtor,camera,checked
 0x178f50,80,cCamControl::__tf,runtime,host
 0x178fa0,80,CamAnimation::__tf,runtime,host
 0x179028,64,cOfflineObject::__tf,runtime,host
-0x179068,8,Cml_FreeHandle,camera,not started
+0x179068,8,Cml_FreeHandle,camera,checked
 0x1790b8,124,StaticInit_OfflineObject2,game,checked
 0x179138,124,StaticInit_OfflineObject3,game,checked
 0x1791b8,124,StaticInit_OfflineObject4,game,checked
@@ -2777,10 +2777,10 @@ address,size,name,system,status
 0x1cb300,404,cAnimFrame::vf1_1cb300,animation,ported
 0x1cb498,448,cMeshAnimFrame::vf1_1cb498,animation,checked
 0x1cb658,188,AnimFrame_MulMatrix,animation,not started
-0x1cb718,76,cCamAnimFrame::cCamAnimFrame,camera,not started
-0x1cb768,8,cCamAnimFrame::vf1_1cb768,camera,not started
+0x1cb718,76,cCamAnimFrame::cCamAnimFrame,camera,checked
+0x1cb768,8,cCamAnimFrame::vf1_1cb768,camera,checked
 0x1cb770,192,AnimCurve_FindSegment,animation,ported
-0x1cb8b0,20,cCamAnimFrame::~cCamAnimFrame,camera,not started
+0x1cb8b0,20,cCamAnimFrame::~cCamAnimFrame,camera,checked
 0x1cb908,80,cCamAnimFrame::__tf,runtime,host
 0x1cb960,48,AnimFrame_SetIdentity,animation,checked
 0x1cb990,20,cMeshAnimFrame::~cMeshAnimFrame,animation,not started
@@ -4604,8 +4604,8 @@ address,size,name,system,status
 0x254120,60,cCourseResolve_Common::ResolveChannel,race,ported
 0x254160,132,cCourseResolve_Common::ResolveSplines,race,not started
 0x2541e8,192,cCourseResolve_Common::ResolveSplineSegments,race,not started
-0x2542a8,112,cCourseResolve_Common::ResolveCameraPointers,camera,not started
-0x254318,124,cCourseResolve_Common::ResolveCameras,camera,not started
+0x2542a8,112,cCourseResolve_Common::ResolveCameraPointers,camera,checked
+0x254318,124,cCourseResolve_Common::ResolveCameras,camera,checked
 0x254398,612,cCourseResolve_Common::ResolveCamera,camera,ported
 0x254600,120,cCourseResolve_Common::ResolveMaterials,race,not started
 0x254678,48,cCourseResolve_Common::vf33_254678,race,not started
@@ -4617,7 +4617,7 @@ address,size,name,system,status
 0x254af0,44,Course_GetMaterial,race,ported
 0x254b20,44,Course_GetSplineSegment,race,ported
 0x254b50,40,Course_GetSpline,race,ported
-0x254b78,44,Course_GetCamera,camera,not started
+0x254b78,44,Course_GetCamera,camera,checked
 0x254ba8,12,Course_GetHashTables,race,not started
 0x254bb8,56,Course_LightHashCount,race,not started
 0x254bf0,56,Course_LightHashTable,race,not started

@@ -202,6 +202,7 @@ pub mod camera_ctl;
 pub mod camera_host;
 pub mod cml;
 pub mod camera_update;
+pub mod camera_misc;
 pub mod effects;
 pub mod emitter;
 pub mod impact;

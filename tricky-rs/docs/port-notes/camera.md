@@ -238,3 +238,29 @@ case-insensitive walk of a kind's list) stays for the app's intro until it moves
   unblocking row E1b2g7d5j3b2).
 - **Stand-in left**: fallback `COMMONOB.CML` preset blocks in `camera_host::fallback_presets` when no `Cml` file is
   loaded (headless unit tests without disc/folder `.cml`).
+
+## The camera's small functions (row E11j; `game/src/camera_misc.rs`, `tests/camera_misc.rs`, proven)
+
+Checked in the runner (8,400 cases, the calls out logged, 22 of 22 mutants):
+- `cOfflineObject::~cOfflineObject` 0x16dcc0 (its table 0x37f350, deleted on bit 0); `CamDirector`, `CamPath` and
+  `CamRegion`'s destructors (0x16e7c0, 0x1713d8, 0x171fb0) are only a jump to it.
+- `CamView_Update` 0x1703b8 and `CamLens_Update` 0x1730d8 are empty; `CamCamera_Update` 0x16ddd0 calls both on its
+  view (+4) and the view's lens (+0x120).
+- `Cam_SetShakeParams` 0x16e8f0(c, f12, f13): the view at `c`+0x11c gets f13 at +0xc4, then f12 at +0xb8.
+- `Camera_LoadCmlOnce` 0x1782d0: `Camera_LoadCmlFiles` when 0x33777c is 1, then 0x33777c = 0. `Cml_FreeHandle`
+  0x179068 deletes the block a handle holds.
+- `cCamAnimFrame` (table 0x391ae0, at +0x8c of the frame): constructor 0x1cb718(f, t) = `AnimFrame_Init`, table,
+  vf1 0x1cb768 (a jump to `cAnimFrame::vf1` 0x1cb300, the curves at `t`); destructor 0x1cb8b0 sets the table and
+  jumps to `cAnimFrame::~cAnimFrame` 0x1cba40.
+- `cCameraNode` 0x148218(n, list, rec) (spawned by `TriggerOp_SpawnCameraNode`): +0xa8 `cAnimFrame`'s table
+  0x391b10, `AnimFrame_Clear(n+0x1c)`, +0xa8 `cCamAnimFrame`'s, the list node at +0xac (type 1000), +0xb4 0x36c6b0,
+  +0xc4 the course camera `rec`+0x18 (`Course_GetCamera` on the world 0x346488; `rec`+0x18 is read even when `rec`
+  is 0), the shot `rec`+8 (0 without a record). Its destructor 0x148478 and `CameraNodeState_Destruct` 0x149448 undo
+  it in reverse.
+- `cBxCamera::~cBxCamera` 0x177dd8: table 0x3830a8 at +0xeb8, the eight objects of 0x40 at +0x220 destroyed last
+  first (their own destructor, slot +8/+0xc, with 0), the scene (+0x214) and the path (+0x1e8) with 2, deleted on
+  bit 0. `Camera_StaticDtor` 0x178dc8: the static camera 0x3368b0, then the eight objects at 0x3366a0 last first.
+- `Course_GetCamera` 0x254b78(w, i): `[[w+4]+0x78][i]`, 0 when either is 0. The course loader's
+  `ResolveCameraPointers` 0x2542a8 (message 0x3a6f10; the `n` words at `p` get `base` added) and `ResolveCameras`
+  0x254318 (message 0x3a6f30; each of `n` size-prefixed records handed to the loader's virtual at +0x100/+0x104 of
+  `o`+0x10's table) answer 1.
