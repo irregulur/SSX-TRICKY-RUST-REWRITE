@@ -2817,7 +2817,7 @@ address,size,name,system,status
 0x1ce778,264,MemCardOp_StartSave,save,ported
 0x1ce880,44,MCOverlay_EndSave,save,not started
 0x1ce8b0,72,MemCardOp_Begin,save,ported
-0x1ce8f8,256,MemCard_FormatSaveTitle,save,not started
+0x1ce8f8,256,MemCard_FormatSaveTitle,save,checked
 0x1ce9f8,1068,cSelectNextEventOverlay::vf54_1ce9f8,frontend,ported
 0x1cee28,60,cSelectNextEventOverlay::vf55_1cee28,frontend,ported
 0x1cee68,72,MemCardOp_Create,save,ported
@@ -4374,7 +4374,7 @@ address,size,name,system,status
 0x23ed60,24,MemCard_MarkSlotDirty,save,checked
 0x23ed78,56,cPS2MemCard::vf54_23ed78,save,checked
 0x23edb0,24,cPS2MemCard::vf55_23edb0,save,checked
-0x23edc8,3752,cPS2MemCard::vf2_23edc8,save,not started
+0x23edc8,3752,cPS2MemCard::vf2_23edc8,save,checked
 0x23fb60,344,cPS2MemCard::vf13_23fb60,save,checked
 0x23fcb8,236,MemCard_CheckRoomForFiles,save,checked
 0x23fda8,140,cPS2MemCard::vf11_23fda8,save,checked

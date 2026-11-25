@@ -32,7 +32,7 @@ impl Rng {
 }
 
 const APPDATA: (u32, u32) = (0x337000, 0x1000);
-const GLOBALS: (u32, u32) = (0x345000, 0x1000);
+const GLOBALS: (u32, u32) = (0x345000, 0x2000);
 const RODATA: (u32, u32) = (0x3a4000, 0x1000);
 const ARENA: u32 = 0x0100_0000;
 const SIZE: u32 = 0x1000;
@@ -46,17 +46,17 @@ const OUT: u32 = ARENA + 0xe00;
 fn vf(off: u32) -> u32 {
     0x01f0_0000 + off
 }
-const VOFFS: [u32; 11] = [0x88, 0x98, 0xf0, 0x148, 0x158, 0x168, 0x170, 0x178, 0x180, 0x198, 0x1c8];
+const VOFFS: [u32; 12] = [0x88, 0x98, 0xf0, 0x148, 0x158, 0x168, 0x170, 0x178, 0x180, 0x198, 0x1c8, 0x1e8];
 const RESULTS: [i32; 17] = [0, -1, -2, -3, -5, -6, -7, -8, -10, -11, -9999, -10000, -10001, -10002, -10003, 1, 5];
 
-const FUNCS: [u32; 70] = [
+const FUNCS: [u32; 71] = [
     0x23d908, 0x23d940, 0x23d998, 0x23db08, 0x23db10, 0x23db40, 0x23dbc8, 0x23dc40, 0x23dc50, 0x23dd10, 0x23dd18,
     0x23dd70, 0x23dd80, 0x23dd88, 0x23dd90, 0x23ddf8, 0x23de08, 0x23de48, 0x23de98, 0x23dea0, 0x23dea8, 0x23df20,
     0x23df80, 0x23df98, 0x23dfa8, 0x23dfb8, 0x23dfc0, 0x23e038, 0x23e090, 0x23e0a8, 0x23e0b8, 0x23e0c8, 0x23e928,
     0x23e988, 0x23e9b0, 0x23ea18, 0x23ea78, 0x23ea98, 0x23eac0, 0x23eb18, 0x23eb28, 0x23eb48, 0x23eb60, 0x23eb80,
     0x23ebd8, 0x23ebf0, 0x23ec08, 0x23ecf0, 0x23ed08, 0x23ed10, 0x23ed18, 0x23ed48, 0x23ed60, 0x23ed78, 0x23edb0,
     0x23fda8, 0x23fe38, 0x23fe48, 0x23fea8, 0x23ff18, 0x23fed8, 0x23ff38, 0x23ff70, 0x240010, 0x240040, 0x240070,
-    0x2400f8, 0x23fcb8, 0x23ffe0, 0x23fb60,
+    0x2400f8, 0x23fcb8, 0x23ffe0, 0x23fb60, 0x23edc8,
 ];
 /// The constant and field answers (`memcard::constant`)
 const CONSTS: [u32; 11] =
@@ -107,11 +107,11 @@ fn arity(func: u32, w: &[u32]) -> usize {
         mc::MC_GET_INFO => 5,
         mc::SPRINTF if w[1] == mc::DIR_FMT => 3,
         mc::SPRINTF => 4,
-        mc::MC_SYNC | mc::WSTR_FORMAT | mc::WSTR_TO_ASCII => 3,
+        mc::MC_SYNC | mc::WSTR_FORMAT | mc::WSTR_TO_ASCII | mc::ASYNC_FINISH => 3,
         mc::WSTR_SET_ASCII => 2,
         mc::PROCESS | mc::MC_FORMAT | mc::LOC_STRING | mc::WSTR_COPY => 2,
         f if f == vf(0xf0) => 4,
-        f if f == vf(0x88) || f == vf(0x170) || f == vf(0x178) => 1,
+        f if f == vf(0x88) || f == vf(0x170) || f == vf(0x178) || f == vf(0x1e8) => 1,
         f if f & 0xfff0_0000 == 0x01f0_0000 => 2,
         _ => 1,
     }
@@ -141,9 +141,15 @@ fn standin(io: &mut dyn Io, func: u32, w: &[u32], ans: &Answers) -> (u32, Call) 
         f if f == vf(0x88) || f == vf(0x98) => r % 40,
         f if f == vf(0x170) || f == vf(0x178) => [0, 1, 1, 1][(r % 4) as usize],
         f if f == vf(0x1c8) => [0, 0, 1][(r % 3) as usize],
+        f if f == vf(0x1e8) => r % 2,
+        mc::ASYNC_IS_DONE => [0, 1, 1, 2][(r % 4) as usize],
         mc::MC_SYNC => {
-            io.w32(w[2], [0, u32::MAX, u32::MAX, 5][(r % 4) as usize]);
-            r
+            let codes = [
+                0, -1, -1, 5, 1, 2, -4, -2, -10, -15, -45, -55, -75, -3, -10001, -20, -11, -19, -40, -49, -50, -59, -70,
+                -79, -80, -69, -39, -60,
+            ];
+            io.w32(w[2], codes[(r >> 8) as usize % codes.len()] as u32);
+            if r % 6 == 0 { 0 } else { r }
         }
         _ => r,
     };
@@ -177,10 +183,11 @@ fn memory_card_driver_matches_the_original() {
     for f in FUNCS.iter().chain(&CONSTS).chain(&CURRENT) {
         r.allow(*f);
     }
-    for f in [0x2cc808u32, 0x2fd14c, 0x2fd260] {
+    for f in [0x2cc808u32, 0x2fd14c, 0x2fd260, 0x23d680, 0x23d868] {
         r.allow(f);
     }
     let mut stubs = vec![
+        mc::ASYNC_IS_DONE, mc::ASYNC_FINISH,
         mc::PROCESS, mc::MC_GET_DIR, mc::MC_FORMAT, mc::MC_GET_INFO, mc::MC_SYNC, mc::SPRINTF, mc::LOC_STRING,
         mc::WSTR_COPY, mc::WSTR_FORMAT, mc::WSTR_TO_ASCII, mc::EA_FREE, mc::MEM_DELETE, mc::WSTR_SET_ASCII,
     ];
@@ -205,8 +212,10 @@ fn memory_card_driver_matches_the_original() {
     let mut g = Rng(0x3c_a4d0_0000_0001);
     let all: Vec<u32> = FUNCS.iter().chain(&CONSTS).chain(&CURRENT).copied().collect();
     let mut processed = 0usize;
-    for case in 0..all.len() as u32 * 150 {
-        let func = all[(case % all.len() as u32) as usize];
+    let base = all.len() as u32 * 150;
+    // the per-frame step (vf2) gets 8000 more, for its states
+    for case in 0..base + 8000 {
+        let func = if case < base { all[(case % all.len() as u32) as usize] } else { 0x23edc8 };
         let mut m = Mem {
             regions: vec![
                 (APPDATA.0, appdata.clone()),
@@ -257,6 +266,37 @@ fn memory_card_driver_matches_the_original() {
         for i in 0..8 {
             let (n, v) = (g.below(25), g.next());
             put_str(&mut m, STRS + 0x20 * i, n, v);
+        }
+        if func == 0x23edc8 {
+            // the per-frame step: every state, the flags mostly clear, a directory of names ending in a file's
+            // digit, a title in the icon block
+            let st = g.next();
+            m.w32(C + 4, if case % 5 == 0 { g.pick(&[st, 0x3c, 0x3d]) } else { g.below(0x3c) });
+            for at in [0x3c, 0x40, 0x44] {
+                m.w32(C + at, g.pick(&[0, 0, 0, 0, 1]));
+            }
+            m.w32(C + 0x28, g.below(4));
+            let (a, b) = (m.r32(C + 0x24), m.r32(0x3a49e0 + 4 * g.below(3)));
+            let v = g.next();
+            m.w32(C + 0x390, g.pick(&[a, b, b, v]));
+            m.w32(C + 0x20, g.pick(&[0, 1, 2, 5, u32::MAX]));
+            m.w32(mc::INFO_TYPE, g.pick(&[2, 2, 1]));
+            m.w32(mc::INFO_FORMAT, g.pick(&[0, 1, 1]));
+            for j in 0..6 {
+                let (n, v) = (g.below(12), g.next());
+                let at = C + 0x3e0 + 0x40 * j;
+                put_str(&mut m, at, n, v);
+                if n > 0 && g.below(2) == 0 {
+                    m.w8(at + n - 1, b'1' + g.below(5) as u8);
+                }
+            }
+            let n = g.below(20);
+            for k in 0..n {
+                let (hi, any) = (g.below(0xc0) + 0x40, g.below(255) + 1);
+                let h = hi << 8 | g.pick(&[0x81, 0x82, 0x82, any]);
+                m.w16(0x3460d0 + 2 * k, h as u16);
+            }
+            m.w16(0x3460d0 + 2 * n, 0);
         }
         let name = STRS + 0x20 * g.below(8);
         let (a1, a2, a3) = match func {
@@ -352,6 +392,7 @@ fn memory_card_driver_matches_the_original() {
             0x23fcb8 => { mc::check_room(mm, e, C); none }
             0x23ffe0 => { mc::current_text(mm, e, C, a1); none }
             0x23fb60 => { mc::file_line(mm, e, C, a1, a2, TOP); none }
+            0x23edc8 => { mc::update(mm, e, C); none }
             0x23ffb0 => mc::current_error(mm, C),
             0x23fff0 => mc::current_changed(mm, C),
             f => mc::constant(mm, C, f).unwrap(),
@@ -612,6 +653,105 @@ fn sjis_converters_match_the_original() {
             let mut th = vec![0u8; b.len()];
             r.mem.read(*at, &mut th).unwrap();
             assert!(&th == b, "case {case} {func:#x}: memory");
+        }
+    }
+}
+
+fn t_standin(io: &mut dyn Io, func: u32, w: &[u32], ans: &Answers) -> (u32, Call) {
+    let n = match func {
+        mc::WSTR_FORMAT => 4,
+        _ => 2,
+    };
+    let mut log = w[..n].to_vec();
+    if func == mc::WSTR_FORMAT {
+        for k in 0..5 {
+            log.push(io.r8(w[3] + k) as u32);
+        }
+    }
+    (ans.next(), Call(func, log))
+}
+struct TEnv<'a> {
+    log: Vec<Call>,
+    ans: &'a Answers,
+}
+impl FeEnv for TEnv<'_> {
+    fn call(&mut self, m: &mut Mem, func: u32, args: &[u32]) -> u32 {
+        let mut w = args.to_vec();
+        w.resize(8, 0);
+        let (v, c) = t_standin(m, func, &w, self.ans);
+        self.log.push(c);
+        v
+    }
+}
+
+/// `MemCard_FormatSaveTitle` (row E12f2b): both titles, the course's code from 0 to 8 letters (the library's
+/// `strncpy` the game's own), the card's vf and the text calls logged.
+#[test]
+fn save_title_matches_the_original() {
+    let Some(mut r) = Runner::from_env() else { return };
+    for f in [0x1ce8f8u32, mc::STRNCPY] {
+        r.allow(f);
+    }
+    let log: Rc<RefCell<Vec<Call>>> = Rc::default();
+    let ans = Rc::new(Answers { seed: Cell::new(0), n: Cell::new(0) });
+    for func in [mc::LOC_STRING, mc::WSTR_COPY, mc::WSTR_FORMAT, vf(0x130)] {
+        let (l, a) = (log.clone(), ans.clone());
+        r.stub(func, move |c, mem| {
+            let w: Vec<u32> = (4..12).map(|k| c.gpr(k) as u32).collect();
+            let (v, call) = t_standin(mem, func, &w, &a);
+            l.borrow_mut().push(call);
+            c.set_gpr(2, v as i32 as i64 as u64);
+        });
+    }
+    const O: u32 = ARENA + 0x100;
+    const CARD: u32 = ARENA + 0x400;
+    let mut g = Rng(0x717_1e00_0000_0001);
+    for case in 0..2000u32 {
+        let mut m = Mem {
+            regions: vec![
+                (0x32d000, vec![0; 0x1000]),
+                (0x332000, vec![0; 0x2000]),
+                (APPDATA.0, vec![0; APPDATA.1 as usize]),
+                (ARENA, vec![0; SIZE as usize]),
+                (STACK.0, vec![0; STACK.1 as usize]),
+            ],
+        };
+        for k in 0..SIZE / 4 {
+            m.w32(ARENA + 4 * k, g.next());
+        }
+        m.w32(mc::APP, APPOBJ);
+        m.w32(O, g.pick(&[0, 0, 1, 0x8000_0000]));
+        m.w32(O + 0x224, CARD);
+        m.w32(CARD, VT);
+        m.w16(VT + 0x130, g.pick(&[0u16, 8, 0xfff8]));
+        m.w32(VT + 0x134, vf(0x130));
+        let course = g.below(13);
+        m.w32(mc::GAME_COURSE, course);
+        let (n, v) = (g.below(9), g.next());
+        put_str(&mut m, STRS, n, v);
+        m.w32(mc::COURSES + 0x1c * course + 0x10, STRS);
+        let slot = g.pick(&[0, 1, 2, 3, u32::MAX]);
+        ans.seed.set(g.next() as u64 | (g.next() as u64) << 32);
+        ans.n.set(0);
+        let before = m.regions.clone();
+        let mut env = TEnv { log: vec![], ans: &ans };
+        mc::format_save_title(&mut m, &mut env, O, slot, TOP);
+        ans.n.set(0);
+        log.borrow_mut().clear();
+        for (at, b) in &before {
+            r.mem.write(*at, b).unwrap();
+        }
+        r.cpu.set_gpr(4, O as u64);
+        r.cpu.set_gpr(5, slot as i32 as i64 as u64);
+        r.call(0x1ce8f8).unwrap_or_else(|e| panic!("case {case}: {e}"));
+        assert_eq!(*log.borrow(), env.log, "case {case}: the calls");
+        for (at, b) in &m.regions {
+            if *at == STACK.0 {
+                continue;
+            }
+            let mut th = vec![0u8; b.len()];
+            r.mem.read(*at, &mut th).unwrap();
+            assert!(&th == b, "case {case}: memory at {at:#x}");
         }
     }
 }

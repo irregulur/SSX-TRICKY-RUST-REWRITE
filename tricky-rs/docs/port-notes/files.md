@@ -954,8 +954,8 @@ any `sceMc*` error (the result kept in 0x345f54). Layout in the module's doc. Th
 -1, -3, -8..-10 and -10001/-10002 (vf8); `MemCard_GetSlotError` keeps ≤ 0 above -8 and -10001/-10002, else -10.
 A save of n bytes takes `ceil(n/1024) + 0x83` blocks (vf18). Five starters and helpers have no function in the
 index (0x23dc50 entry read, 0x23dd18 `sceMcFormat`, 0x23dfc0 load begin, 0x23ebf0 port changed, 0x23ec08 the
-port's line, 0x23ecf0 a file's name copied); ported and checked with the rest. Not yet: `MemCard_Process`, vf2
-0x23edc8, vf13 0x23fb60, vf53 0x23ffe0, `MemCard_CheckRoomForFiles` 0x23fcb8, the SJIS converters (row E12f2).
+port's line, 0x23ecf0 a file's name copied); ported and checked with the rest. The rest of the driver followed in
+rows E12f2a and E12f2b (below).
 
 `MemCard_Process` 0x23e0d0 (row E12f2a, proven; `memcard::process_state`, second test in `tests/memcard.rs`: every
 state 0..0x3f and random ones, 19 of 21 mutants, 2 equivalent on the ELF's data): jump table 0x3a42c0. Every
@@ -973,3 +973,34 @@ answering the code byte-swapped (as stored) and sign-extended; `Sjis_ToAscii` 0x
 (0x23d628 / 0x23d680) run them over a string.
 `MemCard_CheckRoomForFiles` 0x23fcb8 (E12f2b, proven, `memcard::check_room`, in the first test): free blocks (vf +0x88) less a save's (vf +0x98 of +0x24) for each file the card lacks (vf +0x1c8 answers 0); a file that does not fit is marked +0x1a4 (signed compare).
 `cPS2MemCard::vf13` 0x23fb60 (E12f2b, proven, `memcard::file_line`): a file's line for the menu: busy text 0x3a4590 in states 5..0x10, else the strings 0x15f (no card, or the file not on it), 0x1cf (card unusable), 0x148 (file flagged), 0x18b (no room), else the file's title (+0x1e8); cut to 32 characters on the stack and copied out.
+
+`cPS2MemCard::vf2` 0x23edc8 (E12f2b, proven, `memcard::update`, the first test with 8000 cases of its own over every
+state 0..0x3d, 16 of 16 mutants): the driver's per-frame step; first and second jump tables 0x3a43b0 (state − 2)
+and 0x3a44a0. In order: an unformatted current port (+0x180 clear) forgets its files (+0x4c 0, +0x19c..+0x35c
+cleared). A pending `sceMcGetInfo` (+0x3c) is waited on with `sceMcSync(1, 0, 0x345f54)` (answer 0: still busy,
+return); -1 sets the port's changed flag (+0x184); results in -19..-11, -49..-40, -59..-50, -79..-70 become -10;
+a result `MemCard_IsErrorCode` does not name becomes -10002 when the card type (0x345f4c) is not 2, else -2 when
+unformatted (0x345f58 clear); then the port keeps result, type, free blocks and formatted (+0x17c, +0x174, +0x178,
++0x180) and +0x3c clears. The states that started a card call (2, 6, 8..0xf, 0x12, 0x16..0x18, 0x1c..0x1e,
+0x23..0x27, 0x29..0x2b, 0x2d..0x2f, 0x31..0x33, 0x36..0x3b) sync the same way; on a negative result: -4 is no
+error for 0x24 (make directory) and 0x36..0x3b (deletes); in 8..0xf an error the game does not name (and not -1)
+flags the file being read (+0x19c) and goes to 0x10; any error left goes to state 1 (0x23 / 7 clear the entry, 6
+resets the driver, 0x13 forgets the picked file); else the port's result clears. Then +0x40 (load ended) goes to
+0x1e and +0x44 (save ended) to 0x18. The steps: 5, 0x13, 0x14, 0x15, 0x1b, 0x22 wait for vf +0x1e8 to answer 0,
+then read the directory / build the save path / 0x24 / 0x16 / 0x1c / read the entry (0x23dc50); 6 counts the
+entries (+0x4c = min(read, files)) and gives file i the first directory name (entry +0x20, from +0x3e0) ending in
+the digit i + 1; 7 and the end of the file walk check the room; 8 keeps the handle and reads (0xa), 0xa converts
+the save's SJIS title (0x3460d0, the icon block's) into the file's title (+0x1e8); 0xb flags the file when the
+entry's word (+0x390) is not the save's size (+0x24); 0xc..0xe mark it (+0x1a0) when the entry's word is not the
+icon's (0x3a49e0: 0x1f788, 0, 0), else, as do 0xf and 0x10, go on to the next file the card has (vf +0x1c8) with
+its `icon.sys` path (0x3a49f0); 0x11 formats an unformatted card (0x23dd18); 0x16, 0x1c, 0x25, 0x29, 0x2d, 0x31
+keep the handle and go on; 0x19 gives the picked file the name (+0xb1) and title (+0x50); 0x1d checks the bytes
+read against +0x20 (else -10001, state 1); 0x23 clears the entry unless the result is 1; 0x28 / 0x2c / 0x30 wait
+for the icon's load (`AsyncFile_IsDone` 0x2c6108 answering 1, then `AsyncFile_Finish` 0x2c6160 into +0x30 / +0x34);
+0x34, 0x35 stay. A step that falls through ends: `MemCard_GetSlotError` -10 or -1 clears the port's status, -10 or
+-2 resets the driver, and a state other than 0 goes back to 0.
+`MemCard_FormatSaveTitle` 0x1ce8f8(o, n) (E12f2b, proven, `memcard::format_save_title`, fourth test, 8 of 8
+mutants): a front-end object's save title: `o`+0 clear: the string 0x1cc formatted (`WStr_Format`) with n + 1 and
+the course's code (the first 4 letters of the course table's +0x10, 0x332f28 + 0x1c · course 0x32de88), else the
+string 0x1cb; handed to the card (`o`+0x224, its vf at +0x130, vf37: into its +0x50 as ASCII) and copied to
+`o`+0xd8. The library's `strncpy` (0x2fd630) is done in the module.

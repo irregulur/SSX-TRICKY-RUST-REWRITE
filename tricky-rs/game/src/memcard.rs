@@ -1,7 +1,7 @@
-//! The PS2 memory card driver `cPS2MemCard` (0x23d908..0x2400f8), part 1 (board row E12f1): its constructor,
-//! reset, destructor and small virtuals and helpers on the game's bytes. Not here yet: `MemCard_Process` 0x23e0d0
-//! (the state machine the starters hand a state to), vf2 0x23edc8, vf13 0x23fb60, vf53 0x23ffe0,
-//! `MemCard_CheckRoomForFiles` 0x23fcb8 and the SJIS converters.
+//! The PS2 memory card driver `cPS2MemCard` (0x23d908..0x2400f8) on the game's bytes (board rows E12f1, E12f2a,
+//! E12f2b): its constructor, reset, destructor, virtuals and helpers, `MemCard_Process` 0x23e0d0 (the state machine
+//! the starters hand a state to), the per-frame step vf2 0x23edc8, the SJIS converters, and the front end's
+//! `MemCard_FormatSaveTitle` 0x1ce8f8.
 //!
 //! The driver (`c` below): +0 its table, +4 the state, +0xc, +0x10 the port, +0x14 the files' count (4), +0x18,
 //! +0x1c the file picked, +0x20 / +0x2c the buffer and size handed to a save or load, +0x24, +0x30 a buffer,
@@ -968,4 +968,375 @@ pub fn file_line(m: &mut Mem, e: &mut dyn FeEnv, c: u32, i: u32, out: u32, sp: u
     }
     m.w16(buf + 0x40, 0);
     e.call(m, WSTR_COPY, &[out, buf]);
+}
+
+pub const ASYNC_IS_DONE: u32 = 0x2c6108;
+pub const ASYNC_FINISH: u32 = 0x2c6160;
+/// The words a save's directory entry (+0x390) is checked against, one per icon (0x3a49e0)
+pub const ICON_WORDS: u32 = 0x3a49e0;
+
+/// `sceMcSync(1, 0, RESULT)` with the result word cleared first; 0 while the card is still busy
+fn sync(m: &mut Mem, e: &mut dyn FeEnv) -> u32 {
+    m.w32(RESULT, 0);
+    e.call(m, MC_SYNC, &[1, 0, RESULT])
+}
+
+/// `cPS2MemCard::vf2` 0x23edc8(c): the driver's per-frame step. An unformatted current port forgets its files;
+/// a pending `sceMcGetInfo` (+0x3c) is waited on and its words kept in the port's (an unlisted error is -10, a
+/// card not of type 2 -10002, unformatted -2); the states that started a card call wait for it (on an error:
+/// -4 is no error for a make-directory or a delete, a file being read in states 8..0xf is flagged and skipped
+/// (state 0x10), else state 1); a pending end of save (+0x40) or load (+0x44) is handed on; then the state's
+/// own step, and when it leaves the state as it was the port's error clears its status (-10 or -1) or the
+/// driver (-10 or -2) and an active driver goes back to state 0
+pub fn update(m: &mut Mem, e: &mut dyn FeEnv, c: u32) {
+    let pn = |m: &Mem| m.r32(c + 0x10);
+    if m.r32(port(c, pn(m)) + 0x180) == 0 {
+        m.w32(c + 0x4c, 0);
+        memset(m, c + 0x19c, 0x1c0);
+    }
+    if m.r32(c + 0x3c) != 0 {
+        if sync(m, e) == 0 {
+            return;
+        }
+        let r = m.r32(RESULT);
+        if r == u32::MAX {
+            m.w32(port(c, pn(m)) + 0x184, 1);
+        }
+        if r.wrapping_add(0x13) < 9
+            || r.wrapping_add(0x31) < 10
+            || r.wrapping_add(0x3b) < 10
+            || r.wrapping_add(0x4f) < 10
+        {
+            m.w32(RESULT, -10i32 as u32);
+        }
+        if is_error_code(m.r32(RESULT)) == 0 {
+            if m.r32(INFO_TYPE) != 2 {
+                m.w32(RESULT, -10002i32 as u32);
+            } else if m.r32(INFO_FORMAT) == 0 {
+                m.w32(RESULT, -2i32 as u32);
+            }
+        }
+        let (res, ty, fmt, free) = (m.r32(RESULT), m.r32(INFO_TYPE), m.r32(INFO_FORMAT), m.r32(INFO_FREE));
+        m.w32(port(c, pn(m)) + 0x17c, res);
+        m.w32(c + 0x3c, 0);
+        m.w32(port(c, pn(m)) + 0x174, ty);
+        m.w32(port(c, pn(m)) + 0x178, free);
+        m.w32(port(c, pn(m)) + 0x180, fmt);
+    }
+    let st = m.r32(c + 4);
+    let waits = matches!(st, 2 | 6 | 8..=0xf | 0x12 | 0x16..=0x18 | 0x1c..=0x1e | 0x23..=0x27 | 0x29..=0x2b
+        | 0x2d..=0x2f | 0x31..=0x33 | 0x36..=0x3b);
+    if waits {
+        if sync(m, e) == 0 {
+            return;
+        }
+        let r = m.r32(RESULT);
+        if r == u32::MAX {
+            m.w32(port(c, pn(m)) + 0x184, 1);
+        }
+        if (r as i32) < 0 {
+            let st = m.r32(c + 4);
+            if st == 0x24 || st.wrapping_sub(0x36) < 6 {
+                if r == -4i32 as u32 {
+                    m.w32(RESULT, 0);
+                }
+            } else if st.wrapping_sub(8) < 8 && r != u32::MAX && is_error_code(r) == 0 {
+                let i = m.r32(c + 0x28);
+                flag_file(m, c, i, 0x19c);
+                process(m, e, c, 0x10);
+                return;
+            }
+            if (m.r32(RESULT) as i32) < 0 {
+                let mut st = m.r32(c + 4);
+                if st == 0x23 || st == 7 {
+                    clear_name(m, c);
+                    st = m.r32(c + 4);
+                }
+                if st == 6 {
+                    reset_state(m, c);
+                    st = m.r32(c + 4);
+                }
+                if st == 0x13 {
+                    m.w32(c + 0x1c, u32::MAX);
+                }
+                process(m, e, c, 1);
+                return;
+            }
+        }
+        m.w32(port(c, pn(m)) + 0x17c, 0);
+    }
+    if m.r32(c + 0x40) != 0 {
+        m.w32(c + 0x40, 0);
+        process(m, e, c, 0x1e);
+        return;
+    }
+    if m.r32(c + 0x44) != 0 {
+        m.w32(c + 0x44, 0);
+        process(m, e, c, 0x18);
+        return;
+    }
+    let st = m.r32(c + 4);
+    // the vf at +0x1e8 answers 0 when the driver may go on
+    let ready = |m: &mut Mem, e: &mut dyn FeEnv| vcall(m, e, c, 0x1e8, &[]) == 0;
+    // the files from +0x28 on: the next the card has (vf +0x1c8) is opened (its icon.sys), else the room checked
+    let next_file = |m: &mut Mem, e: &mut dyn FeEnv| {
+        loop {
+            let i = m.r32(c + 0x28).wrapping_add(1);
+            m.w32(c + 0x28, i);
+            if (i as i32) >= (m.r32(c + 0x14) as i32) {
+                break;
+            }
+            let i = m.r32(c + 0x28);
+            if vcall(m, e, c, 0x1c8, &[i]) != 0 {
+                let n = file(c, m.r32(c + 0x28)) + 0x1a8;
+                e.call(m, SPRINTF, &[c + 0x71, PATH_FMT, n, ICON_SYS]);
+                process(m, e, c, 8);
+                return false;
+            }
+        }
+        check_room(m, e, c);
+        true
+    };
+    match st {
+        2 => {
+            if sync(m, e) == 0 {
+                return;
+            }
+            if m.r32(RESULT) == u32::MAX {
+                m.w32(port(c, pn(m)) + 0x184, 1);
+            }
+        }
+        3 => process(m, e, c, 4),
+        5 => {
+            if ready(m, e) {
+                read_dir(m, e, c);
+                return;
+            }
+        }
+        6 => {
+            let (n, r) = (m.r32(c + 0x14), m.r32(RESULT));
+            m.w32(c + 0x4c, r);
+            if (n as i32) < (r as i32) {
+                m.w32(c + 0x4c, n);
+            }
+            memset(m, c + 0x19c, 0x1c0);
+            let mut i = 0u32;
+            let mut count = m.r32(c + 0x14);
+            if (count as i32) > 0 {
+                loop {
+                    let want = (i + 0x31) & 0xff;
+                    if (m.r32(c + 0x4c) as i32) > 0 {
+                        let mut j = 0u32;
+                        loop {
+                            let name = c + j * 0x40 + 0x3e0;
+                            let l = strlen(m, name);
+                            if l != 0 && m.r8(c + 0x3e0 + j * 0x40 + l - 1) as u32 == want {
+                                strcpy(m, file(c, i) + 0x1a8, name);
+                                break;
+                            }
+                            j += 1;
+                            if (j as i32) >= (m.r32(c + 0x4c) as i32) {
+                                break;
+                            }
+                        }
+                        count = m.r32(c + 0x14);
+                    }
+                    i += 1;
+                    if (i as i32) >= (count as i32) {
+                        break;
+                    }
+                }
+            }
+            m.w32(RESULT, 0);
+            process(m, e, c, 7);
+            return;
+        }
+        7 => {
+            check_room(m, e, c);
+        }
+        8 => {
+            let r = m.r32(RESULT);
+            m.w32(c + 0x18, r);
+            process(m, e, c, 0xa);
+            return;
+        }
+        9 => {
+            process(m, e, c, 0xb);
+            return;
+        }
+        0xa => {
+            let t = file(c, m.r32(c + 0x28)) + 0x1e8;
+            sjis_string_to_ascii(m, t, ICON_BLOCK + 0xc0);
+            process(m, e, c, 9);
+            return;
+        }
+        0xb => {
+            if m.r32(c + 0x390) != m.r32(c + 0x24) {
+                let i = m.r32(c + 0x28);
+                flag_file(m, c, i, 0x19c);
+                process(m, e, c, 0x10);
+            }
+            process(m, e, c, 0xc);
+            return;
+        }
+        0xc | 0xd | 0xe => {
+            let k = match st {
+                0xd => 1,
+                0xe => 2,
+                _ => 0,
+            };
+            if m.r32(c + 0x390) != m.r32(ICON_WORDS + 4 * k) {
+                let i = m.r32(c + 0x28);
+                flag_file(m, c, i, 0x1a0);
+                process(m, e, c, 0x10);
+                return;
+            }
+            if !next_file(m, e) {
+                return;
+            }
+        }
+        0xf | 0x10 => {
+            if !next_file(m, e) {
+                return;
+            }
+        }
+        0x11 => {
+            if m.r32(port(c, pn(m)) + 0x180) == 0 {
+                format(m, e, c);
+                return;
+            }
+        }
+        0x13 => {
+            if ready(m, e) {
+                build_save_path(m, e, c);
+                return;
+            }
+        }
+        0x14 | 0x15 | 0x1b => {
+            if ready(m, e) {
+                let next = match st {
+                    0x14 => 0x24,
+                    0x15 => 0x16,
+                    _ => 0x1c,
+                };
+                process(m, e, c, next);
+                return;
+            }
+        }
+        0x16 | 0x1c | 0x25 | 0x29 | 0x2d | 0x31 => {
+            let r = m.r32(RESULT);
+            m.w32(c + 0x18, r);
+            process(m, e, c, st + 1);
+            return;
+        }
+        0x17 => {
+            process(m, e, c, 0x34);
+            return;
+        }
+        0x19 => {
+            let f = file(c, m.r32(c + 0x1c));
+            m.w32(f + 0x1a0, 0);
+            m.w32(f + 0x19c, 0);
+            m.w32(f + 0x1a4, 0);
+            strcpy(m, f + 0x1a8, c + 0xb1);
+            let f = file(c, m.r32(c + 0x1c));
+            strcpy(m, f + 0x1e8, c + 0x50);
+        }
+        0x1d => {
+            if m.r32(RESULT) != m.r32(c + 0x20) {
+                m.w32(RESULT, -10001i32 as u32);
+                process(m, e, c, 1);
+            } else {
+                process(m, e, c, 0x35);
+            }
+            return;
+        }
+        0x22 => {
+            if ready(m, e) {
+                stat_picked(m, e, c);
+                return;
+            }
+        }
+        0x23 => {
+            if m.r32(RESULT) != 1 {
+                clear_name(m, c);
+            }
+            m.w32(RESULT, 0);
+        }
+        0x24 | 0x26 | 0x27 | 0x2a | 0x2e | 0x32 | 0x36 | 0x39 | 0x3a => {
+            process(m, e, c, st + 1);
+            return;
+        }
+        0x28 | 0x2c | 0x30 => {
+            if e.call(m, ASYNC_IS_DONE, &[m.r32(c + 0x38)]) == 1 {
+                m.w32(c + 0x30, 0);
+                m.w32(c + 0x34, 0);
+                e.call(m, ASYNC_FINISH, &[m.r32(c + 0x38), c + 0x30, c + 0x34]);
+                let s = m.r32(c + 4);
+                process(m, e, c, s + 1);
+            }
+            return;
+        }
+        0x34 | 0x35 => return,
+        0x37 | 0x38 => {
+            process(m, e, c, 0x3a);
+            return;
+        }
+        _ => {}
+    }
+    let none = -10i32 as u32;
+    if slot_error(m, c, pn(m)) == none || slot_error(m, c, pn(m)) == u32::MAX {
+        clear_current_status(m, c);
+    }
+    if slot_error(m, c, pn(m)) == none || slot_error(m, c, pn(m)) == -2i32 as u32 {
+        reset_state(m, c);
+    }
+    if m.r32(c + 4) != 0 {
+        process(m, e, c, 0);
+    }
+}
+
+pub const STRNCPY: u32 = 0x2fd630;
+/// The course being played (0x32de88) and the course table (0x332f28, 0x1c a course, +0x10 its code)
+pub const GAME_COURSE: u32 = 0x32de88;
+pub const COURSES: u32 = 0x332f28;
+
+/// `strncpy` (the library's, 0x2fd630): up to `n` bytes, the rest of them 0 after the end
+fn strncpy(m: &mut Mem, dst: u32, src: u32, n: u32) {
+    let mut k = 0;
+    while k < n {
+        let b = m.r8(src + k);
+        m.w8(dst + k, b);
+        k += 1;
+        if b == 0 {
+            break;
+        }
+    }
+    while k < n {
+        m.w8(dst + k, 0);
+        k += 1;
+    }
+}
+
+/// `MemCard_FormatSaveTitle` 0x1ce8f8(o, n) (`sp` the stack pointer on entry): a save's title on the stack: with
+/// `o`'s +0 clear the string 0x1cc formatted with `n + 1` and the course's code (its first 4 letters), else the
+/// string 0x1cb; handed to the card (`o`+0x224, its vf at +0x130) and copied to `o`+0xd8
+pub fn format_save_title(m: &mut Mem, e: &mut dyn FeEnv, o: u32, n: u32, sp: u32) {
+    let buf = sp - 0x260;
+    if m.r32(o) == 0 {
+        let code = buf + 0x200;
+        let course = m.r32(GAME_COURSE);
+        let src = m.r32(course.wrapping_mul(0x1c).wrapping_add(COURSES) + 0x10);
+        strncpy(m, code, src, 4);
+        m.w8(buf + 0x204, 0);
+        let t = loc(m, e, 0x1cc);
+        e.call(m, WSTR_COPY, &[buf + 0x100, t]);
+        e.call(m, WSTR_FORMAT, &[buf, buf + 0x100, n.wrapping_add(1), code]);
+    } else {
+        let t = loc(m, e, 0x1cb);
+        e.call(m, WSTR_COPY, &[buf, t]);
+    }
+    let card = m.r32(o + 0x224);
+    vcall(m, e, card, 0x130, &[buf]);
+    e.call(m, WSTR_COPY, &[o + 0xd8, buf]);
 }
