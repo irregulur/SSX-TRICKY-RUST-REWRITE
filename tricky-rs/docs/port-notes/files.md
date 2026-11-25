@@ -1194,3 +1194,35 @@ material, is equivalent because nothing in the block can change it). The resolve
 - Checked in the runner (16 functions, 4,800 cases; `BIG_Lookup` stood in on both sides: it answers a name or 0 and
   fills the offset and size words it is given when it finds the entry; the stack starts
   with junk so the cleared words show); 29 of 29 mutants.
+
+## The async rider loader (row E2f; `game/src/bdrload.rs`, `tests/bdrload_async.rs`, proven)
+
+- `cAsyncBdrLoad` (vtable 0x39de40 at +4; its base `cBdrLoad`, vtable 0x39e280): +0 a mode (`AsyncBdrLoad_SetMode`
+  0x201788 writes it), +8 / +0xc / +0x10 the managers (`AsyncBdrLoad_SetManagers` 0x201c10: rider meshes, board
+  mesh, textures; the board's may be 0, then the rider meshes' does it), +0x14 twelve slots of 0x50 bytes.
+  `AsyncBdrLoad_Init` 0x201b50 clears the mode and every slot's state.
+- A slot (the record `BdrLoad_BindTextures` 0x2021f8 and `BdrLoad_BuildSkin` 0x201138 take): +0 state (0 free,
+  1 loading, 2 loaded), +4 the rider, +8 an owner, +0xc the request word, +0x10..+0x18 the body, head, board mesh
+  ids, +0x1c..+0x24 their data, +0x28..+0x38 the head, helm, suit, boot, board texture ids, +0x3c..+0x4c their data.
+- The request word: byte 0 a kind (1 from the front end's requests, 0xf from `BdrLoad_DefaultRequest` 0x201a98),
+  bit 8 rider meshes, 9 board mesh, 10 board texture, 11 suit and boot, 12 head and helm, 13 (set by
+  `BdrLoad_FEBoardRequest` 0x201ad8, cleared by `BdrLoad_FERequest` 0x201a38 and the default; meaning not read).
+- The names come from the exe's tables by the rider's choices (its +0x464 record): body .mpf 0x3419c8[+0x50], head
+  .mpf 0x341a00[+0x58], the one board .mpf 0x341f98, head/helm .ssh pairs 0x341ce8[+0x54], suit/boot .ssh pairs
+  0x341a38[+0x4c], board .ssh 0x341d50[+0x48].
+- `AsyncBdrLoad_Request` 0x201e68(load, rider, owner, word): the first free slot (−1 when all twelve are taken),
+  loading, ids −1, then each asked-for file started through its manager's virtual +0x80 (name, 0x10, 0, 0), whose
+  answer is the id. The word goes through the stack and `EAMem_Copy` into +0xc, then is stored there again.
+- `AsyncBdrLoad_IsSlotReady` 0x201d30: 1 for a slot not loading; else each id ≥ 0 asked of its manager's +0x60,
+  0 at the first not ready, else the slot becomes 2 and 1. `AsyncBdrLoad_FreeSlot` 0x201c20: each id ≥ 0 let go
+  of through its manager's +0x58, the slot freed (whatever its state). The board mesh id is read again at +0x18
+  when the board manager does it.
+- `BdrLoad_RequestRider` 0x201790: the same at once, on a slot on its stack: the files loaded whole (`File_Load`,
+  0x10) into the data words, state 2, `BdrLoad_BuildSkin`, then every file freed (`EAMem_Free`).
+- `cAsyncBdrLoad::~cAsyncBdrLoad` 0x201b90 frees the slots in use, then `cBdrLoad::~cBdrLoad` 0x202478 (its
+  vtable, `Mem_Delete` with flag 1).
+- Checked in the runner (12 functions, 4,800 cases; the managers' virtuals, `File_Load`, `EAMem_Free`,
+  `EAMem_Copy`, `BdrLoad_BuildSkin` and `Mem_Delete` stood in on both sides: the copy copies only sometimes, so the
+  second store into +0xc shows; the skin build logs the slot it is handed and sometimes clears one of its files);
+  39 of 40 mutants. The survivor is equivalent: `BdrLoad_RequestRider` reads the word back from its stack for +0xc,
+  where nothing else wrote.

@@ -3349,21 +3349,21 @@ address,size,name,system,status
 0x2010c8,80,BdrLoad_LoadRider,boarder,ported
 0x201118,32,BdrLoad_AddPart,boarder,not started
 0x201138,1616,BdrLoad_BuildSkin,boarder,ported
-0x201788,8,AsyncBdrLoad_SetMode,boarder,not started
-0x201790,676,BdrLoad_RequestRider,boarder,ported
-0x201a38,32,BdrLoad_FERequest,boarder,ported
-0x201a98,32,BdrLoad_DefaultRequest,boarder,not started
-0x201ad8,52,BdrLoad_FEBoardRequest,boarder,ported
-0x201b50,60,AsyncBdrLoad_Init,boarder,ported
-0x201b90,128,cAsyncBdrLoad::~cAsyncBdrLoad,files,not started
-0x201c10,16,AsyncBdrLoad_SetManagers,boarder,not started
-0x201c20,272,AsyncBdrLoad_FreeSlot,boarder,ported
-0x201d30,308,AsyncBdrLoad_IsSlotReady,boarder,ported
-0x201e68,912,AsyncBdrLoad_Request,boarder,ported
+0x201788,8,AsyncBdrLoad_SetMode,boarder,checked
+0x201790,676,BdrLoad_RequestRider,boarder,checked
+0x201a38,32,BdrLoad_FERequest,boarder,checked
+0x201a98,32,BdrLoad_DefaultRequest,boarder,checked
+0x201ad8,52,BdrLoad_FEBoardRequest,boarder,checked
+0x201b50,60,AsyncBdrLoad_Init,boarder,checked
+0x201b90,128,cAsyncBdrLoad::~cAsyncBdrLoad,files,checked
+0x201c10,16,AsyncBdrLoad_SetManagers,boarder,checked
+0x201c20,272,AsyncBdrLoad_FreeSlot,boarder,checked
+0x201d30,308,AsyncBdrLoad_IsSlotReady,boarder,checked
+0x201e68,912,AsyncBdrLoad_Request,boarder,checked
 0x2021f8,432,BdrLoad_BindTextures,boarder,checked
 0x2023a8,124,StaticInit_AsyncBdrLoad,boarder,checked
 0x202428,80,cAsyncBdrLoad::__tf,runtime,host
-0x202478,36,cBdrLoad::~cBdrLoad,game,ported
+0x202478,36,cBdrLoad::~cBdrLoad,game,checked
 0x2024a0,64,cBdrLoad::__tf,runtime,host
 0x202520,568,Euler_ShortestDelta,common,checked
 0x202758,148,Euler_Lerp,common,checked

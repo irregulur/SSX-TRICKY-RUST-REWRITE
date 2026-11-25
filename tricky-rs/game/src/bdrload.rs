@@ -4,6 +4,9 @@
 //! renderer's and texture managers' virtuals and the skin build are calls out ([`TextBoxEnv`]). Checked in the
 //! function runner (`tests/bdrload.rs`).
 //!
+//! And the async rider loader (board row E2f): `cAsyncBdrLoad` 0x201788..0x201e68 and `cBdrLoad::~cBdrLoad`
+//! 0x202478, its slots, requests and managers (below `set_mode`); checked in `tests/bdrload_async.rs`.
+//!
 //! **A bank** (`MdfMemBank`): +0 its memory, +4 the next free place (on a 128-byte boundary), +8 how much is
 //! taken, +0xc its size.
 //!
@@ -272,4 +275,283 @@ pub fn bind_textures(m: &mut Mem, env: &mut dyn TextBoxEnv, load: u32, n: u32) {
         }
     }
     env.call(m, BUILD_SKIN, &[load, rec], &[]);
+}
+
+// The async rider loader (board row E2f): `cAsyncBdrLoad` 0x201788..0x202478. A loader: +0 its mode, +4 its
+// vtable, +8 / +0xc / +0x10 the managers (the rider meshes', the board mesh's (none: the rider meshes'), the
+// textures'), +0x14 twelve slots of 0x50 bytes. A slot: +0 its state (0 free, 1 loading, 2 loaded), +4 the rider,
+// +8 its owner, +0xc the request word (byte 0 and the part bits below), +0x10..+0x18 the body, head and board
+// meshes' ids, +0x28..+0x38 the head, helm, suit, boot and board textures' ids (−1 for none); `bind_textures`
+// turns the ids into the data at +0x1c.. and +0x3c...
+
+/// The request word's bits: rider meshes (body, head), board mesh, board texture, outfit textures (suit, boot),
+/// head textures (head, helm)
+pub const WANT_MESHES: u32 = 1 << 8;
+pub const WANT_BOARD: u32 = 1 << 9;
+pub const WANT_BOARD_TEXTURE: u32 = 1 << 10;
+pub const WANT_OUTFIT: u32 = 1 << 11;
+pub const WANT_HEAD: u32 = 1 << 12;
+/// The file names' tables (by the rider's choices, its +0x464 record): body .mpf (+0x50), head .mpf (+0x58),
+/// the board .mpf (one name), head and helm .ssh in pairs (+0x54), suit and boot .ssh in pairs (+0x4c), board
+/// .ssh (+0x48)
+pub const BODY_MPF: u32 = 0x3419c8;
+pub const HEAD_MPF: u32 = 0x341a00;
+pub const BOARD_MPF: u32 = 0x341f98;
+pub const HEAD_SSH: u32 = 0x341ce8;
+pub const OUTFIT_SSH: u32 = 0x341a38;
+pub const BORD_SSH: u32 = 0x341d50;
+/// `cAsyncBdrLoad`'s and `cBdrLoad`'s vtables
+pub const VTABLE: u32 = 0x39de40;
+pub const BASE_VTABLE: u32 = 0x39e280;
+pub const SLOTS: u32 = 12;
+pub const SLOT: u32 = 0x50;
+
+fn slot(load: u32, n: u32) -> u32 {
+    load.wrapping_add(n.wrapping_mul(SLOT)).wrapping_add(0x14)
+}
+/// The name in `table` at the rider's choice `+at` (`stride` 4, or 8 for the pairs)
+fn file_name(m: &Mem, r: u32, at: u32, table: u32, stride: u32) -> u32 {
+    m.r32(table.wrapping_add(m.r32(r + at).wrapping_mul(stride)))
+}
+
+/// `AsyncBdrLoad_SetMode` 0x201788(p, v): *p = v
+pub fn set_mode(m: &mut Mem, p: u32, v: u32) {
+    m.w32(p, v);
+}
+
+/// `BdrLoad_RequestRider` 0x201790(load, rider, owner, word): the rider loaded at once (`sp` the stack pointer
+/// it runs on: the caller's less 0xf0). A slot is built on the stack (state 2, the rider, the owner, the word,
+/// copied in by `EAMem_Copy` first), the files the word asks for loaded into it (`File_Load`, 0x10; 0 for the
+/// rest) in the order body, head, board .mpf, head, helm, suit, boot, board .ssh, the skin built from it
+/// (`BdrLoad_BuildSkin`: the loader, the slot) and every file it has freed after.
+pub fn request_rider(m: &mut Mem, env: &mut dyn TextBoxEnv, load: u32, rider: u32, owner: u32, word: u32, sp: u32) {
+    let r = m.r32(rider + 0x464);
+    m.w32(sp + 0x50, word);
+    env.call(m, MEM_COPY, &[sp | 0xc, sp + 0x50, 4], &[]);
+    for k in (0..3).rev() {
+        m.w32(sp + 0x1c + 4 * k, 0);
+    }
+    for k in (0..5).rev() {
+        m.w32(sp + 0x3c + 4 * k, 0);
+    }
+    let load_file = |m: &mut Mem, env: &mut dyn TextBoxEnv, name: u32| env.call(m, FILE_LOAD, &[name, 0x10], &[]);
+    if m.r32(sp + 0x50) & WANT_MESHES != 0 {
+        let f = load_file(m, env, file_name(m, r, 0x50, BODY_MPF, 4));
+        m.w32(sp + 0x1c, f);
+        let f = load_file(m, env, file_name(m, r, 0x58, HEAD_MPF, 4));
+        m.w32(sp + 0x20, f);
+    }
+    if m.r32(sp + 0x50) & WANT_BOARD != 0 {
+        let f = load_file(m, env, m.r32(BOARD_MPF));
+        m.w32(sp + 0x24, f);
+    }
+    if m.r32(sp + 0x50) & WANT_HEAD != 0 {
+        let f = load_file(m, env, file_name(m, r, 0x54, HEAD_SSH, 8));
+        m.w32(sp + 0x3c, f);
+        let f = load_file(m, env, file_name(m, r, 0x54, HEAD_SSH + 4, 8));
+        m.w32(sp + 0x40, f);
+    }
+    if m.r32(sp + 0x50) & WANT_OUTFIT != 0 {
+        let f = load_file(m, env, file_name(m, r, 0x4c, OUTFIT_SSH, 8));
+        m.w32(sp + 0x44, f);
+        let f = load_file(m, env, file_name(m, r, 0x4c, OUTFIT_SSH + 4, 8));
+        m.w32(sp + 0x48, f);
+    }
+    if m.r32(sp + 0x50) & WANT_BOARD_TEXTURE != 0 {
+        let f = load_file(m, env, file_name(m, r, 0x48, BORD_SSH, 4));
+        m.w32(sp + 0x4c, f);
+    }
+    m.w32(sp + 4, rider);
+    m.w32(sp, 2);
+    m.w32(sp + 8, owner);
+    m.w32(sp + 0xc, m.r32(sp + 0x50));
+    env.call(m, BUILD_SKIN, &[load, sp], &[]);
+    for k in 0..3 {
+        let f = m.r32(sp + 0x1c + 4 * k);
+        if f != 0 {
+            env.call(m, EAMEM_FREE, &[f], &[]);
+        }
+    }
+    for k in 0..5 {
+        let f = m.r32(sp + 0x3c + 4 * k);
+        if f != 0 {
+            env.call(m, EAMEM_FREE, &[f], &[]);
+        }
+    }
+}
+
+/// `BdrLoad_FERequest` 0x201a38(p): byte 0 = 1, every part asked for (bits 8..12), bit 13 off
+pub fn fe_request(m: &mut Mem, p: u32) {
+    m.w8(p, 1);
+    m.w32(p, (m.r32(p) | 0x1f00) & !0x2000);
+}
+/// `BdrLoad_DefaultRequest` 0x201a98(p): as `fe_request` with byte 0 = 0xf
+pub fn default_request(m: &mut Mem, p: u32) {
+    m.w8(p, 0xf);
+    m.w32(p, (m.r32(p) | 0x1f00) & !0x2000);
+}
+/// `BdrLoad_FEBoardRequest` 0x201ad8(p): byte 0 = 1, the board's mesh and texture asked for (bits 9, 10), the
+/// rider's not (8, 11, 12), bit 13 on
+pub fn fe_board_request(m: &mut Mem, p: u32) {
+    m.w8(p, 1);
+    let v = m.r32(p) & !0x100;
+    m.w32(p, ((v | 0x600) & !0x800 & !0x1000) | 0x2000);
+}
+
+/// `AsyncBdrLoad_Init` 0x201b50(load): mode 0, the vtable, every slot free (the last first); `load`
+pub fn init(m: &mut Mem, load: u32) -> u32 {
+    m.w32(load, 0);
+    m.w32(load + 4, VTABLE);
+    for n in (0..SLOTS).rev() {
+        m.w32(slot(load, n), 0);
+    }
+    load
+}
+
+/// `cAsyncBdrLoad::~cAsyncBdrLoad` 0x201b90(load, flags): the vtable put back, every slot in use freed
+/// (`free_slot`), then `cBdrLoad`'s
+pub fn destruct(m: &mut Mem, env: &mut dyn TextBoxEnv, load: u32, flags: u32) {
+    m.w32(load + 4, VTABLE);
+    for n in 0..SLOTS {
+        if m.r32(slot(load, n)) != 0 {
+            free_slot(m, env, load, n);
+        }
+    }
+    base_destruct(m, env, load, flags);
+}
+
+/// `cBdrLoad::~cBdrLoad` 0x202478(load, flags): its vtable put back; deleted with flag 1 (`Mem_Delete`)
+pub fn base_destruct(m: &mut Mem, env: &mut dyn TextBoxEnv, load: u32, flags: u32) {
+    m.w32(load + 4, BASE_VTABLE);
+    if flags & 1 != 0 {
+        env.call(m, DELETE, &[load], &[]);
+    }
+}
+
+/// `AsyncBdrLoad_SetManagers` 0x201c10(load, meshes, board, textures): +8, +0xc, +0x10 (in the order +0x10,
+/// +8, +0xc)
+pub fn set_managers(m: &mut Mem, load: u32, meshes: u32, board: u32, textures: u32) {
+    m.w32(load + 0x10, textures);
+    m.w32(load + 8, meshes);
+    m.w32(load + 0xc, board);
+}
+
+/// The manager a slot's mesh `k` (0 body, 1 head, 2 board) is loaded by and its id: the board's through the
+/// board manager when there is one (its id read again at +0x18)
+fn mesh_call(m: &mut Mem, env: &mut dyn TextBoxEnv, load: u32, rec: u32, k: u32, off: u32) -> u32 {
+    let board = m.r32(load + 0xc);
+    if board != 0 && k == 2 {
+        vcall(m, env, board, off, &[m.r32(rec + 0x18)])
+    } else {
+        let mgr = m.r32(load + 8);
+        vcall(m, env, mgr, off, &[m.r32(rec + 0x10 + 4 * k)])
+    }
+}
+
+/// `AsyncBdrLoad_FreeSlot` 0x201c20(load, n): slot `n`'s ids (those not below 0) let go of through their
+/// managers' +0x58 (meshes, then textures), the slot free
+pub fn free_slot(m: &mut Mem, env: &mut dyn TextBoxEnv, load: u32, n: u32) {
+    let rec = slot(load, n);
+    for k in 0..3 {
+        if (m.r32(rec + 0x10 + 4 * k) as i32) >= 0 {
+            mesh_call(m, env, load, rec, k, 0x58);
+        }
+    }
+    for k in 0..5 {
+        let id = m.r32(rec + 0x28 + 4 * k);
+        if (id as i32) >= 0 {
+            let tm = m.r32(load + 0x10);
+            vcall(m, env, tm, 0x58, &[id]);
+        }
+    }
+    m.w32(rec, 0);
+}
+
+/// `AsyncBdrLoad_IsSlotReady` 0x201d30(load, n): 1 for a slot not loading; a loading one asks its managers'
+/// +0x60 for each id not below 0 (meshes, then textures) and answers 0 at the first not ready, else it is
+/// loaded (state 2) and answers 1
+pub fn is_slot_ready(m: &mut Mem, env: &mut dyn TextBoxEnv, load: u32, n: u32) -> u32 {
+    let rec = slot(load, n);
+    if m.r32(rec) != 1 {
+        return 1;
+    }
+    for k in 0..3 {
+        if (m.r32(rec + 0x10 + 4 * k) as i32) >= 0 && mesh_call(m, env, load, rec, k, 0x60) == 0 {
+            return 0;
+        }
+    }
+    for k in 0..5 {
+        let id = m.r32(rec + 0x28 + 4 * k);
+        if (id as i32) >= 0 {
+            let tm = m.r32(load + 0x10);
+            if vcall(m, env, tm, 0x60, &[id]) == 0 {
+                return 0;
+            }
+        }
+    }
+    m.w32(rec, 2);
+    1
+}
+
+/// `AsyncBdrLoad_Request` 0x201e68(load, rider, owner, word): the first free slot (−1 for none) made loading:
+/// the word (kept on the stack, `sp` the stack pointer it runs on: the caller's less 0xb0, and copied into the
+/// slot by `EAMem_Copy` first), the rider, the owner, every id −1; then the files the word asks for started
+/// through the managers' +0x80 (the name, 0x10, 0, 0) in the order body, head, board .mpf (the board manager's
+/// when there is one), head, helm, suit, boot, board .ssh (the textures'). The slot's number.
+pub fn request(m: &mut Mem, env: &mut dyn TextBoxEnv, load: u32, rider: u32, owner: u32, word: u32, sp: u32) -> u32 {
+    let r = m.r32(rider + 0x464);
+    m.w32(sp, word);
+    let mut n = 0u32;
+    let rec = loop {
+        let rec = slot(load, n);
+        if m.r32(rec) == 0 {
+            break rec;
+        }
+        n += 1;
+        if n >= SLOTS {
+            return 0xffff_ffff;
+        }
+    };
+    env.call(m, MEM_COPY, &[rec + 0xc, sp, 4], &[]);
+    let w = m.r32(sp);
+    m.w32(rec, 1);
+    m.w32(rec + 4, rider);
+    m.w32(rec + 8, owner);
+    m.w32(rec + 0xc, w);
+    for k in (0..3).rev() {
+        m.w32(rec + 0x10 + 4 * k, 0xffff_ffff);
+    }
+    for k in (0..5).rev() {
+        m.w32(rec + 0x28 + 4 * k, 0xffff_ffff);
+    }
+    let start = |m: &mut Mem, env: &mut dyn TextBoxEnv, mgr: u32, name: u32| vcall(m, env, mgr, 0x80, &[name, 0x10, 0, 0]);
+    if w & WANT_MESHES != 0 {
+        let id = start(m, env, m.r32(load + 8), file_name(m, r, 0x50, BODY_MPF, 4));
+        m.w32(rec + 0x10, id);
+        let id = start(m, env, m.r32(load + 8), file_name(m, r, 0x58, HEAD_MPF, 4));
+        m.w32(rec + 0x14, id);
+    }
+    if m.r32(sp) & WANT_BOARD != 0 {
+        let board = m.r32(load + 0xc);
+        let mgr = if board != 0 { board } else { m.r32(load + 8) };
+        let id = start(m, env, mgr, m.r32(BOARD_MPF));
+        m.w32(rec + 0x18, id);
+    }
+    if m.r32(sp) & WANT_HEAD != 0 {
+        let id = start(m, env, m.r32(load + 0x10), file_name(m, r, 0x54, HEAD_SSH, 8));
+        m.w32(rec + 0x28, id);
+        let id = start(m, env, m.r32(load + 0x10), file_name(m, r, 0x54, HEAD_SSH + 4, 8));
+        m.w32(rec + 0x2c, id);
+    }
+    if m.r32(sp) & WANT_OUTFIT != 0 {
+        let id = start(m, env, m.r32(load + 0x10), file_name(m, r, 0x4c, OUTFIT_SSH, 8));
+        m.w32(rec + 0x30, id);
+        let id = start(m, env, m.r32(load + 0x10), file_name(m, r, 0x4c, OUTFIT_SSH + 4, 8));
+        m.w32(rec + 0x34, id);
+    }
+    if m.r32(sp) & WANT_BOARD_TEXTURE != 0 {
+        let id = start(m, env, m.r32(load + 0x10), file_name(m, r, 0x48, BORD_SSH, 4));
+        m.w32(rec + 0x38, id);
+    }
+    n
 }
