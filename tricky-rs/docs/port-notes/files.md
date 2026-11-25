@@ -1004,3 +1004,25 @@ mutants): a front-end object's save title: `o`+0 clear: the string 0x1cc formatt
 the course's code (the first 4 letters of the course table's +0x10, 0x332f28 + 0x1c · course 0x32de88), else the
 string 0x1cb; handed to the card (`o`+0x224, its vf at +0x130, vf37: into its +0x50 as ASCII) and copied to
 `o`+0xd8. The library's `strncpy` (0x2fd630) is done in the module.
+
+## The course's lookups (row E3f; `game/src/course_lookup.rs`, `tests/course_lookup.rs`, proven)
+
+Checked in the runner (18,000 cases on random courses, 12 of 12 mutants). The world 0x346488 keeps the resolved
+course at +4.
+- Records by number, answering 0 when the number is not below the count (signed):
+  - `Course_GetParticleInstance` 0x254a50: 0x70 each, count +0x10, table +0x4c;
+  - `Course_GetLight` 0x254a80: 0x5c each, count +0x1c, table +0x58;
+  - `Course_GetSplineSegment` 0x254b20: 0x28 each, count +0x20, table +0x5c.
+- `Course_GetHashTables` 0x254ba8: the hash block at course +0x80. Each kind's count and table are in that block:
+  patches +4/+8, instances +0xc/+0x10, models +0x14/+0x18, lights +0x1c/+0x20, splines +0x24/+0x28, camera
+  animations +0x2c/+0x30. The twelve getters 0x254bb8..0x254e20 answer 0 without a block.
+- `Course_HashBsearch` 0x254ed8(lo, hi, key, table): entries of 8 bytes (hash, record), unsigned compares, the
+  middle by an arithmetic shift; -1 when the key is absent.
+- `Course_Find*ByHash` (0x254f30 lights, 0x254fb8 patches, 0x255040 models, 0x2550c8 instances, 0x255150 camera
+  animations, 0x2551d8 splines): a search over 0..count−1, the entry's record or 0.
+- `Course_FindObjectByHash` 0x255260(w, hash, kind): only with a spline table. It tries patches (kind 1), instances
+  (2), lights (4), splines (5) and camera animations (6), in that order, never models; else kind −1 and 0.
+- `CourseResolve_IndexTable08` / `0C` (0x254e58 / 0x254e98): fill the resolver's +8 / +0xc with the address of each
+  record counted at course +0x18 / +0x28, starting at +0x54 / +0x64. Each record is a word count, then that many
+  words. They answer 1.
+- `Course_DebugPrint` 0x255310 only spills its arguments.

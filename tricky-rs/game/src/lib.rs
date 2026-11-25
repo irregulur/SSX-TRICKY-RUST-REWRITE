@@ -204,6 +204,7 @@ pub mod cml;
 pub mod camera_update;
 pub mod camera_misc;
 pub mod boarder_life;
+pub mod course_lookup;
 pub mod effects;
 pub mod emitter;
 pub mod impact;

@@ -4612,36 +4612,36 @@ address,size,name,system,status
 0x2546a8,708,cCourseResolve_Common::ResolveHashTable,race,ported
 0x2549f8,44,Course_GetPatch,race,ported
 0x254a28,40,Course_GetInstance,race,checked
-0x254a50,44,Course_GetParticleInstance,race,not started
-0x254a80,44,Course_GetLight,race,not started
+0x254a50,44,Course_GetParticleInstance,race,checked
+0x254a80,44,Course_GetLight,race,checked
 0x254af0,44,Course_GetMaterial,race,ported
-0x254b20,44,Course_GetSplineSegment,race,ported
+0x254b20,44,Course_GetSplineSegment,race,checked
 0x254b50,40,Course_GetSpline,race,ported
 0x254b78,44,Course_GetCamera,camera,checked
-0x254ba8,12,Course_GetHashTables,race,not started
-0x254bb8,56,Course_LightHashCount,race,not started
-0x254bf0,56,Course_LightHashTable,race,not started
-0x254c28,56,Course_PatchHashCount,race,not started
-0x254c60,56,Course_PatchHashTable,race,not started
-0x254c98,56,Course_ModelHashCount,race,not started
-0x254cd0,56,Course_ModelHashTable,race,not started
-0x254d08,56,Course_InstanceHashCount,race,not started
-0x254d40,56,Course_InstanceHashTable,race,not started
-0x254d78,56,Course_CamAnimHashCount,race,not started
-0x254db0,56,Course_CamAnimHashTable,race,not started
-0x254de8,56,Course_SplineHashCount,race,not started
-0x254e20,56,Course_SplineHashTable,race,not started
-0x254e58,64,CourseResolve_IndexTable08,race,not started
-0x254e98,64,CourseResolve_IndexTable0C,race,not started
-0x254ed8,84,Course_HashBsearch,race,not started
-0x254f30,136,Course_FindLightByHash,race,not started
-0x254fb8,136,Course_FindPatchByHash,race,not started
-0x255040,136,Course_FindModelByHash,race,not started
-0x2550c8,136,Course_FindInstanceByHash,race,ported
-0x255150,136,Course_FindCamAnimByHash,race,not started
-0x2551d8,136,Course_FindSplineByHash,race,not started
-0x255260,176,Course_FindObjectByHash,race,not started
-0x255310,40,Course_DebugPrint,race,not started
+0x254ba8,12,Course_GetHashTables,race,checked
+0x254bb8,56,Course_LightHashCount,race,checked
+0x254bf0,56,Course_LightHashTable,race,checked
+0x254c28,56,Course_PatchHashCount,race,checked
+0x254c60,56,Course_PatchHashTable,race,checked
+0x254c98,56,Course_ModelHashCount,race,checked
+0x254cd0,56,Course_ModelHashTable,race,checked
+0x254d08,56,Course_InstanceHashCount,race,checked
+0x254d40,56,Course_InstanceHashTable,race,checked
+0x254d78,56,Course_CamAnimHashCount,race,checked
+0x254db0,56,Course_CamAnimHashTable,race,checked
+0x254de8,56,Course_SplineHashCount,race,checked
+0x254e20,56,Course_SplineHashTable,race,checked
+0x254e58,64,CourseResolve_IndexTable08,race,checked
+0x254e98,64,CourseResolve_IndexTable0C,race,checked
+0x254ed8,84,Course_HashBsearch,race,checked
+0x254f30,136,Course_FindLightByHash,race,checked
+0x254fb8,136,Course_FindPatchByHash,race,checked
+0x255040,136,Course_FindModelByHash,race,checked
+0x2550c8,136,Course_FindInstanceByHash,race,checked
+0x255150,136,Course_FindCamAnimByHash,race,checked
+0x2551d8,136,Course_FindSplineByHash,race,checked
+0x255260,176,Course_FindObjectByHash,race,checked
+0x255310,40,Course_DebugPrint,race,checked
 0x255568,64,cCourseResolve_Common::__tf,runtime,host
 0x2555a8,60,cCourseResolve_PS2::cCourseResolve_PS2,race,ported
 0x2555e8,68,cCourseResolve_PS2::~cCourseResolve_PS2,race,ported
