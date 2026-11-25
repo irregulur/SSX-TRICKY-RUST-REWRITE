@@ -4411,8 +4411,8 @@ address,size,name,system,status
 0x2402c0,172,Rand_Seed,common,checked
 0x2403a8,204,Dma_SendGif,render,ported
 0x2408c8,204,Dma_SendGifChain,render,ported
-0x240a98,480,CourseDma_PatchContext,race,not started
-0x240c78,516,CourseDma_RebuildChain,race,not started
+0x240a98,480,CourseDma_PatchContext,race,checked
+0x240c78,516,CourseDma_RebuildChain,race,checked
 0x240e80,88,Name_ElfHash,common,ported
 0x240ed8,32,Name_Hash,common,checked
 0x240ef8,3256,Huff_DecodeBlock,replay,checked
@@ -4648,12 +4648,12 @@ address,size,name,system,status
 0x255630,1516,cCourseResolve_PS2::ResolveDataHeader,race,checked
 0x255c20,156,cCourseResolve_PS2::ResolveMeshContext,race,ported
 0x255cc0,304,cCourseResolve_PS2::ResolveParticleMesh,race,ported
-0x255df0,88,CourseDma_TryResolveModels,race,ported
-0x255e48,112,CourseDma_ResolveModels,race,not started
-0x255eb8,80,CourseDma_ResolveModel,race,not started
-0x255f08,232,CourseDma_ResolveModelHierarchies,race,not started
-0x255ff0,144,CourseDma_ResolveMesh,race,not started
-0x256080,128,CourseDma_ResolveMeshContext,race,not started
+0x255df0,88,CourseDma_TryResolveModels,race,checked
+0x255e48,112,CourseDma_ResolveModels,race,checked
+0x255eb8,80,CourseDma_ResolveModel,race,checked
+0x255f08,232,CourseDma_ResolveModelHierarchies,race,checked
+0x255ff0,144,CourseDma_ResolveMesh,race,checked
+0x256080,128,CourseDma_ResolveMeshContext,race,checked
 0x256100,40,Misc_EmptyStubA,other,not started
 0x256138,80,cCourseResolve_PS2::__tf,runtime,host
 0x256188,5156,SurfaceTable_Init,boarder,checked
@@ -4703,12 +4703,12 @@ address,size,name,system,status
 0x25ebd8,8,cWorldLine::vf2_25ebd8,world,not started
 0x25ebe0,80,cWorldLine::__tf,runtime,host
 0x25ec30,44,Vec4_ScaleCopy11,common,checked
-0x25ec60,40,VisList_Construct,world,not started
+0x25ec60,40,VisList_Construct,world,checked
 0x25ec88,44,VisList_Clear,world,checked
-0x25ecb8,16,VisList_Get,world,not started
+0x25ecb8,16,VisList_Get,world,checked
 0x25ecc8,28,VisList_Add,world,checked
-0x25ece8,136,cCourseResolve::cCourseResolve,race,not started
-0x25ed70,128,World_Destruct,world,not started
+0x25ece8,136,cCourseResolve::cCourseResolve,race,checked
+0x25ed70,128,World_Destruct,world,checked
 0x25edf0,1704,Course_LoadRenderData,race,ported
 0x25f498,252,Course_Unload,race,ported
 0x25f598,1960,Course_LoadSphereTrees,race,checked

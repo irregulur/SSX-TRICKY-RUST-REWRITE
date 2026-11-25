@@ -1073,3 +1073,32 @@ material, is equivalent because nothing in the block can change it). The resolve
   coefficients (key+0x50), clears the record (`CacheBuffer_ClearEntry`: words +0, +0x10, +0x20 of 81 0x40-byte
   blocks from +0x650 and 9 from +0x1a90 set to 1e10) and copies VU0's output to +0x10.
 - Checked in the runner (13 functions, 13 of 14 mutants killed, one equivalent; `Mem_Free`, `Mem_Delete`, `EAMem_*` and the VU0 calls stood in).
+
+## The course models' DMA resolve and the world's resolver (row E3i; `game/src/course_dma.rs`, `tests/course_dma.rs`, proven)
+
+- `CourseDma_TryResolveModels` 0x255df0 (from `Course_LoadRenderData` and `Course_LoadSky`): 4 without a course,
+  6 with more than 4000 models (+0x2c), else the models (+0x6c, each as long as its first word) → hierarchies
+  (model +4 count, +8 first, 0x18 each; model +0x10 flags) → up to three meshes each (+4, +8, +0xc; one equal to
+  an earlier one of the three is skipped, but nothing stops a mesh being met again in another hierarchy) →
+  contexts (mesh +0x20 count, +0x28 list). Each step prints a "### RESOLVING ..." line (`Course_DebugPrint`, a
+  no-op).
+- A context: +0xc its VIF DMA chain, +0x14 / +0x18 / +0x10 three chain offsets (slots). Flag 0x10 → the chain is
+  rebuilt (`CourseDma_RebuildChain` 0x240c78), else patched (`CourseDma_PatchContext` 0x240a98); then +0x10 =
+  chain + (+0x10).
+- Patching, in place: CNT data copied down; a REF to the first / second slot → a quadword `0, MSCAL 0x26` /
+  `0, MSCAL 0x3c` (VIF code 0x14 in the high word); a REF to the third → `0x3000000005000001, 0`; the END copied
+  with its data; the first tag's count = quadwords written, its high word cleared.
+- Rebuilding, in place, into runs: the first tag is the open run; CNT data and the MSCAL quadwords are counted into
+  it; a REF to the third slot closes the run (`count | 0x10000000`, i.e. a CNT), is written back with its address
+  made absolute (chain + offset), and the tag after it becomes the next run's tag; the END closes a non-empty run
+  and is copied with its data.
+- Both loop for ever on any other tag (an id other than CNT, REF, END, or a REF to none of the slots): our port
+  panics instead (STANDIN). Both copy with `EAMem_Copy` 0x2ce114 between overlapping places (the destination never
+  after the source in patching; in rebuilding a REF to the third slot puts it 0x10 ahead, onto the next tag only
+  after it has been read).
+- `cCourseResolve::cCourseResolve` 0x25ece8 (the world at 0x346488, from `StaticInit_World`): the PS2 resolver's
+  constructor, table 0x388350, the patch cache (+0x28, row E3h), the visible list (+0x3c), +0x14 and +0xac8 = 0,
+  0x200 words from +0x2c8 = −1, then the table's +0x14 (`cCourseResolve_Common::vf1`). `World_Destruct` 0x25ed70:
+  the table's +0x24, `CellList_Destruct`(+0x3c, 2), the patch cache's destructor, `~cCourseResolve` 0x186168.
+- Checked in the runner (12 functions, 15 of 15 mutants; chains of random CNT / REF / END tags with random junk bits; models whose
+  contexts' chains are a lone END, which both rewrites leave as they were).
