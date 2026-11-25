@@ -46,7 +46,6 @@ state machine and the renderer are ours. Nothing has been checked against the or
 | E8a | Air: `Air_IntegrateRK4` 0x12b340, `AirPredict_AtTakeoff` 0x123b10, landing `Air_MotionUpdate` 0x108378, `Landing_CheckAngles` 0x12ba78, `Landing_ChooseState` 0x109308 | any | F4a | | [repo] Ported, unchecked Split: E8a1, E8a2 |
 | E9 | Script machine: `TriggerScript_Run`, `TriggerScript_ExecOp` 0x13bfd0 with every op, controllers (`TriggerScript_Op0_SpawnController` 0x13c600), persistent cell scripts, run at runtime instead of read statically | unowned | E3c | | [repo] `logic.rs` reads SSFLogic.json statically today |
 | E11 | Camera: named cameras `cBxCamera_EvalNamedCam` 0x174888 (ported), director scripts `cBxCamera_RunDirectorScript`, replay and finish cameras, camera collision | any | | | [repo] Chase cam ported in `rider.rs`; free camera is ours (keep, tag) |
-| E11j | Split of E11: the camera's last 20 functions in the index (constructors, destructors and small steps): `cCameraNode` 0x148218 / 0x148478, `CameraNodeState_Destruct` 0x149448, `CamCamera_Update` 0x16ddd0, `CamDirector::~CamDirector` 0x16e7c0, `Cam_SetShakeParams` 0x16e8f0, `CamView_Update` 0x1703b8, `CamPath::~CamPath` 0x1713d8, `CamRegion::~CamRegion` 0x171fb0, `CamLens_Update` 0x1730d8, `cBxCamera::~cBxCamera` 0x177dd8, `Camera_LoadCmlOnce` 0x1782d0, `Camera_StaticDtor` 0x178dc8, `Cml_FreeHandle` 0x179068, `cCamAnimFrame` 0x1cb718 / 0x1cb768 / 0x1cb8b0, `cCourseResolve_Common::ResolveCameraPointers` 0x2542a8 / `ResolveCameras` 0x254318, `Course_GetCamera` 0x254b78; checked in the runner | any | | irregulur/lynx (2026-11-25) | Split of E11 |
 
 ## P2 Gameplay systems
 
@@ -116,6 +115,7 @@ matches the original.
 
 | ID | Task | Section | Who | Date | Commit |
 |---|---|---|---|---|---|
+| E11j | Split of E11: the camera's last 20 functions in the index and `cOfflineObject::~cOfflineObject` 0x16dcc0 (`tricky_game::camera_misc`: `cCameraNode`, `cCamAnimFrame`, `cBxCamera::~cBxCamera`, `Camera_StaticDtor`, `Course_GetCamera`, the course loader's two camera fix-ups, the small steps), checked in the runner (`tests/camera_misc.rs`, 22 of 22 mutants) | P1 | irregulur/lynx | 2026-11-25 | 56e8bf0 |
 | E12f2b | Split of E12f2: the rest of the memory card driver (`tricky_game::memcard`): vf2 0x23edc8 (the per-frame step, `memcard::update`, 16 of 16 mutants), `MemCard_FormatSaveTitle` 0x1ce8f8 (8 of 8), vf13, vf53, `MemCard_CheckRoomForFiles` and the SJIS converters, all checked in the runner (`tests/memcard.rs`) | P4 | irregulur/lynx | 2026-11-25 | c83959e |
 | E12f2a | Split of E12f2: `MemCard_Process` 0x23e0d0, the memory card driver's state machine (`memcard::process_state`), checked in the runner on every state (`tests/memcard.rs`, 19 of 21 mutants, 2 equivalent) | P4 | irregulur/lynx | 2026-11-24 | 55cba82 |
 | E12f1 | The PS2 memory card driver `cPS2MemCard`, part 1: constructor, reset, destructors, the starters that hand `MemCard_Process` a state, the port and file helpers and the small virtuals (80 functions, 6 of them unindexed) in `tricky_game::memcard`, checked in the runner (`tests/memcard.rs`, 24 of 25 mutants, 1 equivalent) | P4 | irregulur/lynx | 2026-11-24 | b6caa4f |
@@ -1849,3 +1849,4 @@ matches the original.
 - 2026-11-24 irregulur/lynx: E12f2b: SJIS converters done, row left open for vf2/vf13/vf53/CheckRoom/FormatSaveTitle.
 - 2026-11-25 irregulur/lynx: E12f2b done (vf2, FormatSaveTitle).
 - 2026-11-25 irregulur/lynx: split E11j (the camera's last 20 functions) out of E11.
+- 2026-11-25 irregulur/lynx: E11j done.
