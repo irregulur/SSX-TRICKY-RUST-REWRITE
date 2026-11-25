@@ -1035,8 +1035,27 @@ In the app:
 - `game/src/rider.rs` & `game/tests/control_tick.rs`: verified `cBoarder::vf7` 0x117198 eases/decays during reset
   (unified since G1i2c) and end-to-end reset button handling across `NATURAL_AIR` (`0xd`), `SPIN` (`0x10`, including
   fallback branch), `RAIL` (`0xf`), `WIPEOUT` (`0x13`), and `GET_UP` (`0x14`).
-- Left (row E1b2g7d3b4h2b): the out-of-bounds boxes as trigger scripts' op 13 (`TriggerScript_ExecOp` 0x13bfd0 at
-  `0x13c3b4`) once script threads run in the app (E9b2).
+- Out-of-bounds boxes as op 13 (`E1b2g7d3b4h2b`, done 2026-11-24):
+  - Proven (`SLUS_203.26`): across all 11 disc courses, all 914 collidable op-13 out-of-bounds objects (`flags & 0x20`,
+    `surface == -1`, modes 1/2/3) fire via `Boarder_InstanceCollisions` `0x125088` -> `World_QueryInstances` `0x25b878`
+    -> `Instance_OnPlayerContact` `0x13bd40` -> event-1 `.ssf` script -> `TriggerScript_ExecOp` `0x13bfd0` op 13
+    (`0x13c3b4`: `*(rider + 0x304) = 1; Boarder_RequestReset(rider, 101.46069)`). Controllers override `vf +0x94`
+    (`OnContact`): `cUVScrollNode::OnContact` `0x142690` (10/19, 30-tick initial & rearm cooldown; Garibaldi's 44 river
+    OOB objects and Alaska's 11 delayed water OOB objects `[op 4 [0.5], op 13 [0]]`), `cTexFlipNode::OnContact`
+    `0x143378` (11, 30-tick cooldown), and `cAnimObjectNode::OnContact` `0x198eb8` (`0x100..=0x103`, e.g. Megaplex
+    rotating door `183`), while `cDebounceNode` (2, e.g. Snowdream `1087`) uses base no-op `cCounterNode::vf17`
+    `0x13b798` until it expires.
+  - In the app (`cellhost.rs`, `course_ground.rs`, `knockables.rs`, `collide.rs`, `rider.rs`, `rider/vf7.rs`,
+    `rider/ground_tick.rs`, `race.rs`, `src/main.rs`, `src/worldanim.rs`): narrowed `CourseGround::driven` to keyframed
+    controllers (`0x100..=0x103`) so `cUVScrollNode` / `cDebounceNode` OOB boxes stay active in `World_QueryInstances`;
+    implemented `CellHost::try_contact` with `vf +0x94` cooldowns; gave every rider a unique `slot + 1` script handle
+    (`ground_tick::rider_id`); queued `ScriptCall::ResetRider(handle)` in `Knockables::resets` (both synchronous contact
+    and delayed `op 4` wait threads) and applied it via `Rider::apply_script_reset` right after `motion_update` in
+    `vf7::tick` and after `tick_knockables` in `main.rs` / `race.rs`; removed the `world.in_reset` mesh stand-in on disc
+    courses (`world.course.is_some()`, keeping it only as a folder fallback); updated `worldanim.rs` to skip `logic.resets`
+    AABB triggers on disc courses, pass the actual touching rider handle, and forward `ScriptEvent::ResetRider`.
+    Verified on real `TRICKY_DISC` in `game/tests/oob_reset.rs` (Garibaldi static OOB + river `cUVScrollNode`, Alaska
+    0.5 s delayed water, Megaplex rotating door `cAnimObjectNode`, Snowdream `cDebounceNode`).
 
 ### The normal in the air (row G20c2b)
 

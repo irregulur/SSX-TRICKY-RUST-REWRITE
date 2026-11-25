@@ -83,9 +83,13 @@ impl TickEnv for Glue<'_> {
     fn is_paused(&mut self) -> bool {
         false
     }
-    /// `Boarder_UpdateMotion` 0x11c770
+    /// `Boarder_UpdateMotion` 0x11c770 (+ immediate op-13 reset from `Boarder_InstanceCollisions` ->
+    /// `Instance_OnPlayerContact` -> `TriggerScript_ExecOp` 0x13c3b4, row E1b2g7d3b4h2b)
     fn update_motion(&mut self, t: &mut TickRider) {
-        self.with(t, |g| g.r.motion_update(g.world, g.rails, g.ctl_input, g.dt));
+        self.with(t, |g| {
+            g.r.motion_update(g.world, g.rails, g.ctl_input, g.dt);
+            g.r.apply_script_reset(g.world);
+        });
     }
     /// `Boarder_AddSpeedSample` 0x155dc8
     fn add_speed_sample(&mut self, _: &mut TickRider, speed: f32) {

@@ -41,9 +41,10 @@ pub struct CourseGround {
     /// the world grid as `Rail_ClosestPoint` 0x259330 walks it (row G20c2c1a, [`rail_world`]); its rails' on bits
     /// as the course's scripts leave them ([`CourseGround::set_rail_live`])
     pub rails: Mutex<crate::rider::ground_tick::RailWorld>,
-    /// STANDIN: the objects whose persistent script spawns a controller other than a roller (op 0 sub-type not 0:
-    /// animated doors, boosts...), which the port does not run (row E7b2); the rider's instance query passes
-    /// through them unless the port poses them ([`CourseGround::pose`]), as the app did before row E8c3
+    /// Keyframed animated objects (`cAnimObjectNode` 0x100/0x102/0x103, `cAnimDeltaNode` 0x101) whose persistent
+    /// script spawns an animation controller: `World_QueryInstances` skips them only while unposed (`!poses.contains_key`),
+    /// whereas non-keyframed controllers (`cUVScrollNode` 10 on water/river OOB boxes, `cDebounceNode` 2, …) stay
+    /// active in `World_QueryInstances` whenever `flags & 0x20 != 0`.
     driven: Vec<bool>,
     /// gWorld (0x346488) +0xc: the `.ltg` header's box, its lowest z (cm; `ResolveTGroupHeader` 0x252470 leaves it
     /// as the file has it), the floor `cBoarder::vf7` 0x117198 resets riders 100 m under
@@ -84,7 +85,11 @@ impl CourseGround {
         let knock = Mutex::new(crate::knockables::Knockables::default());
         let cells = Mutex::new(crate::cellhost::CellHost::new(pbd_bytes, &pbd, world.objects.len()));
         let driven = (0..world.objects.len())
-            .map(|o| ssf.effects.get(ssf.event_script(o, 0) as usize).is_some_and(|ops| ops.iter().any(|op| op.op == 0 && op.args.first().is_some_and(|&t| t != 0))))
+            .map(|o| {
+                ssf.effects
+                    .get(ssf.event_script(o, 0) as usize)
+                    .is_some_and(|ops| ops.iter().any(|op| op.op == 0 && op.args.first().is_some_and(|&t| matches!(t, 0x100..=0x103))))
+            })
             .collect();
         // STANDIN: every rail on at load, as the port's `Rails` are (the game's are off in the file and their
         // `cRailNode`s switch them on, row E7b2); the event's scripts switch some off ([`CourseGround::set_rail_live`])
@@ -188,6 +193,29 @@ impl CourseGround {
     /// Whether `object` currently has a controller blocking contact scripts (`Instance_OnPlayerContact` 0x13bd40).
     pub fn blocks_contact(&self, object: usize) -> bool {
         self.cells.lock().unwrap_or_else(|e| e.into_inner()).blocks_contact(object)
+    }
+
+    /// `Instance_OnPlayerContact` 0x13bd40 + controller `vf +0x94` (`cAnimObjectNode::OnContact` 0x198eb8,
+    /// `cUVScrollNode::OnContact` 0x142690, `cTexFlipNode::OnContact` 0x143378): returns `true` when the object's
+    /// event-1 script should run and arms the controller's contact cooldown.
+    pub fn try_contact(&self, object: usize) -> bool {
+        self.cells.lock().unwrap_or_else(|e| e.into_inner()).try_contact(object)
+    }
+
+    /// Queue a `TriggerScript_ExecOp` 0x13bfd0 op 13 (`0x13c3b4`: `Boarder_RequestReset`) for `rider` (`slot + 1`).
+    pub fn queue_rider_reset(&self, rider: u32) {
+        if rider != 0 {
+            self.knock.lock().unwrap_or_else(|e| e.into_inner()).resets.push(rider);
+        }
+    }
+
+    /// Consume any pending `TriggerScript_ExecOp` 0x13bfd0 op 13 (`0x13c3b4`: `Boarder_RequestReset`) queued for
+    /// `rider` by a synchronous or delayed `.ssf` contact script thread.
+    pub fn take_rider_reset(&self, rider: u32) -> bool {
+        let mut k = self.knock.lock().unwrap_or_else(|e| e.into_inner());
+        let before = k.resets.len();
+        k.resets.retain(|&id| id != rider);
+        k.resets.len() != before
     }
 
     /// `World_FindScript` 0x260dd8: case-insensitive function index lookup in `self.ssf`.

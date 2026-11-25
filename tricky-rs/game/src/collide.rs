@@ -266,6 +266,19 @@ impl CollisionWorld {
         k.knocks.drain(..).map(|(o, s)| (o as usize, s * 0.01)).collect()
     }
 
+    /// Queue a `TriggerScript_ExecOp` 0x13bfd0 op 13 (`Boarder_RequestReset` 0x118f10) for `rider` (`slot + 1`).
+    pub fn queue_rider_reset(&self, rider: u32) {
+        if let Some(c) = &self.course {
+            c.queue_rider_reset(rider);
+        }
+    }
+
+    /// Consume any pending `TriggerScript_ExecOp` 0x13bfd0 op 13 (`Boarder_RequestReset` 0x118f10) queued for
+    /// `rider` (`slot + 1`) by a live `.ssf` script thread (row E1b2g7d3b4h2b).
+    pub fn take_rider_reset(&self, rider: u32) -> bool {
+        self.course.as_ref().is_some_and(|c| c.take_rider_reset(rider))
+    }
+
     /// Give the course's collision every keyframed object's pose (once it is set, row E7c3b).
     pub fn pose_course(&self) {
         for m in &self.movers { pose_on(self.course.as_deref(), m); }

@@ -112,6 +112,9 @@ pub struct CellHost {
     next_thread_id: u64,
     /// Objects whose controller was spawned this frame (`pending_list3`).
     pending: HashSet<usize>,
+    /// Contact cooldown ticks for visual controllers whose `vf +0x94` runs `Controller_RunContactScript` 0x13aaf8
+    /// (`cUVScrollNode::OnContact` 0x142690, `cTexFlipNode::OnContact` 0x143378, `cUVScrollTexFlipNode`: 30 ticks).
+    contact_cooldown: HashMap<usize, i32>,
     chans: HashMap<usize, Vec<[f32; 16]>>,
     threads: HashMap<u64, ThreadState>,
     events: CellEvents,
@@ -149,6 +152,7 @@ impl CellHost {
             next_dead_id: 0,
             next_thread_id: 1,
             pending: HashSet::new(),
+            contact_cooldown: HashMap::new(),
             chans: HashMap::new(),
             threads: HashMap::new(),
             events: CellEvents::default(),
@@ -169,8 +173,8 @@ impl CellHost {
     }
 
     /// Whether `object` currently has a controller that blocks a new contact script (`Instance_OnPlayerContact`
-    /// 0x13bd40: non-roller controllers return 0 from vf +0x64; an `AnimObject` only re-runs contact when
-    /// `cooldown == 0`).
+    /// 0x13bd40 + controller `vf +0x94`: `cAnimObjectNode::OnContact` 0x198eb8, `cUVScrollNode::OnContact` 0x142690,
+    /// `cTexFlipNode::OnContact` 0x143378).
     pub fn blocks_contact(&self, object: usize) -> bool {
         let Some(ty) = self.controller(object) else { return false };
         if let Some(a) = self.anim_nodes.get(&object) {
@@ -179,7 +183,40 @@ impl CellHost {
         if let Some(d) = self.delta_nodes.get(&object) {
             return d.anim.cooldown != 0;
         }
+        if matches!(ty, 10 | 11 | 19) {
+            return self.contact_cooldown.get(&object).copied().unwrap_or(0) > 0;
+        }
         ty != 0
+    }
+
+    /// `Instance_OnPlayerContact` 0x13bd40 controller gate + `vf +0x94` cooldown arming (`cAnimObjectNode::OnContact`
+    /// 0x198eb8, `cUVScrollNode::OnContact` 0x142690, `cTexFlipNode::OnContact` 0x143378): returns `true` when the
+    /// object's event-1 contact script should run, and arms the controller's contact cooldown if applicable.
+    pub fn try_contact(&mut self, object: usize) -> bool {
+        let Some(ty) = self.controller(object) else { return true };
+        if let Some(a) = self.anim_nodes.get_mut(&object) {
+            if a.cooldown == 0 {
+                a.cooldown = a.rearm;
+                return true;
+            }
+            return false;
+        }
+        if let Some(d) = self.delta_nodes.get_mut(&object) {
+            if d.anim.cooldown == 0 {
+                d.anim.cooldown = d.anim.rearm;
+                return true;
+            }
+            return false;
+        }
+        if matches!(ty, 10 | 11 | 19) {
+            let cd = self.contact_cooldown.entry(object).or_insert(0);
+            if *cd < 1 {
+                *cd = 30;
+                return true;
+            }
+            return false;
+        }
+        ty == 0
     }
 
     /// Number of currently occupied active cell slots in `AiCells`.
@@ -277,6 +314,7 @@ impl CellHost {
         self.next_dead_id = 0;
         self.next_thread_id = 1;
         self.pending.clear();
+        self.contact_cooldown.clear();
         self.chans.clear();
         self.threads.clear();
         self.events = CellEvents::default();
@@ -339,6 +377,7 @@ impl<'a> TickCtx<'a> {
         self.host.delta_nodes.remove(&o);
         self.host.logic_nodes.remove(&o);
         self.host.pending.remove(&o);
+        self.host.contact_cooldown.remove(&o);
         self.host.unlink_controller_node(o);
         self.host.chans.remove(&o);
         self.batch.unpose.push(o);
@@ -549,6 +588,12 @@ impl<'a> TickCtx<'a> {
                         if let Some(f) = self.flags.get_mut(o) {
                             *f = *f & 0xffff_fffd | 4;
                         }
+                    }
+                    if matches!(t, 10 | 11 | 19) {
+                        // `cUVScrollNode::cUVScrollNode` 0x141ff0 / `cTexFlipNode::cTexFlipNode` 0x142e90: initial
+                        // contact cooldown is 30 ticks (decremented once per 60 Hz frame after creation frame).
+                        self.host.contact_cooldown.insert(o, 30);
+                        self.host.pending.insert(o);
                     }
                     self.host.ctrl[o] = Some(t);
                     self.batch.ctrl.push((o, Some(t)));
@@ -939,6 +984,14 @@ impl CellHost {
                     }
                     ctx.flush_starts();
                 }
+            }
+        }
+
+        // Decrement contact cooldowns for live visual controllers (`cUVScrollNode::Update` 0x1422e0 /
+        // `cTexFlipNode::Update` 0x1430b8), skipping nodes still pending on their creation frame.
+        for (&o, cd) in ctx.host.contact_cooldown.iter_mut() {
+            if !ctx.host.pending.contains(&o) && *cd > 0 {
+                *cd -= 1;
             }
         }
 

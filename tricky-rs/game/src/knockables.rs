@@ -30,6 +30,9 @@ pub struct Knockables {
     threads: Vec<(Thread, Rider)>,
     /// `Sfx_InstanceCollision` 0x216c50 calls since the app last took them: the object and the rider's speed (cm/s)
     pub knocks: Vec<(u32, f32)>,
+    /// `TriggerScript_ExecOp` 0x13bfd0 op 13 (`0x13c3b4`: `+0x304 = 1`, `Boarder_RequestReset` 0x118f10) rider handles
+    /// emitted by contact scripts (immediate or after `op 4` wait), drained per rider via `CourseGround::take_rider_reset`.
+    pub resets: Vec<u32>,
     /// the 60 Hz frames' clock (the port's ticks may be shorter)
     clock: f32,
 }
@@ -132,6 +135,7 @@ impl CtrlEnv for RollEnv<'_> {
 struct ThreadEnv<'a> {
     course: &'a CourseGround,
     rollers: &'a mut Vec<Roller>,
+    resets: &'a mut Vec<u32>,
     waiting: Vec<(Thread, Rider)>,
     rider: Rider,
     /// the thread running: its script, object (index + 1) and contexts
@@ -322,11 +326,9 @@ impl ScriptEnv for ThreadEnv<'_> {
                 }
             }
             ScriptCall::ResetRider(rider) => {
-                self.course
-                    .cells
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .record_event(crate::cellhost::ScriptEvent::ResetRider(rider));
+                if rider != 0 {
+                    self.resets.push(rider);
+                }
             }
             ScriptCall::Teleport { rider, object } => {
                 if let Some(o) = object.checked_sub(1) {
@@ -350,7 +352,7 @@ impl Knockables {
         if self.rollers.iter().any(|r| r.object == object && r.body.asleep == 0) {
             return;
         }
-        if course.cells.lock().unwrap_or_else(|e| e.into_inner()).blocks_contact(object as usize) {
+        if !course.try_contact(object as usize) {
             return;
         }
         let s = course.ssf.event_script(object as usize, 1);
@@ -368,7 +370,7 @@ impl Knockables {
     }
 
     fn run_new(&mut self, course: &CourseGround, list: Vec<(Thread, Rider)>) {
-        let mut env = ThreadEnv { course, rollers: &mut self.rollers, waiting: Vec::new(), rider: Rider::default(), cur: None };
+        let mut env = ThreadEnv { course, rollers: &mut self.rollers, resets: &mut self.resets, waiting: Vec::new(), rider: Rider::default(), cur: None };
         for (t, r) in list {
             env.start(t, r);
         }
@@ -401,7 +403,7 @@ impl Knockables {
             let starts = std::mem::take(&mut env.starts);
             self.start_scripts(course, &starts);
             let threads = std::mem::take(&mut self.threads);
-            let mut env = ThreadEnv { course, rollers: &mut self.rollers, waiting: Vec::new(), rider: Rider::default(), cur: None };
+            let mut env = ThreadEnv { course, rollers: &mut self.rollers, resets: &mut self.resets, waiting: Vec::new(), rider: Rider::default(), cur: None };
             for (mut t, r) in threads {
                 env.cur = Some((t.script, t.object, t.ctx_a, t.ctx_b));
                 env.rider = r;

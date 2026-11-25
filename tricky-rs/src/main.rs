@@ -2436,6 +2436,9 @@ fn ride(
             let mut thrown: Vec<(usize, Vec3)> = Vec::new();
             // the course's knockables (row E8c3): the riders kicked them in their ground ticks; their frames
             world.0.tick_knockables(dt);
+            // delayed op-13 out-of-bounds resets (e.g. Alaska's 0.5 s `op 4` wait -> `op 13`, row E1b2g7d3b4h2b)
+            r.apply_script_reset(&world.0);
+            for o in opponents.0.iter_mut() { o.rider.apply_script_reset(&world.0); }
             let knocks = world.0.take_knocks();
             for p in props.0.iter_mut() {
                 if world.0.course.is_some() && p.kind == props::Kind::Knock {

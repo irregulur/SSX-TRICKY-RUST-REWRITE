@@ -792,6 +792,15 @@ impl Rider {
         self.set_control(control_tick::RESET);
     }
 
+    /// Apply any pending `TriggerScript_ExecOp` 0x13bfd0 op 13 (`0x13c3b4`: `+0x304 = 1`, `Boarder_RequestReset`
+    /// 0x118f10) emitted for this rider by a live `.ssf` script thread (synchronous contact or delayed `op 4` wait,
+    /// row E1b2g7d3b4h2b).
+    pub fn apply_script_reset(&mut self, world: &CollisionWorld) {
+        if world.take_rider_reset(ground_tick::rider_id(self)) {
+            self.request_reset(Some(1));
+        }
+    }
+
     /// `Boarder_SetMotion` 0x11f610 -> `Boarder_ExitMotionState` 0x11c6b0 / `Boarder_EnterMotionState` 0x11c710:
     /// updates `rider+0x424` (`self.motion`) and applies `WipeoutMotion_Enter` 0x10c198's surface write
     /// (`rider+0x310 = rider+0x290; rider+0x290 = 10`) when entering motion 5.
@@ -1675,11 +1684,14 @@ impl Rider {
                     self.safe_timer = 0.0;
                 }
             }
-            // STANDIN: nine seconds in the air on a levels folder, or (row E9b2) into one of the out-of-bounds boxes
-            // for the trigger scripts' op 13 (`TriggerScript_ExecOp` 0x13bfd0 at 0x13c3b4: +0x304 = 1,
-            // `Boarder_RequestReset`). The world-floor reset itself runs inside `boarder_tick::boarder_tick`.
-            if (world.course.is_none() && !self.grounded && self.crashed <= 0.0 && self.rail.is_none() && self.air_time > 9.0)
-                || (self.rail.is_none() && world.in_reset(self.pos + Vec3::Y * 0.8, BODY_RADIUS))
+            // STANDIN (levels folder without course collision): nine seconds in the air or mesh reset triangles.
+            // On a disc course (`world.course.is_some()`), out-of-bounds resets run through `Boarder_InstanceCollisions`
+            // 0x125088 -> `Instance_OnPlayerContact` 0x13bd40 -> `TriggerScript_ExecOp` 0x13bfd0 op 13 (`0x13c3b4`:
+            // `+0x304 = 1`, `Boarder_RequestReset`, row E1b2g7d3b4h2b), and the world-floor reset runs inside
+            // `boarder_tick::boarder_tick`.
+            if world.course.is_none()
+                && ((!self.grounded && self.crashed <= 0.0 && self.rail.is_none() && self.air_time > 9.0)
+                    || (self.rail.is_none() && world.in_reset(self.pos + Vec3::Y * 0.8, BODY_RADIUS)))
             {
                 self.request_reset(Some(1));
             }

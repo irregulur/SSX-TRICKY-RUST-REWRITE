@@ -406,7 +406,10 @@ impl WorldAnim {
                         r.on = on;
                     }
                 }
-                ScriptEvent::ScriptSound { .. } | ScriptEvent::ResetRider(_) | ScriptEvent::Teleport { .. } => {}
+                ScriptEvent::ResetRider(id) => {
+                    world.queue_rider_reset(id);
+                }
+                ScriptEvent::ScriptSound { .. } | ScriptEvent::Teleport { .. } => {}
             }
         }
     }
@@ -765,16 +768,31 @@ pub fn world_anim(
         }
         wa.impact = 0.0;
     }
-    // anything else: its collision script, then not again for a second
+    // anything else: its collision script, then not again for a second.
+    // On a disc course, out-of-bounds op-13 boxes (`level.logic.resets`) run through `Boarder_InstanceCollisions`
+    // 0x125088 -> `Instance_OnPlayerContact` 0x13bd40 on exact collision geometry (row E1b2g7d3b4h2b), not coarse AABBs;
+    // non-reset visual triggers pass the actual touching rider's handle (`slot + 1`) and velocity.
     let is_glass = |i: &usize| level.logic.cracks.contains_key(i) || wa.glass.contains(i);
-    let hit: Vec<usize> = forced.iter().copied().filter(|i| !is_glass(i))
-        .chain(wa.boxes.iter().filter(|(i, lo, hi)| !is_busy(&wa, *i) && !is_glass(i) && bodies.iter().any(|b| inside(*b, *lo, *hi))).map(|b| b.0)).collect();
-    for i in hit {
+    let rider_handles: Vec<(u32, Vec3, bool)> = std::iter::once((rider.0.slot as u32 + 1, rider.0.vel, !rider.0.ai))
+        .chain(opponents.0.iter().map(|o| (o.rider.slot as u32 + 1, o.rider.vel, !o.rider.ai)))
+        .collect();
+    let hit: Vec<(usize, u32, Vec3, bool)> = forced.iter().copied().filter(|i| !is_glass(i))
+        .map(|i| (i, rider.0.slot as u32 + 1, rider.0.vel, !rider.0.ai))
+        .chain(wa.boxes.iter().filter_map(|(i, lo, hi)| {
+            if is_busy(&wa, *i) || is_glass(i) || (course.is_some() && level.logic.resets.contains(i)) {
+                return None;
+            }
+            bodies.iter().enumerate().find(|(_, b)| inside(**b, *lo, *hi)).map(|(k, _)| {
+                let (h, v, hum) = rider_handles[k];
+                (*i, h, v, hum)
+            })
+        }))
+        .collect();
+    for (i, handle, vel, human) in hit {
         if let Some(course) = &course {
             wa.busy.insert(i, 60);
-            let vel = rider.0.vel;
             let vel_cm = [vel.x * 100.0, -vel.z * 100.0, vel.y * 100.0, 0.0];
-            let ev = course.run_event_script(i, 1, 1, vel_cm, true, &mut tricky_game::rand::rand_game);
+            let ev = course.run_event_script(i, 1, handle, vel_cm, human, &mut tricky_game::rand::rand_game);
             wa.apply_cell_events(ev, level, &mut anims, &mut world.0, &mut rails.0);
         } else {
             wa.busy.insert(i, 60);

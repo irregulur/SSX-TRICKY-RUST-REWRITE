@@ -991,9 +991,9 @@ pub(super) fn wall_cast(world: &CollisionWorld, course: &crate::course_ground::C
     (t, rec)
 }
 
-/// The rider's handle for the scripts and sounds. STANDIN: 1 for the human, 2 for the others, for the rider's address.
+/// The rider's handle for the scripts and sounds (`slot + 1`, nonzero for every rider: `1` for slot 0).
 pub(super) fn rider_id(r: &Rider) -> u32 {
-    if r.ai { 2 } else { 1 }
+    r.slot as u32 + 1
 }
 
 /// `World_QueryInstances` 0x25b878 with `cWorldBoarder`(the body, 1): t, the record (object = index + 1), the object

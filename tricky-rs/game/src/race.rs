@@ -1124,6 +1124,7 @@ pub fn self_test(world: &mut CollisionWorld, rails: &Rails, line: &[Vec3], cours
             if port.ai.is_none() { player_follow = crate::aiglue::follow_start(ai_paths, None, r.pos); }
         }
         world.tick_knockables(dt);
+        r.apply_script_reset(world);
         if let Some(tb) = tube {
             if tb.apply(&mut r, laps(&race), dt) {
                 ai.reroute();
