@@ -1245,3 +1245,20 @@ material, is equivalent because nothing in the block can change it). The resolve
   +0x20 cleared. The file argument is not used in either.
 - Checked in the runner (8 functions, 4,000 cases; the file system, memory and compression calls stood in on both
   sides; the opens and mounts log the flags word they see); 23 of 23 mutants.
+
+## The BIG library checked (row E2h; `data/src/big.rs`, `game/tests/big_lib.rs`, proven)
+
+- `BIG_Identify` 0x2cbc88, `BIG_HeaderSize` 0x2cbd08 and `BIG_Lookup` 0x2cbdc0 (row E2a) and two more now ported:
+  `BIG_GetFileCount` 0x2cc1b0 (`C0FB`: the big-endian u16 at +4; `BIGF`: the u32 at +8; else 0) and
+  `BIG_FindEntry` 0x2cc0d8(big, name) (0 without a name; else `BIG_Lookup` by name with the offset word on the
+  stack, 0 first, and the size into the word 0x3bb960; big + offset, or 0 for offset 0).
+- `BIG_Lookup` answers the entry name's address (now `BigEntry::at`) and writes the offset and size into the words
+  it is handed (each may be 0: not written), both 0 when it finds nothing. Names compare with `stricmp` 0x2fcc98
+  (the C library's: case through the ctype table 0x3ba521, which for ASCII is `to_ascii_lowercase`).
+- Not followed by the port (data the disc does not have): the walk compares addresses, so a directory size that
+  wraps past the end of memory ends it at once in the game; and the game reads names past the directory's end
+  where our slice stops.
+- Checked in the runner: 3,000 random directories (`C0FB`, `BIGF`, neither; 0 to 20 entries; sizes ending early,
+  mid-entry or late), each with 6 lookups by number and by name (other case, prefixes, absent), with and without
+  the out words; the original's `stricmp` and `strlen` run as they are; 18 of 18 mutants (one, `stricmp`
+  without its end test, by hanging).

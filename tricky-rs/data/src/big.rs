@@ -39,11 +39,18 @@ pub struct BigEntry {
     /// From the start of the archive.
     pub offset: u32,
     pub size: u32,
+    /// Where its name starts, from the start of the directory (`BIG_Lookup` answers its address).
+    pub at: u32,
 }
 
 /// `BIG_Lookup` 0x2cbdc0: walks the directory (`C0FB` from +6: u24 offset, u24 size, name; `BIGF` from +0x10:
 /// u32 offset, u32 size, name; names end with a zero) and returns the entry named `name` (compared with
-/// `stricmp`), or with no name the entry number `index`.
+/// `stricmp`), or with no name the entry number `index`. The game compares the walk's place with the
+/// directory's end as addresses; a directory size that wraps past the end of memory is not followed here (and
+/// the walk stops where `header` ends, where the game reads on). For none it zeroes the offset and size words it
+/// was handed.
+///
+/// Checked in the function runner (row E2h, `game/tests/big_lib.rs`).
 pub fn lookup(header: &[u8], name: Option<&str>, index: usize) -> Option<BigEntry> {
     let kind = identify(header);
     let end = header_size(header);
@@ -66,12 +73,36 @@ pub fn lookup(header: &[u8], name: Option<&str>, index: usize) -> Option<BigEntr
         };
         if hit {
             let be = |at: usize| header[at..at + width].iter().fold(0u32, |v, &b| v << 8 | b as u32);
-            return Some(BigEntry { name: String::from_utf8_lossy(entry_name).into_owned(), offset: be(p), size: be(p + width) });
+            return Some(BigEntry {
+                name: String::from_utf8_lossy(entry_name).into_owned(),
+                offset: be(p),
+                size: be(p + width),
+                at: at as u32,
+            });
         }
         i += 1;
         p = at + len + 1;
     }
     None
+}
+
+/// `BIG_GetFileCount` 0x2cc1b0: the directory's count: `C0FB` the u16 at +4, `BIGF` the u32 at +8, else 0.
+pub fn file_count(b: &[u8]) -> u32 {
+    match identify(b) {
+        1 => u16::from_be_bytes([b[4], b[5]]) as u32,
+        2 => u32::from_be_bytes([b[8], b[9], b[0xa], b[0xb]]),
+        _ => 0,
+    }
+}
+
+/// `BIG_FindEntry` 0x2cc0d8(big, name): the entry's offset (the game answers the archive's address plus it), 0
+/// for none, no name or offset 0. (The game hands `BIG_Lookup` the word 0x3bb960 for the size, which nobody
+/// reads.)
+pub fn find_entry(big: &[u8], name: Option<&str>) -> u32 {
+    match name {
+        Some(n) => lookup(big, Some(n), 0).map_or(0, |e| e.offset),
+        None => 0,
+    }
 }
 
 /// Every entry, in directory order (`BIG_Lookup` by number until it fails).
