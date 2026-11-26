@@ -759,7 +759,43 @@ velocity, +0x424 motion, +0x428 state, +0x2e4 impact counter; recordings kept on
     - `cUVScrollTexFlipNode::Update` 0x1462d0: the flip stepping of `texanim::Flip` (its random frame `ceil(u (n - 1))` and
       the flicker's `rate (0.75 u + 0.25)`), already in place.
   - `DAT_0032de94` (the `Rand_SeedGame` seed at `cGame::Init`) has no writer in the executable and is zero in the image:
-    `GAME_INIT_SEED` is 0. The node order stays open (E1b2h).
+    `GAME_INIT_SEED` is 0.
+- **World node order & pre-race `Rand_Game` audit (row E1b2h, proven from `SLUS_203.26`)**:
+  - **BxList membership & counters**: `cAI::vf10` (`0x1108f0`) initializes `COUNTER5` (`0x337c68`) and `COUNTER`
+    (`0x337c6c`) to `1`. `TriggerScript_Op0_SpawnController` (`0x13c5d0`) creates every controller subclass via
+    `cControllerNode::cControllerNode` (`0x13a840`) -> `cBxSortObjNode::cBxSortObjNode` (`0x17d0e0`) on sorted **List 3**
+    (including visual controllers `cUVScrollNode` `10` `0x141ff0`, `cTexFlipNode` `11` `0x142e90`, `cFlagNode` `13`
+    `0x144778`, `cCrackedNode` `14` `0x145458`, `cCrowdBoxNode` `17` `0x145b28`, `cUVScrollTexFlipNode` `19` `0x1460f0`,
+    plus `cRestoreNode` `0x3ee` `0x13aff8` and `cScriptNode` `0x3e9` `0x13b8c0`), **except** `cDeadNode` (`5`,
+    `0x13af38`), which constructs on unsorted **List `0xd`** (`COUNTER5` `0x337c68`) and is never in
+    `gBxList_UpdateOrder` (`[0, 1, 2, 3, 5, 6, 7, 8, 4, 10, 11]`).
+  - **Exact List-3 creation/tick order**: `BxList_Add` (`0x17d4e8`) links new List-3 nodes at the pending head;
+    `BxList_MergePending(3)` (`0x17d548`) runs at the end of `Game_UpdateObjectLists` (`0x1814c0`) and merges each
+    pending node walking tail-to-head via `cBxSortObjNode::vf3` (`0x17dcb0`: `new.sort_id <= other.vf5()`), placing
+    live List 3 strictly **descending by `sort_id` (newest first)**. Newly created nodes never tick on their creation
+    frame; on subsequent frames `BxList_UpdateAll(3)` (`0x17d950`) steps all controllers (anim, logic, visual) and
+    waiting `cScriptNode` threads interleaved newest-first. `CellHost` (`tricky-rs/game/src/cellhost.rs`) now keeps
+    `cDeadNode` off List 3, puts visual controllers (`10, 11, 13, 14, 17, 19`) onto sorted List 3 with their `visual_life`
+    expiry (`0x1422e0`, `0x1430b8`, `0x144e48`, `0x1455a0`, `0x1462d0`), and emits `ScriptEvent::TickVisual` /
+    `KillVisual` in exact List-3 order; `WorldAnim` (`tricky-rs/src/worldanim.rs`) ticks each visual controller from
+    those events (and uses head-insertion newest-first order on folder-only fallback).
+  - **Exhaustive `Rand_Game` pre-race audit** (`gRandGame` `0x345e70`, `Rand_SeedGame` `0x23d4c8`, `Rand_Game` `0x23d4d8`
+    [16 xrefs], `Rand_GameRange` `0x23d4f8` [7 xrefs], `Rand_GameJitter` `0x23d560` [1 xref]):
+    - `Rand_SeedGame` has only 2 callers: `cGame::Init` (`0x17e248`, `DAT_0032de94 = 0`) and `cAI::vf14_111108`
+      (`0x1112dc`, `DAT_0032de90`). `DAT_0032de90` starts at `0` on the first race (`cGame::Init` -> `cGame::Restart`
+      `0x180c70` -> `cAI::vf14(ai, 1, 0)` directly) and is overwritten with `Rand_Fx()` on restart (`cAI::vf15`
+      `0x111520`) and next race (`cAI::vf16` `0x1115d0`).
+    - **Between `cGame::Init` (`0x17e248`) and `cAI::vf14` (`0x1112dc`), zero calls draw from `Rand_Game`**: `cAI::vf11`
+      (`0x110bf8`) builds controllers/boarders without playing any of the 12 `AnimClip_ResolveAnmIndex` (`0x15ada8`)
+      mode-3 random-variant clips (`0x205..0x20a, 0x211..0x215, 0x23e`), snow/crowd init draws only `Rand_Fx`, and no
+      cells or scripts run before `cGame::Restart`.
+    - **Between `cAI::vf14` (`0x1112dc`) and race GO**, the only possible `Rand_Game` draws are `cPreRaceHandler::Enter`
+      (`0x112b88`, which runs `NoCountdown` first when `!Race_HasStartGate` and `cAI::vf12` `0x112550` mode script
+      second — fixed in `worldanim.rs` and `main.rs`) and pre-race `cAIWorld::vf1` (`0x115e28`) cell activations
+      (`World_CellActivate_RunPersistant` `0x25fed0` around riders + camera focus while `race+0x1c < 2`) spawning
+      `cAnimObjectNode` (`0x198810`: `Rand_GameRange` / `Rand_GameJitter`) or executing script op 5 (`0x13c274`/
+      `0x13c2ac`: `Rand_GameRange`). During riding, `cRandomBoostNode::vf27_141360` (`0x141360`, 3 `Rand_GameRange`
+      calls per rider on first entry) is the only other `Rand_GameRange` caller.
 
 - The intro's and scenes' draws (row E1b2c, read): the camera director's random branch (`CamScript_Update` 0x175f50 case 10,
   0x176278) draws once from `Rand_Fx`, `divu` by 100 (unsigned, 0x176284), and takes the branch when the remainder is below

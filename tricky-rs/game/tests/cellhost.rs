@@ -235,3 +235,94 @@ fn list3_update_steps_newest_sort_id_first() {
     cg.tick_cells(&[at_75], 4, at_75, false, &mut rand);
     assert!(cg.anim_time(75).unwrap() > 0.0, "75 advances once merged onto live List 3");
 }
+
+#[test]
+fn e1b2h_list3_visual_nodes_newest_first_and_dead_on_list_0xd() {
+    // Row E1b2h: proves from `SLUS_203.26`:
+    // 1. `cAI::vf10` 0x1108f0 initializes `COUNTER` (0x337c6c) and `COUNTER5` (0x337c68) to 1.
+    // 2. `cDeadNode` (`0x13af38`, type 5) goes onto unsorted List 0xd (advancing `COUNTER5` only, never on List 3).
+    // 3. Visual controllers (`10` UVScroll, `11` TexFlip, `13` Flag, `14` Cracked, `17` CrowdBox, `19` UVScrollTexFlip)
+    //    construct on sorted List 3 (`cControllerNode` 0x13a840 -> `cBxSortObjNode(3, t)` 0x17d0e0 -> `BxList_Add(3)`
+    //    0x17d4e8), wait in `pending_list3` for their creation frame (zero `TickVisual` on creation frame), merge
+    //    via `BxList_MergePending` 0x17d548, and emit `ScriptEvent::TickVisual` on the next tick in strictly
+    //    descending `sort_id` order (newest first, exact reverse of creation order).
+    use tricky_game::cellhost::ScriptEvent;
+    let Some(cg) = load_course("gari") else { return };
+    let mut rand = || 0u32;
+
+    // Fresh CellHost starts both counters at 1 (`cAI::vf10` 0x1108f0).
+    assert_eq!(cg.cells.lock().unwrap().sort_counters(), (1, 1));
+
+    // `RaceMode` spawns `cDeadNode` (type 5) objects on List 0xd: `COUNTER5` advances, List 3 stays empty of dead nodes.
+    let ev_mode = cg.run_script_named("RaceMode", &mut rand);
+    let dead_objs: Vec<usize> = ev_mode
+        .script_events
+        .iter()
+        .filter_map(|e| match e { ScriptEvent::DeadObject(o) => Some(*o), _ => None })
+        .collect();
+    assert!(!dead_objs.is_empty(), "gari RaceMode creates cDeadNode objects");
+    let (c_norm, c_dead) = cg.cells.lock().unwrap().sort_counters();
+    assert_eq!(c_dead, 1 + dead_objs.len() as u32, "cDeadNode advances COUNTER5 (0x337c68)");
+    assert!(c_norm >= 2, "RaceMode cScriptNode advanced COUNTER (0x337c6c)");
+
+    // Tick at a cell that spawns multiple visual controllers (UVScroll 10 / TexFlip 11 / Flag 13 / CrowdBox 17 / 19).
+    let spawn_pos = cg.with_world(|w| {
+        w.objects
+            .iter()
+            .enumerate()
+            .find(|&(i, _)| {
+                let s = cg.ssf.event_script(i, 0);
+                s >= 0 && cg.ssf.effects.get(s as usize).is_some_and(|ops| {
+                    ops.iter().any(|op| op.op == 0 && matches!(op.args.first().copied(), Some(10 | 11 | 13 | 17 | 19)))
+                })
+            })
+            .map(|(_, o)| [(o.min[0] + o.max[0]) * 0.5, (o.min[1] + o.max[1]) * 0.5, (o.min[2] + o.max[2]) * 0.5, 1.0])
+            .expect("gari has a cell with visual controllers")
+    });
+
+    // Creation frame: visual controllers are spawned into `pending_list3` and do NOT tick yet!
+    let ev0 = cg.tick_cells(&[spawn_pos], 1, spawn_pos, false, &mut rand);
+    let spawned_visual: Vec<usize> = ev0
+        .script_events
+        .iter()
+        .filter_map(|e| match e {
+            ScriptEvent::SpawnController { object, args }
+                if matches!(args.first().copied(), Some(10 | 11 | 13 | 14 | 17 | 19)) =>
+            {
+                Some(*object)
+            }
+            _ => None,
+        })
+        .collect();
+    assert!(spawned_visual.len() >= 2, "need at least 2 visual controllers to verify reverse List-3 order, got {}", spawned_visual.len());
+    let ticks_on_create: Vec<usize> = ev0
+        .script_events
+        .iter()
+        .filter_map(|e| match e { ScriptEvent::TickVisual { object, .. } => Some(*object), _ => None })
+        .collect();
+    assert!(ticks_on_create.is_empty(), "newly spawned visual controllers must wait in pending_list3 on creation frame");
+
+    // Live List 3 snapshot after merge: strictly descending `sort_id`, and contains NO `cDeadNode`!
+    let live = cg.cells.lock().unwrap().live_list3_snapshot();
+    for pair in live.windows(2) {
+        assert!(pair[0].0 > pair[1].0, "live List 3 must be strictly descending by sort_id: {:?}", live);
+    }
+    for &d in &dead_objs {
+        assert!(
+            !live.iter().any(|&(_, obj)| obj == Some(d)),
+            "cDeadNode object {d} belongs on List 0xd, must never be in live List 3"
+        );
+    }
+
+    // Next frame: `BxList_UpdateAll(3)` ticks those visual controllers in exact reverse of creation order!
+    let ev1 = cg.tick_cells(&[spawn_pos], 1, spawn_pos, false, &mut rand);
+    let ticked_order: Vec<usize> = ev1
+        .script_events
+        .iter()
+        .filter_map(|e| match e { ScriptEvent::TickVisual { object, .. } => Some(*object), _ => None })
+        .collect();
+    let expected_reverse: Vec<usize> = spawned_visual.iter().rev().copied().collect();
+    // Filter `ticked_order` to the spawned set (in case any other visual existed) and check exact reverse order.
+    let ticked_spawned: Vec<usize> = ticked_order.iter().copied().filter(|o| spawned_visual.contains(o)).collect();
+    assert_eq!(ticked_spawned, expected_reverse, "List 3 ticks visual controllers newest-first (reverse of creation)");
+}

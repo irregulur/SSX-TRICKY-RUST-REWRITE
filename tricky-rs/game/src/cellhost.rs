@@ -46,6 +46,11 @@ pub enum ScriptEvent {
     ResetRider(u32),
     /// Op 24 (`Boarder_TeleportToInstance` 0x11a098): teleport `rider` to `object`.
     Teleport { rider: u32, object: usize },
+    /// List 3 `BxList_UpdateAll(3)` (`0x17d950`) tick for a live visual controller (`10` UVScroll, `11` TexFlip,
+    /// `13` Flag, `14` Cracked, `17` CrowdBox, `19` UVScrollTexFlip) in descending `sort_id` (newest-first) order.
+    TickVisual { object: usize, kind: u32 },
+    /// Visual controller detached/killed/expired on `object` at its exact chronological point in List 2 / List 3.
+    KillVisual(usize),
 }
 
 /// Events produced by `CellHost` (`tick`, `run_script_named`, `run_event_script`) for the app's visual/gameplay layer.
@@ -66,12 +71,12 @@ enum List3Kind {
     Script(u64),
 }
 
-/// One node in List 3 (`0x337c60`, list 3): sorted descending by `sort_id` (`+0x20`, `cBxSortObjNode::vf3` 0x17dcb0),
-/// so `BxList_UpdateAll` 0x17d950 walks newest-first (head to tail).
+/// One node in List 3 (`0x337c60`, sorted list 3): sorted descending by `sort_id` (`+0x20`,
+/// `cBxSortObjNode::vf3` 0x17dcb0), so `BxList_UpdateAll` 0x17d950 walks newest-first (head to tail).
+/// Note: `cDeadNode` (`0x13af38`, type 5) lives on unsorted List `0xd` (`COUNTER5` 0x337c68) and is never on List 3.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct List3Entry {
     sort_id: u32,
-    is_dead: bool,
     kind: List3Kind,
 }
 
@@ -115,6 +120,10 @@ pub struct CellHost {
     /// Contact cooldown ticks for visual controllers whose `vf +0x94` runs `Controller_RunContactScript` 0x13aaf8
     /// (`cUVScrollNode::OnContact` 0x142690, `cTexFlipNode::OnContact` 0x143378, `cUVScrollTexFlipNode`: 30 ticks).
     contact_cooldown: HashMap<usize, i32>,
+    /// Frame lifetime (`(int)(life_s * 60.0)`) for visual controllers (`10` UVScroll, `11` TexFlip, `13` Flag,
+    /// `14` Cracked, `19` UVScrollTexFlip); when `> 0` and decremented to `0` in `BxList_UpdateAll(3)`, calls
+    /// `vf21 Finish(1)` (`Controller_RunFinishScript` 0x13a9f8 or detach).
+    visual_life: HashMap<usize, i32>,
     chans: HashMap<usize, Vec<[f32; 16]>>,
     threads: HashMap<u64, ThreadState>,
     events: CellEvents,
@@ -148,11 +157,13 @@ impl CellHost {
             logic_nodes: HashMap::new(),
             live_list3: Vec::new(),
             pending_list3: Vec::new(),
-            next_sort_id: 0,
-            next_dead_id: 0,
+            // `cAI::vf10` 0x1108f0 initializes both `COUNTER5` (0x337c68) and `COUNTER` (0x337c6c) to 1.
+            next_sort_id: 1,
+            next_dead_id: 1,
             next_thread_id: 1,
             pending: HashSet::new(),
             contact_cooldown: HashMap::new(),
+            visual_life: HashMap::new(),
             chans: HashMap::new(),
             threads: HashMap::new(),
             events: CellEvents::default(),
@@ -229,6 +240,23 @@ impl CellHost {
         self.threads.len()
     }
 
+    /// Snapshot of live List 3 entries as `(sort_id, controller_object)` in `BxList_UpdateAll(3)` walk order
+    /// (head-to-tail, descending `sort_id` = newest first; `None` for a `cScriptNode` thread).
+    pub fn live_list3_snapshot(&self) -> Vec<(u32, Option<usize>)> {
+        self.live_list3
+            .iter()
+            .map(|e| match e.kind {
+                List3Kind::Controller(o) => (e.sort_id, Some(o)),
+                List3Kind::Script(_) => (e.sort_id, None),
+            })
+            .collect()
+    }
+
+    /// Current `COUNTER` (0x337c6c, List 3) and `COUNTER5` (0x337c68, List 0xd `cDeadNode`) sort counters.
+    pub fn sort_counters(&self) -> (u32, u32) {
+        (self.next_sort_id, self.next_dead_id)
+    }
+
     /// Record a `ScriptEvent` produced outside `CellHost` (e.g. `Knockables::contact` thread op).
     pub fn record_event(&mut self, ev: ScriptEvent) {
         self.events.script_events.push(ev);
@@ -251,20 +279,13 @@ impl CellHost {
         false
     }
 
-    /// Allocate the next `cBxSortObjNode` sort ID (`COUNTER` 0x337c6c, or `COUNTER5` 0x337c68 for type 5) and add
-    /// `kind` onto List 3's pending list (`BxList_Add` 0x17d4e8).
-    fn add_pending_node(&mut self, is_dead: bool, kind: List3Kind) -> u32 {
-        let sort_id = if is_dead {
-            let id = self.next_dead_id;
-            self.next_dead_id = id.wrapping_add(1);
-            id
-        } else {
-            let id = self.next_sort_id;
-            self.next_sort_id = id.wrapping_add(1);
-            id
-        };
+    /// Allocate the next List 3 `cBxSortObjNode` sort ID (`COUNTER` 0x337c6c) and link `kind` at the head of
+    /// List 3's pending list (`BxList_Add` 0x17d4e8).
+    fn add_pending_node(&mut self, kind: List3Kind) -> u32 {
+        let sort_id = self.next_sort_id;
+        self.next_sort_id = sort_id.wrapping_add(1);
         // `BxList_Add` links new nodes at the head of the pending list (newest first).
-        self.pending_list3.insert(0, List3Entry { sort_id, is_dead, kind });
+        self.pending_list3.insert(0, List3Entry { sort_id, kind });
         sort_id
     }
 
@@ -310,11 +331,12 @@ impl CellHost {
         self.logic_nodes.clear();
         self.live_list3.clear();
         self.pending_list3.clear();
-        self.next_sort_id = 0;
-        self.next_dead_id = 0;
+        self.next_sort_id = 1;
+        self.next_dead_id = 1;
         self.next_thread_id = 1;
         self.pending.clear();
         self.contact_cooldown.clear();
+        self.visual_life.clear();
         self.chans.clear();
         self.threads.clear();
         self.events = CellEvents::default();
@@ -378,11 +400,13 @@ impl<'a> TickCtx<'a> {
         self.host.logic_nodes.remove(&o);
         self.host.pending.remove(&o);
         self.host.contact_cooldown.remove(&o);
+        self.host.visual_life.remove(&o);
         self.host.unlink_controller_node(o);
         self.host.chans.remove(&o);
         self.batch.unpose.push(o);
         self.batch.ctrl.push((o, None));
         self.host.events.killed_objects.push(o);
+        self.host.events.script_events.push(ScriptEvent::KillVisual(o));
     }
 
     fn kill_controller(&mut self, o: usize) {
@@ -430,7 +454,10 @@ impl<'a> TickCtx<'a> {
             self.starts.extend(starts);
             return;
         }
-        if self.host.anim_nodes.contains_key(&o) || self.host.delta_nodes.contains_key(&o) {
+        if self.host.anim_nodes.contains_key(&o)
+            || self.host.delta_nodes.contains_key(&o)
+            || self.host.ctrl.get(o).copied().flatten().is_some_and(|ty| ty != 5)
+        {
             if flag != 0 {
                 let s = self.ssf.event_script(o, 3);
                 if s >= 0 {
@@ -518,20 +545,22 @@ impl<'a> TickCtx<'a> {
                             }
                             Apply::FinishOld => self.finish_controller(o, 1),
                             Apply::Dead { stop } => {
+                                // `cDeadNode::cDeadNode` 0x13af38 constructs on unsorted List 0xd (NOT List 3),
+                                // advancing `COUNTER5` 0x337c68 (`cBxSortObjNode` 0x17d0e0) and never ticking.
                                 let c = Controller::dead(o as u32, stop, self);
+                                self.host.next_dead_id = self.host.next_dead_id.wrapping_add(1);
                                 self.host.ctrl[o] = Some(5);
                                 self.host.logic_nodes.insert(o, c);
-                                self.host.pending.insert(o);
-                                self.host.add_pending_node(true, List3Kind::Controller(o));
                                 self.batch.ctrl.push((o, Some(5)));
                                 self.host.events.script_events.push(ScriptEvent::DeadObject(o));
                             }
                             Apply::Restore => {
+                                // `cRestoreNode::cRestoreNode` 0x13aff8 constructs on sorted List 3 (`COUNTER` 0x337c6c).
                                 let c = Controller::restore(o as u32, self);
                                 self.host.ctrl[o] = Some(0x3ee);
                                 self.host.logic_nodes.insert(o, c);
                                 self.host.pending.insert(o);
-                                self.host.add_pending_node(false, List3Kind::Controller(o));
+                                self.host.add_pending_node(List3Kind::Controller(o));
                                 self.batch.ctrl.push((o, Some(0x3ee)));
                                 self.host.events.script_events.push(ScriptEvent::DeadObject(o));
                             }
@@ -546,7 +575,7 @@ impl<'a> TickCtx<'a> {
                     self.host.chans.remove(&o);
                     self.host.anim_nodes.insert(o, a);
                     self.host.pending.insert(o);
-                    self.host.add_pending_node(false, List3Kind::Controller(o));
+                    self.host.add_pending_node(List3Kind::Controller(o));
                     if let Some(frames) = self.host.pose_frames(o, start_t) {
                         self.batch.pose.push((o, t, frames));
                     } else {
@@ -562,7 +591,7 @@ impl<'a> TickCtx<'a> {
                     self.host.chans.remove(&o);
                     self.host.delta_nodes.insert(o, d);
                     self.host.pending.insert(o);
-                    self.host.add_pending_node(false, List3Kind::Controller(o));
+                    self.host.add_pending_node(List3Kind::Controller(o));
                     if let Some(frames) = self.host.pose_frames(o, start_t) {
                         self.batch.pose.push((o, 0x101, frames));
                     } else {
@@ -575,15 +604,16 @@ impl<'a> TickCtx<'a> {
                         self.host.ctrl[o] = Some(t);
                         self.host.logic_nodes.insert(o, c);
                         self.host.pending.insert(o);
-                        self.host.add_pending_node(false, List3Kind::Controller(o));
+                        self.host.add_pending_node(List3Kind::Controller(o));
                         self.batch.ctrl.push((o, Some(t)));
                     }
                 }
                 Spawn::Create(t) => {
-                    // Visual/effect controllers (UVScroll 10, TexFlip 11, Flag 13, Cracked 14, CrowdBox 17,
-                    // UVScrollTexFlip 19, Boost 7, …): track type & flags (`& ~2 | 4`) in `CellHost` so
-                    // `World_CellActivate_RunPersistant` / `World_CellDeactivate` / `op 3, 9, 10, 11` manage
-                    // lifecycle while `WorldAnim` drives the visual effect from `ScriptEvent::SpawnController`.
+                    // All other `cControllerNode` subclasses (UVScroll 10, TexFlip 11, Flag 13, Cracked 14,
+                    // CrowdBox 17, UVScrollTexFlip 19, Boost 7/15/16/18/24, Fence 12, Rail 9, …) construct on
+                    // sorted List 3 (`cControllerNode` 0x13a840 -> `cBxSortObjNode(3, t)` 0x17d0e0 ->
+                    // `BxList_Add(3)` 0x17d4e8), wait in `pending_list3` for their creation frame, and tick
+                    // interleaved newest-first in `BxList_UpdateAll(3)` 0x17d950.
                     if matches!(t, 10 | 11 | 13 | 14 | 17 | 19) {
                         if let Some(f) = self.flags.get_mut(o) {
                             *f = *f & 0xffff_fffd | 4;
@@ -593,9 +623,23 @@ impl<'a> TickCtx<'a> {
                         // `cUVScrollNode::cUVScrollNode` 0x141ff0 / `cTexFlipNode::cTexFlipNode` 0x142e90: initial
                         // contact cooldown is 30 ticks (decremented once per 60 Hz frame after creation frame).
                         self.host.contact_cooldown.insert(o, 30);
-                        self.host.pending.insert(o);
+                    }
+                    let life_arg = match t {
+                        10 | 19 => op.args.get(6),
+                        11 | 13 => op.args.get(4),
+                        14 => op.args.get(1),
+                        _ => None,
+                    };
+                    if let Some(&bits) = life_arg {
+                        let p = f32::from_bits(bits) * 60.0;
+                        let life = if p.is_nan() { i32::MAX } else { p as i32 };
+                        self.host.visual_life.insert(o, life);
+                    } else {
+                        self.host.visual_life.remove(&o);
                     }
                     self.host.ctrl[o] = Some(t);
+                    self.host.pending.insert(o);
+                    self.host.add_pending_node(List3Kind::Controller(o));
                     self.batch.ctrl.push((o, Some(t)));
                     self.host.events.script_events.push(ScriptEvent::SpawnController { object: o, args: op.args.clone() });
                 }
@@ -622,7 +666,7 @@ impl<'a> TickCtx<'a> {
             let tid = self.host.next_thread_id;
             self.host.next_thread_id += 1;
             self.host.threads.insert(tid, ThreadState { thread: t, vel, human });
-            self.host.pending_list3.insert(0, List3Entry { sort_id, is_dead: false, kind: List3Kind::Script(tid) });
+            self.host.pending_list3.insert(0, List3Entry { sort_id, kind: List3Kind::Script(tid) });
         }
     }
 
@@ -972,6 +1016,30 @@ impl CellHost {
                             ctx.host.logic_nodes.insert(o, l);
                         }
                         ctx.starts.extend(starts);
+                    } else if let Some(ty) = ctx.host.ctrl.get(o).copied().flatten() {
+                        if matches!(ty, 10 | 11 | 13 | 14 | 17 | 19) {
+                            // Visual controller (`cUVScrollNode` 0x1422e0, `cTexFlipNode` 0x1430b8, `cFlagNode`
+                            // 0x144e48, `cCrackedNode` 0x1455a0, `cCrowdBoxNode` 0x145c88, `cUVScrollTexFlipNode`
+                            // 0x1462d0): step in exact List 3 descending-`sort_id` order.
+                            if let Some(cd) = ctx.host.contact_cooldown.get_mut(&o) {
+                                if *cd > 0 {
+                                    *cd -= 1;
+                                }
+                            }
+                            let expired = ctx.host.visual_life.get_mut(&o).is_some_and(|life| {
+                                if *life > 0 {
+                                    *life -= 1;
+                                    *life == 0
+                                } else {
+                                    false
+                                }
+                            });
+                            if expired {
+                                ctx.finish_controller(o, 1);
+                            } else {
+                                ctx.host.events.script_events.push(ScriptEvent::TickVisual { object: o, kind: ty });
+                            }
+                        }
                     }
                     ctx.flush_starts();
                 }
@@ -984,14 +1052,6 @@ impl CellHost {
                     }
                     ctx.flush_starts();
                 }
-            }
-        }
-
-        // Decrement contact cooldowns for live visual controllers (`cUVScrollNode::Update` 0x1422e0 /
-        // `cTexFlipNode::Update` 0x1430b8), skipping nodes still pending on their creation frame.
-        for (&o, cd) in ctx.host.contact_cooldown.iter_mut() {
-            if !ctx.host.pending.contains(&o) && *cd > 0 {
-                *cd -= 1;
             }
         }
 

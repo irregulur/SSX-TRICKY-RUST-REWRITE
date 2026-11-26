@@ -70,8 +70,10 @@ pub struct WorldAnim {
     busy: HashMap<usize, i32>,
     threads: Vec<Thread>, boxes: Vec<(usize, Vec3, Vec3)>,
     started: bool, counting: bool, ended_countdown: bool,
-    /// the controllers in the order they were made (the game ticks them in its node list's order)
+    /// the controllers in List 3 head-inserted order (newest first, `BxList_Add` 0x17d4e8; folder-only fallback)
     flip_order: Vec<usize>, crowd_order: Vec<usize>,
+    /// models whose shared `Scroll` slot already ticked this 60 Hz frame (`UVScrollNode_Register` 0x142220)
+    scroll_ticked: HashSet<usize>,
     cracks: HashMap<usize, Crack>, counters: HashMap<usize, Counter>, crowds: HashMap<usize, Crowd>,
     /// crowd boxes' cell entities (cell, entity) and the 16 crowd frames' materials (CROWD.SSH)
     crowd_cells: HashMap<usize, Vec<(usize, Entity)>>, crowd_mats: Option<Vec<Handle<StandardMaterial>>>,
@@ -263,7 +265,7 @@ impl WorldAnim {
                 // cTexFlipNode ctor 0x142e90: a start frame < 0 is random (ceil(8 r))
                 let Some(count) = level.instances.get(i).and_then(|x| flipbook(level, x.model_id.max(0) as usize)).map(|f| f.len() as i32) else { return };
                 let frame = if d.start < 0 { (self.rand() * 8.0).ceil() as i32 } else { d.start }.min(count - 1);
-                if self.flips.insert(i, Flip { def: d, frame, acc: 0.0, rate: d.speed * TICK, base: d.speed * TICK, state: d.mode, life: (d.life * 60.0) as i32, count }).is_none() { self.flip_order.push(i); }
+                if self.flips.insert(i, Flip { def: d, frame, acc: 0.0, rate: d.speed * TICK, base: d.speed * TICK, state: d.mode, life: (d.life * 60.0) as i32, count }).is_none() { self.flip_order.insert(0, i); }
             }
             WOp::Scroll(d) => if let Some(x) = level.instances.get(i).filter(|x| x.model_id >= 0) {
                 self.scrolls.entry(x.model_id as usize).or_insert(Scroll { def: d, d: Vec2::new(d.du, d.dv), uv: Vec2::ZERO, tau: 0.0, running: true, life: (d.life * 60.0) as i32 });
@@ -301,7 +303,7 @@ impl WorldAnim {
                 for k in 0..16 { c.phase[k] = (self.next() & 15) as i32; c.anim[k] = (self.next() & 3) as usize; }
                 self.step_crowd(&mut c);
                 self.crowds.insert(i, c);
-                self.crowd_order.push(i);
+                self.crowd_order.insert(0, i);
             },
             WOp::Delta(_) => for o in anims.0.iter_mut().filter(|o| o.inst == i && o.budget.is_some()) {
                 o.budget = Some(0.0);
@@ -348,8 +350,9 @@ impl WorldAnim {
         }
     }
 
-    /// Apply live `.ssf` script-thread events from `CellHost` (`tricky_game::script` on `tricky_data::ssf`,
-    /// row E9b2) to `WorldAnim`, `CollisionWorld`, and `Rails`.
+    /// Apply live `.ssf` script-thread and List-3 visual-controller events from `CellHost` (`tricky_game::script`
+    /// on `tricky_data::ssf`, rows E9b2 & E1b2h) to `WorldAnim`, `CollisionWorld`, and `Rails` in exact List 2 /
+    /// List 3 chronological order.
     pub fn apply_cell_events(
         &mut self,
         ev: CellEvents,
@@ -358,9 +361,6 @@ impl WorldAnim {
         world: &mut tricky_game::collide::CollisionWorld,
         rails: &mut tricky_game::rails::Rails,
     ) {
-        for inst in ev.killed_objects {
-            self.kill_instance(inst);
-        }
         for se in ev.script_events {
             match se {
                 ScriptEvent::SpawnController { object, args } => {
@@ -409,6 +409,12 @@ impl WorldAnim {
                 ScriptEvent::ResetRider(id) => {
                     world.queue_rider_reset(id);
                 }
+                ScriptEvent::TickVisual { object, kind } => {
+                    self.tick_visual(object, kind, level);
+                }
+                ScriptEvent::KillVisual(o) => {
+                    self.kill_instance(o);
+                }
                 ScriptEvent::ScriptSound { .. } | ScriptEvent::Teleport { .. } => {}
             }
         }
@@ -442,6 +448,7 @@ impl WorldAnim {
         self.flips.clear();
         self.flip_order.clear();
         self.crowd_order.clear();
+        self.scroll_ticked.clear();
         self.scrolls.clear();
         self.cracks.clear();
         self.counters.clear();
@@ -467,55 +474,124 @@ impl WorldAnim {
 
     // ------------------------------------------------------------ controllers (one 60 Hz tick)
 
-    /// One 60 Hz tick of every controller (`cCounterNode::vf1` 0x13b178, `cCrackedNode::vf1` 0x1455a0,
-    /// `cCrowdBoxNode::vf1` 0x145c88).
-    fn tick(&mut self) {
-        let mut dead = Vec::new();
-        // each flip ticks in the order it was made; it draws only where the game's update does (0x143100):
-        // a random step (start frame -2) and the blink's off-time
-        for i in self.flip_order.clone() {
-            let Some(mut f) = self.flips.remove(&i) else { continue };
-            'tick: {
-                if f.life > 0 { f.life -= 1; if f.life == 0 { dead.push(i); break 'tick; } }
-                if f.rate <= 0.0 { break 'tick; }
-                f.acc += f.rate;
-                if f.acc < 1.0 { break 'tick; }
-                f.acc -= 1.0;
-                match f.state {
-                    0 => {
-                        if f.def.start == -2 && f.count > 1 { f.frame = (((f.count - 1) as f32 * self.rand()).ceil() as i32).min(f.count - 1); }
-                        else if !f.def.back { f.frame += 1; if f.frame >= f.count { f.frame = 0; } }
-                        else { f.frame -= 1; if f.frame < 0 { f.frame = f.count - 1; } }
-                    }
-                    // blink: the next frame for 6 ticks, then on for 60 / (Speed (0.25 + 0.75 r)) ticks
-                    1 => { f.state = 2; f.frame += 1; f.rate = 1.0 / 6.0; if f.frame >= f.count { f.frame = 0; } }
-                    2 => { let r = self.rand(); f.state = 1; f.frame += 1; f.rate = f.base * (0.25 + 0.75 * r); if f.frame >= f.count { f.frame = 0; } }
-                    _ => {}
+    /// Step one `cTexFlipNode` (`0x1430b8`) or the flip half of `cUVScrollTexFlipNode` (`0x1462d0`).
+    /// When `check_life` is true (folder-only fallback), returns `true` if its lifetime expired.
+    fn step_flip(&mut self, i: usize, check_life: bool) -> bool {
+        let Some(mut f) = self.flips.remove(&i) else { return false };
+        let mut expired = false;
+        'tick: {
+            if check_life && f.life > 0 {
+                f.life -= 1;
+                if f.life == 0 {
+                    expired = true;
+                    break 'tick;
                 }
             }
+            if f.rate <= 0.0 { break 'tick; }
+            f.acc += f.rate;
+            if f.acc < 1.0 { break 'tick; }
+            f.acc -= 1.0;
+            match f.state {
+                0 => {
+                    if f.def.start == -2 && f.count > 1 { f.frame = (((f.count - 1) as f32 * self.rand()).ceil() as i32).min(f.count - 1); }
+                    else if !f.def.back { f.frame += 1; if f.frame >= f.count { f.frame = 0; } }
+                    else { f.frame -= 1; if f.frame < 0 { f.frame = f.count - 1; } }
+                }
+                // blink: the next frame for 6 ticks, then on for 60 / (Speed (0.25 + 0.75 r)) ticks
+                1 => { f.state = 2; f.frame += 1; f.rate = 1.0 / 6.0; if f.frame >= f.count { f.frame = 0; } }
+                2 => { let r = self.rand(); f.state = 1; f.frame += 1; f.rate = f.base * (0.25 + 0.75 * r); if f.frame >= f.count { f.frame = 0; } }
+                _ => {}
+            }
+        }
+        if !expired {
             self.flips.insert(i, f);
         }
+        expired
+    }
+
+    /// Step one `Scroll` (`cUVScrollNode::Update` 0x1422e0). Returns `false` if `check_life` expired it.
+    fn step_scroll_slot(s: &mut Scroll, check_life: bool) -> bool {
+        if check_life && s.life > 0 { s.life -= 1; if s.life == 0 { return false; } }
+        let (run, pause) = (s.def.run, s.def.pause);
+        if run <= 0.0 && pause <= 0.0 { return true; }
+        s.tau += TICK;
+        if !s.running {
+            if s.tau >= pause { s.tau = 0.0; if run > 0.0 { s.running = true; } }
+            return true;
+        }
+        if run <= s.tau {
+            s.tau = 0.0;
+            if pause > 0.0 { s.running = false; }
+            if s.def.mode == 1 || s.def.mode == 2 { s.d = -s.d; }
+            if !s.running { return true; }
+        }
+        // mode 1 eases in and out over the run
+        s.uv += if s.def.mode == 1 { s.d * s.tau.min(run - s.tau) / run } else { s.d };
+        for c in [&mut s.uv.x, &mut s.uv.y] { if *c > 1.0 { *c -= 1.0 } else if *c < -1.0 { *c += 1.0 } }
+        true
+    }
+
+    /// Tick a single visual controller in `CellHost`'s exact List-3 `BxList_UpdateAll(3)` (`0x17d950`) order
+    /// (descending `sort_id`, newest-first, starting the frame after creation via `BxList_MergePending` `0x17d548`).
+    fn tick_visual(&mut self, i: usize, kind: u32, level: &Level) {
+        match kind {
+            10 => {
+                if let Some(m) = level.instances.get(i).filter(|x| x.model_id >= 0).map(|x| x.model_id as usize) {
+                    if self.scroll_ticked.insert(m) {
+                        if let Some(s) = self.scrolls.get_mut(&m) {
+                            Self::step_scroll_slot(s, false);
+                        }
+                    }
+                }
+            }
+            11 => {
+                self.step_flip(i, false);
+            }
+            13 => {
+                for f in self.flags.iter_mut().filter(|f| f.inst == i && f.active) {
+                    f.phase = (f.phase + f.rate).fract();
+                }
+            }
+            14 => {
+                if let Some(c) = self.cracks.get_mut(&i) {
+                    if c.cool > 0 { c.cool -= 1; }
+                    if c.health <= 0.0 && !c.fired { c.fired = true; self.fire.push(i); }
+                }
+            }
+            17 => {
+                if self.ticks.is_multiple_of(5) {
+                    if let Some(mut c) = self.crowds.remove(&i) {
+                        self.step_crowd(&mut c);
+                        self.crowds.insert(i, c);
+                    }
+                }
+            }
+            19 => {
+                // `cUVScrollTexFlipNode::Update` 0x1462d0 steps the flip first, then `cUVScrollNode::Update`.
+                self.step_flip(i, false);
+                if let Some(m) = level.instances.get(i).filter(|x| x.model_id >= 0).map(|x| x.model_id as usize) {
+                    if self.scroll_ticked.insert(m) {
+                        if let Some(s) = self.scrolls.get_mut(&m) {
+                            Self::step_scroll_slot(s, false);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// One 60 Hz tick of every controller (folder-only fallback when `CourseGround` is absent; on disc courses,
+    /// `CellHost` drives all visual controllers via `ScriptEvent::TickVisual` in exact List-3 order).
+    fn tick(&mut self) {
+        let mut dead = Vec::new();
+        for i in self.flip_order.clone() {
+            if self.step_flip(i, true) {
+                dead.push(i);
+            }
+        }
         for i in dead { self.flips.remove(&i); self.flip_order.retain(|k| *k != i); }
-        self.scrolls.retain(|_, s| {
-            if s.life > 0 { s.life -= 1; if s.life == 0 { return false; } }
-            let (run, pause) = (s.def.run, s.def.pause);
-            if run <= 0.0 && pause <= 0.0 { return true; }
-            s.tau += TICK;
-            if !s.running {
-                if s.tau >= pause { s.tau = 0.0; if run > 0.0 { s.running = true; } }
-                return true;
-            }
-            if run <= s.tau {
-                s.tau = 0.0;
-                if pause > 0.0 { s.running = false; }
-                if s.def.mode == 1 || s.def.mode == 2 { s.d = -s.d; }
-                if !s.running { return true; }
-            }
-            // mode 1 eases in and out over the run
-            s.uv += if s.def.mode == 1 { s.d * s.tau.min(run - s.tau) / run } else { s.d };
-            for c in [&mut s.uv.x, &mut s.uv.y] { if *c > 1.0 { *c -= 1.0 } else if *c < -1.0 { *c += 1.0 } }
-            true
-        });
+        self.scrolls.retain(|_, s| Self::step_scroll_slot(s, true));
         // cCrackedNode update 0x1455a0: out of health, its EffectTriggerSlot runs (no slot: it
         // just ends); out of time, it ends
         let mut ended = Vec::new();
@@ -655,6 +731,12 @@ pub fn world_anim(
                     course.set_rail_live(r.spline as u32, true);
                 }
             }
+            // `cPreRaceHandler::Enter` 0x112b88 runs `NoCountdown` first when `!Race_HasStartGate`, then `cAI::vf12`
+            // 0x112550 (`RaceMode` / `ShowoffMode` / `FreerideMode`).
+            if matches!(game.event, ui::Event::FreeRide | ui::Event::Tutorial) {
+                let ev = course.run_script_named("NoCountdown", &mut tricky_game::rand::rand_game);
+                wa.apply_cell_events(ev, level, &mut anims, &mut world.0, &mut rails.0);
+            }
             let mode_name = match game.event {
                 ui::Event::Race => "RaceMode",
                 ui::Event::ShowOff => "ShowoffMode",
@@ -662,10 +744,6 @@ pub fn world_anim(
             };
             let ev = course.run_script_named(mode_name, &mut tricky_game::rand::rand_game);
             wa.apply_cell_events(ev, level, &mut anims, &mut world.0, &mut rails.0);
-            if matches!(game.event, ui::Event::FreeRide | ui::Event::Tutorial) {
-                let ev = course.run_script_named("NoCountdown", &mut tricky_game::rand::rand_game);
-                wa.apply_cell_events(ev, level, &mut anims, &mut world.0, &mut rails.0);
-            }
         }
         if std::env::var("TRICKY_WADBG").is_ok() { eprintln!("worldanim: run restarted, level state reset"); }
     }
@@ -686,8 +764,15 @@ pub fn world_anim(
             for &(i, h) in &w.wake { wa.run(w, level, &mut anims, Src::Header(h), 0, Some(i), 0); }
         }
     }
-    // Live cells & List-3 script threads (`cAIWorld::vf1` 0x115e28 + `BxList_UpdateAll(3)` 0x17d950, rows E7b2 & E9b2):
-    // activate/deactivate cells, step controllers and waiting `.ssf` `cScriptNode` threads at 60 Hz, and apply events.
+    // Live cells & List-3 script threads (`cAIWorld::vf1` 0x115e28 + `BxList_UpdateAll(3)` 0x17d950, rows E7b2,
+    // E9b2 & E1b2h): update crowd excitement (`cCrowdBoxNode::Update` 0x145c88: 7 while `race_1c == 1`, else 4
+    // within 200 m of a human rider or 0), activate/deactivate cells, step ALL List-3 controllers (including
+    // visual controllers) and waiting `.ssf` `cScriptNode` threads at 60 Hz in descending `sort_id` order.
+    let riders: Vec<(Vec3, Vec3)> = std::iter::once((rider.0.pos, rider.0.vel)).chain(opponents.0.iter().map(|o| (o.rider.pos, o.rider.vel))).collect();
+    let race_1c = if race.0.state == RaceState::Running { 4 } else { 1 };
+    for c in wa.crowds.values_mut() {
+        c.exc = if race_1c == 1 { 7 } else if riders.iter().any(|(p, _)| p.distance(c.pos) <= 200.0) { 4 } else { 0 };
+    }
     let course = world.0.course.clone();
     if let Some(course) = &course {
         let to_cm = |p: Vec3| [p.x * 100.0, -p.z * 100.0, p.y * 100.0, 1.0];
@@ -697,11 +782,13 @@ pub fn world_anim(
             rider_pos_cm.push(to_cm(o.rider.pos));
         }
         let cam_cm = cam_q.iter().next().map_or(rider_pos_cm[0], |tf| to_cm(tf.translation()));
-        let race_1c = if race.0.state == RaceState::Running { 4 } else { 1 };
         let show_off = game.event == ui::Event::ShowOff;
         for _ in 0..tick.n {
+            wa.scroll_ticked.clear();
             let ev = course.tick_cells(&rider_pos_cm, race_1c, cam_cm, show_off, &mut tricky_game::rand::rand_game);
             wa.apply_cell_events(ev, level, &mut anims, &mut world.0, &mut rails.0);
+            wa.ticks = wa.ticks.wrapping_add(1);
+            wa.busy.retain(|_, t| { if *t > 0 { *t -= 1; } *t != 0 });
         }
     }
     // the countdown starts (`cCountdownHandler::Enter` 0x113520 -> `World_RunScript("StartCountdown")`) and ends
@@ -731,7 +818,6 @@ pub fn world_anim(
         }
     }
     // a rider touches a trigger with no controller on it: its collision script
-    let riders: Vec<(Vec3, Vec3)> = std::iter::once((rider.0.pos, rider.0.vel)).chain(opponents.0.iter().map(|o| (o.rider.pos, o.rider.vel))).collect();
     let bodies: Vec<Vec3> = riders.iter().map(|(p, _)| *p + Vec3::Y * 0.8).collect();
     let inside = |b: Vec3, lo: Vec3, hi: Vec3| b.cmpge(lo - 0.3).all() && b.cmple(hi + 0.3).all();
     // TRICKY_WATOUCH=i[+j...][,impact]: instances i, j.. count as touched (for checks; glass takes
@@ -812,8 +898,11 @@ pub fn world_anim(
         o.t = o.def.start.max(0.0) / 30.0 + world.0.gate_time(o.inst as u32).unwrap_or(0.0);
         o.budget = Some(0.0);
     }
-    // controllers at 60 Hz, on the game's ticks
-    for _ in 0..tick.n { wa.tick(); }
+    // controllers at 60 Hz, on the game's ticks (folder-only fallback; on disc courses `CellHost` stepped all
+    // live List-3 visual controllers above in descending `sort_id` order)
+    if course.is_none() {
+        for _ in 0..tick.n { wa.tick(); }
+    }
     // controllers that reached their goal: the object's EffectTriggerSlot (event 4; a crack or counter with
     // no such script just ends)
     for _ in 0..4 {
@@ -857,11 +946,7 @@ pub fn world_anim(
     } else {
         for i in std::mem::take(&mut wa.killed) { world.0.dead.insert(i as u32); }
     }
-    // the crowds: excited (4, mood 0: CrowdSys_GetMood + 4) while a rider is within 200 m,
-    // otherwise frozen
-    for c in wa.crowds.values_mut() {
-        c.exc = if riders.iter().any(|(p, _)| p.distance(c.pos) <= 200.0) { 4 } else { 0 };
-    }
+    // (crowd excitement was updated before `tick_cells` above)
     if std::env::var("TRICKY_WADBG").is_ok() {
         let f: Vec<String> = wa.flips.iter().filter(|(i, _)| level.instances[**i].instance_name.contains("StartLights")).map(|(i, f)| format!("{} frame {} life {}", level.instances[*i].instance_name, f.frame, f.life)).collect();
         for o in anims.0.iter().filter(|o| o.budget.is_some()) { eprintln!("worldanim: delta {} t {:.2} budget {:.2}", level.instances[o.inst].instance_name, o.t, o.budget.unwrap_or(0.0)); }

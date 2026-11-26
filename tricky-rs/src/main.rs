@@ -1381,10 +1381,12 @@ fn trick_only_ramps(game: Res<ui::Game>, mut world: ResMut<World>, mut rails: Re
                     }
                 }
             };
-            apply(course.run_script_named(mode_name, &mut tricky_game::rand::rand_game));
+            // `cPreRaceHandler::Enter` 0x112b88 runs `NoCountdown` first when `!Race_HasStartGate`, then `cAI::vf12`
+            // 0x112550 (`RaceMode` / `ShowoffMode` / `FreerideMode`).
             if matches!(game.event, ui::Event::FreeRide | ui::Event::Tutorial) {
                 apply(course.run_script_named("NoCountdown", &mut tricky_game::rand::rand_game));
             }
+            apply(course.run_script_named(mode_name, &mut tricky_game::rand::rand_game));
         } else {
             // STANDIN (levels folder without course collision): static `SSFLogic.json` hide/rail tables
             world.0.off = world.0.mode_off[k].clone();
