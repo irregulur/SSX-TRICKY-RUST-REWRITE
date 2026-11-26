@@ -92,7 +92,8 @@ impl Disc {
 
     /// Finds a file the way the game does: `CdFs_FindFile` 0x2c9cc0. A leading `/` is dropped, `\` becomes
     /// `/`, letters are upper-cased, and the key is `/` + that, so `data\char\mdlps2.big` finds
-    /// `/DATA/CHAR/MDLPS2.BIG`.
+    /// `/DATA/CHAR/MDLPS2.BIG`. The search compares hashes with `CdFs_CompareKeyHash` 0x2c9488 (the key's
+    /// minus the entry's), or paths with `CdFs_CompareName` 0x2c9440 once the table is in path order.
     pub fn find(&self, path: &str) -> Option<&DiscFile> {
         let mut key = vec![b'/'];
         let p = path.as_bytes();

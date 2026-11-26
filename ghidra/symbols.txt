@@ -5273,6 +5273,8 @@ G 2c9cc0 CdFs_FindFile
 G 2c90c8 CdFs_ReadSector
 G 2c9440 CdFs_CompareName
 G 2c9420 CdFs_CompareEntryName
+G 2c9460 CdFs_CompareEntryHash
+G 2c9488 CdFs_CompareKeyHash
 G 2fb5c8 qsort
 G 2cbd08 BIG_HeaderSize
 G 2fcc98 stricmp

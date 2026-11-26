@@ -27,6 +27,30 @@ Proven (`lib-file`, host code on the PS2; ported 1:1 anyway in `tricky-data/src/
 Checked: the table of `SSX Tricky (USA).iso` equals an independent ISO 9660 walk (260 files, extents and
 sizes); `data/char/mdlps2.big` read through it is byte-identical to the copy extracted before.
 
+Checked in the runner (row E2k, `game/tests/disc_table.rs`): 200 made-up ISO 9660 images (random folder trees
+three deep, names with no extension, with a bare `.` and with one, records that end exactly at a sector's end,
+folders of several sectors, `AB`/`QA` pairs whose paths hash the same, one disc of 1,200+ files) mounted by
+`CdFs_Mount` with `CdFs_ReadSector` 0x2c90c8 answered from the image and the drive calls stubbed. The table
+(hash, extent, size, path, in order), the count and the comparison left in 0x349d6c equal `Disc::open`'s; then
+`CdFs_FindFile` and `Disc::find` agree on every file and folder in upper and lower case, with `\`, with and
+without a leading `/`, with a letter added, and on random, empty, `/` and `//AB` paths (39,379 files found, 158
+discs switched to path order). Too many files: the game's `CdFs_Mount` returns 0 files, ours
+returns `TooManyFiles`. `qsort` 0x2fb5c8 is also run on its own 3,000 times (0 to 400 elements, many equal ones)
+with the wrapping difference, which is no true order, and leaves the same order as ours.
+
+- Proven: 0x2c9460 and 0x2c9488 were not functions in Ghidra (only stored as pointers); made into
+  `CdFs_CompareEntryHash` (entry hash minus entry hash, an equal pair stores `CdFs_CompareName` in 0x349d6c) and
+  `CdFs_CompareKeyHash` (the searched key's hash minus the entry's) and added by hand to `function-index.csv`
+  and `function-systems.csv`. `ApplySsxSymbols.java` only renames existing functions for `G` lines: create them
+  by hand (P on the address) in an older project.
+- `CdFs_ScanDir` has no end-of-sector test: after a record that ends exactly at the sector's end it reads the
+  byte after the sector buffer (0x34a5c0, the CD callback's stack, set up only after the mount) and goes on to
+  the next sector when it is 0. Ours ends the sector there (inferred: that byte is 0 during the mount; the runner
+  had it 0 and agreed on the two discs with such sectors).
+- 35 hand mutants of `disc.rs` (limits, record parsing, the hash, the comparisons, `bsearch`, every branch of
+  `qsort`): 34 killed. Left alive: `strcmp` taking bytes as signed, equal on ISO 9660 names (A-Z, 0-9, `_`;
+  the game's `strcmp` 0x2fd008 takes them as unsigned, as ours does, and our paths are Rust strings).
+
 ## BIG archives (row E2a)
 
 Proven (`lib-big` and the async file system; ported in `tricky-data/src/big.rs`):
