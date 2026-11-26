@@ -809,7 +809,7 @@ fn vu0_lower(s: &crate::Cpu, c: &mut crate::Cpu, w: u32, pc: u32) -> Result<Opti
 /// The MMI instructions implemented so far: the pipeline-1 multiply and divide (`mult1`, `multu1`, `div1`,
 /// `divu1`, `madd1`, `maddu1`) and their HI1/LO1 moves (HI1 and LO1 are the upper 64 bits of HI and LO); the
 /// lanes' add and subtract (`paddw`, `psubw`, `paddb`, `psubb`) and the 128-bit logic (`pand`, `pxor`, `por`,
-/// `pnor`, as libc's `strcmp` uses them); `pextlw`, `pextuw`, `pcpyld`, `pcpyud`.
+/// `pnor`, as libc's `strcmp` uses them); `pextlw`, `pextuw`, `pcpyld`, `pcpyud`, `pcpyh` (libc's `memset`).
 fn mmi(r: &mut Runner, pc: u32, w: u32, rs: usize, rt: usize, rd: usize, fun: u32) -> Result<Next, Error> {
     let c = &mut r.cpu;
     let (a, b) = (c.gpr(rs), c.gpr(rt));
@@ -883,16 +883,19 @@ fn mmi(r: &mut Runner, pc: u32, w: u32, rs: usize, rt: usize, rd: usize, fun: u3
             }
         }
         // the 128-bit shuffles (MMI0 / MMI1 / MMI2 / MMI3 groups, the operation in the sa field)
-        0x08 | 0x28 | 0x09 | 0x29 if matches!((fun, (w >> 6) & 0x1f), (0x08 | 0x28, 0x12) | (0x09 | 0x29, 0x0e)) => {
+        0x08 | 0x28 | 0x09 | 0x29 if matches!((fun, (w >> 6) & 0x1f), (0x08 | 0x28, 0x12) | (0x09 | 0x29, 0x0e) | (0x29, 0x1b)) => {
             let (s, t) = (r.cpu.gpr[rs], r.cpu.gpr[rt]);
             let word = |v: u128, i: u32| (v >> (32 * i)) as u32 as u128;
-            let v = match fun {
+            let half = |v: u128, i: u32| (v >> (16 * i)) as u16 as u128;
+            let v = match (fun, (w >> 6) & 0x1f) {
+                // pcpyh: rt's halfword 0 into the low four, its halfword 4 into the high four
+                (0x29, 0x1b) => (0..8).fold(0, |acc, i| acc | half(t, i / 4 * 4) << (16 * i)),
                 // pextlw: rt0, rs0, rt1, rs1
-                0x08 => word(t, 0) | word(s, 0) << 32 | word(t, 1) << 64 | word(s, 1) << 96,
+                (0x08, _) => word(t, 0) | word(s, 0) << 32 | word(t, 1) << 64 | word(s, 1) << 96,
                 // pextuw: rt2, rs2, rt3, rs3
-                0x28 => word(t, 2) | word(s, 2) << 32 | word(t, 3) << 64 | word(s, 3) << 96,
+                (0x28, _) => word(t, 2) | word(s, 2) << 32 | word(t, 3) << 64 | word(s, 3) << 96,
                 // pcpyld: low = rt low, high = rs low
-                0x09 => (t as u64 as u128) | (s as u64 as u128) << 64,
+                (0x09, _) => (t as u64 as u128) | (s as u64 as u128) << 64,
                 // pcpyud: low = rs high, high = rt high
                 _ => (s >> 64) | (t >> 64) << 64,
             };
@@ -1305,6 +1308,8 @@ mod tests {
             (mmi(0x09, 0x0e), (rt as u64 as u128) | (rs as u64 as u128) << 64),
             // rs high, rt high
             (mmi(0x29, 0x0e), (rs >> 64) | (rt >> 64) << 64),
+            // rt's halfword 0 four times, its halfword 4 four times
+            (mmi(0x29, 0x1b), 0x00bb_00bb_00bb_00bb_5555_5555_5555_5555u128),
         ] {
             let mut rn = Runner::empty();
             rn.cpu.gpr[4] = rs;

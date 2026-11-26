@@ -1354,3 +1354,38 @@ material, is equivalent because nothing in the block can change it). The resolve
   0x400 copied into blocks (no heap sets it), `EAMem_Free` storing the previous block's link it already has, and
   the largest-block search's start (span − 1 or span: differs only for a free block exactly 0x10 bigger than the
   span, not reached).
+
+## The C library's string and memory functions (row E2l; `game/src/libc.rs`, `tests/libc.rs`, proven)
+
+- The game's `strlen` 0x2fd260, `strcpy` 0x2fd14c, `strcmp` 0x2fd008, `strncmp` 0x2fd478, `strncpy` 0x2fd630,
+  `memcpy` 0x2fb2b4, `memset` 0x2fb468 and `memcmp` 0x2fb220 are newlib's rewritten in Emotion Engine assembly
+  (read from the disassembly; Ghidra's C for them is muddled by the MMI): with both pointers 16-byte aligned
+  they go a quadword (`lq`/`sq`, the 0-byte test with `psubb`/`pnor`/`pand`) at a time, 8-byte aligned a
+  doubleword (`ld`/`sd`, `dsubu`/`nor`/`and`); `memcpy` and `memset` need 32 bytes or more for their 32-byte
+  loop and then go on in doublewords.
+- The blocks change nothing that can be seen, so all of them are byte loops in `libc.rs`: the comparisons and
+  `strlen` only skip blocks that are equal or hold no 0; a copy reads a block whole and then writes it, and since
+  both pointers are aligned to the block they are a whole number of blocks apart, so even a copy onto its own
+  source a block ahead leaves what a byte loop leaves (a first port kept the block steps: 12 mutants of them
+  survived the test below, which is the proof by trial). `strcmp`, `strncmp` and `memcmp` return the difference
+  of the first unequal bytes taken as unsigned.
+- `strncpy`'s first quadword (16-byte aligned, n ≥ 16) is tested with `pnor` before the `psubb`, so the test is
+  (~x − 1) & ~x & 0x80 per byte instead of (x − 1) & ~x & 0x80: it lets the quadword through only when every
+  byte is 0x7f or more, which text never is, so aligned text is copied a byte at a time. After a quadword that
+  went through, the next one is tested properly and the copy goes on in doublewords. Only the speed differs.
+- `stricmp` 0x2fcc98 and `strnicmp` 0x2fd398 lower a character with newlib's `_ctype_` (0x3ba520; bit 0 of
+  `_ctype_[1 + c]` = upper case): inside the loop the character is a signed byte, so bytes from 0x80 up read the
+  0x7f bytes before the table (C++ type-info names and the assert message: 'o', 'i', 'e' and other odd letters
+  set bit 0 and make the byte 0x20 larger); at the end, for the answer, unsigned (the table's upper half, all 0
+  but 0x3ba619 = 0x43 for 0xf8). `stricmp` walks while the first string goes on; `strnicmp` stops at either
+  string's end or after `n`.
+- The runner lacked `pcpyh` (MMI3, sa 0x1b; `memset` builds its pattern with it): added to
+  `tools/r5900/src/exec.rs` with a unit test.
+
+Checked in the runner (`tests/libc.rs`): 80,000 calls, 8,000 per function, on random bytes of four kinds (text
+with bytes from 0x80 up, long runs with almost no 0, bytes 0x7f and up, any), mostly 8- or 16-byte aligned,
+second strings made from the first with one change, a case swap or a cut, copies onto their own source (5,591), a first string ending where the second has 0xe0:
+every byte and every answer equal. 38 hand mutants: 24 killed, the 12 of the first port's block steps (see
+above) and 2 equivalent (`strncpy` stopping at the 0 only while some `n` is left: the next step stops anyway;
+`strnicmp` looping while `left > 0` instead of `!= -1`: the loop's own `left == 0` test stops it at the same
+place).
