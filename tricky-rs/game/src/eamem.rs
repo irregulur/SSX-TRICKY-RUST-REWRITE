@@ -7,6 +7,7 @@
 //! Its heaps (row E2j): `EAMem_InitHeap`, `EAMem_AllocEx` and its wrappers, `EAMem_Free`, `EAMem_Resize` and the
 //! helpers they share, below [`HEAPS`]; checked in the runner (`tests/eamem_heap.rs`).
 
+use crate::libc::strlen;
 use crate::pf::Mem;
 
 /// `EAMem_Set` 0x2cc808(p, v, n): `n` bytes (none for `n` ≤ 0) from `p` filled from the word `v`: a byte (v's
@@ -168,13 +169,6 @@ fn heap_of(m: &Mem, flags: u32) -> u32 {
     m.r32(HEAPS + 4 * (flags & 0xf))
 }
 
-fn strlen(m: &Mem, s: u32) -> u32 {
-    let mut n = 0;
-    while m.r8(s.wrapping_add(n)) != 0 {
-        n += 1;
-    }
-    n
-}
 
 fn cstr(m: &Mem, s: u32) -> Vec<u8> {
     (0..strlen(m, s)).map(|k| m.r8(s.wrapping_add(k))).collect()

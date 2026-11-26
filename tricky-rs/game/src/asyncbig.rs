@@ -74,32 +74,14 @@ fn vcall(m: &mut Mem, e: &mut dyn BigEnv, f: u32, off: u32, rest: &[u32]) -> u32
     e.call(m, m.r32(vt + off + 4), &a)
 }
 
-/// `strcpy` 0x2fd14c
+/// `strcpy` 0x2fd14c ([`crate::libc::strcpy`])
 pub fn strcpy(m: &mut Mem, to: u32, from: u32) {
-    let mut k = 0u32;
-    loop {
-        let b = m.r8(from.wrapping_add(k));
-        m.w8(to.wrapping_add(k), b);
-        if b == 0 {
-            break;
-        }
-        k += 1;
-    }
+    crate::libc::strcpy(m, to, from);
 }
 
 /// `strcmp` 0x2fd008, as equal or not
 fn str_eq(m: &Mem, a: u32, b: u32) -> bool {
-    let mut k = 0u32;
-    loop {
-        let (x, y) = (m.r8(a.wrapping_add(k)), m.r8(b.wrapping_add(k)));
-        if x != y {
-            return false;
-        }
-        if x == 0 {
-            return true;
-        }
-        k += 1;
-    }
+    crate::libc::strcmp(m, a, b) == 0
 }
 
 /// `BigArchive_Init` 0x23bb70(a): reset; `a`
