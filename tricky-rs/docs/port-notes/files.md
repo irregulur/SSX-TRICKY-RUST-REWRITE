@@ -1281,3 +1281,52 @@ material, is equivalent because nothing in the block can change it). The resolve
   alignment steps at the edge counts, the copy's byte path for counts under 128, where a 16-aligned source and
   destination can only overlap 16 or more apart, its 8-byte steps split in two), an unreachable return, the move's
   edge cases d = s and d = s + n (both copies give the same bytes), and the checksum's 4-byte step at exactly 4.
+
+## The memory library's heaps (row E2j; `game/src/eamem.rs`, `tests/eamem_heap.rs`, proven)
+
+- A heap is a run of blocks with 16-byte headers: +0 a tag (0x424d "MB" when made, 0x4246 "FB" free, 0x424f
+  "OB" taken from the free list, 0x4253 "SB" the two ends), +2 flags (low 4 bits the heap's number, 0x4000 free,
+  0x8000 an end block, 0x100 carries its name, 0x200 "BEND" after the data, 0x800 four zero bytes 12 past the
+  data, plus the 0x10 / 0x20 / 0x40 of the allocation), +4 the data's size (a free block: its whole span, header
+  included), +8 the next block, +0xc the one before. Free blocks add +0x10 / +0x14, the next and previous free
+  block, in a doubly linked list kept in **address order**, through a sentinel. A new free block is put in by
+  walking from whichever end of the list is nearer (the midpoint of the first and last free block's addresses).
+- The heap's record is the data of its first block (base + 0x10, 0x44 bytes): +0 the name, +8 the base, +0xc
+  the top block, +0x10 the sentinel (tag 0x4253, size 0x7fffffff, +0x20 / +0x24 first and last free block),
+  +0x28 alignment, +0x2c large alignment, +0x30 bytes kept after every block's data, +0x34 flags, +0x38 the lock,
+  +0x3c a word from the caller. The 16 heaps' records are at 0x34eff8, by number. `EAMem_InitMainHeap` 0x2cd798
+  makes heap 0 ("RAM", alignment 0x40, large 0x80, nothing kept, a lock, +0x3c = 0x2cd790) and copies it to slot 1.
+- `EAMem_InitHeap` 0x2cd278(id, name, base, size, align, big, after, bend; on the stack: unused, names, lock,
+  word): the first free block starts at the first `big`-aligned address past the record and `after` (+0x54 +
+  `big` − 1, rounded down, − 0x10); the top block sits `after` + 0x30 short of the end. The two end blocks are
+  named "%s LOW" / "%s HIGH" (0x3bb998 / 0x3bb9a0) when the heap names its blocks. Returns the free block's size.
+- `EAMem_AllocEx` 0x2cca00(name, size, align, offset, flags): first fit from the list's start; from its end with
+  0x10 (the block then taken from the free block's end); the **largest** block with 0x20 (the first of equal
+  ones). `align` 0 means the heap's alignment, or its large one with 0x40; the data is placed so data + offset is
+  aligned. Needs size + kept bytes (+ the name and its 0 in a named heap), at least 8, + alignment − 1 + 0x10.
+  What is left becomes a free block (before the new one with 0x10, else after it at the heap's alignment) only
+  when more than alignment + 0x2f; else the padding stays in the block. Nothing fits: the function at 0x3bb990
+  (gp − 0x7f60) is called with (name, size, flags) when set, and the search runs again while it answers 1.
+  Negative sizes give 0. `EAMem_Alloc` 0x2ccf70 / `EAMem_Alloc0` 0x2ccf98 / `EAMem_AllocAligned` 0x2ccf50 call
+  it (the word they pass in t1, 1 or 0, is never read).
+- `EAMem_Free` 0x2ccfc0(p): joins the free block before and the one after (each taken out of the list first),
+  then puts the result in the list; 0 does nothing; returns 1.
+- `EAMem_Resize` 0x2cda18(p, size): joins a free block after it, then the new size rounded with the kept bytes
+  to the alignment; a size larger than the room is cut to the room (so the stored size can be less than asked);
+  −1 asks for everything (0x40000000); 0..7 become 8 but other negative sizes stay (not exercised). The kept
+  bytes and the name move with the end (`Mem_Move`). More than 0x40 bytes left over go back as a free block.
+- `EAMem_GetName` 0x2cd9b8 (the name's address: past the data and the kept bytes, 0 if none),
+  `EAMem_GetSize` 0x2cd9b0, `EAMem_HeapHeaderSize` 0x2cd990 (the kept bytes), `EAMem_BlockHeaderSize` 0x2cc9a0
+  (kept bytes + name and 0 in a named heap), `EAMem_InitBlock` 0x2cd168.
+- Misuse writes over the next header, in the game as here: "BEND" (0x200) with under 4 kept bytes, the 0x800
+  zeros with under 16, a name (0x100 in the allocation's flags) in a heap that doesn't name its blocks (only the
+  heap's own 0x100 counts the name's room). The test keeps to valid use.
+- Host: the lock (`RecMutex_Create` 0x2cf468, `RecMutex_Lock` 0x2cf4d0, `RecMutex_Unlock` 0x2cf550); our port is
+  single-threaded, `init_heap` takes the handle, and the out-of-memory function is run by the caller (a closure).
+- Checked in the runner: 400 heaps with random settings, 48,000 steps (allocations, sizes −1 and negative included, through all four entries with
+  every flag, alignment and offset, frees, resizes, the four small getters), 5,340 failed allocations, 1,982
+  out-of-memory calls with retries, 8,217 frees joining a neighbour; arena, table and answers equal after each.
+  44 mutants: 40 killed; 4 left: `EAMem_InitBlock`'s answer past the name (no caller reads it), the heap flag
+  0x400 copied into blocks (no heap sets it), `EAMem_Free` storing the previous block's link it already has, and
+  the largest-block search's start (span − 1 or span: differs only for a free block exactly 0x10 bigger than the
+  span, not reached).
