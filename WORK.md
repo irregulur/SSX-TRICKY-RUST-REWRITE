@@ -35,7 +35,7 @@ state machine and the renderer are ours. Nothing has been checked against the or
 | E1b | Random numbers: the game's `rand` and seeding, used by AI tricks, grabs, announcer, so runs can match the original | unowned | F1 | | [est] Split: E1b1, E1b2 |
 | E1b2 | Replace the xorshift stand-ins (`race.rs`, `props.rs`, `intro.rs`) with the game's streams at the game's call sites, in the game's order | unowned | E1b1 | | Split of E1b; split into E1b2a to E1b2d |
 | E1b2g7d | The rest of the race-line hooks in the app (`race::Hooks` in `game/src/race.rs`): speech (`Speech_OnCheckpoint` 0x233ee0, place and local lines), the cheer, the event sounds (`FUN_0021c0a0`, 0xe/0x17/0x18 `Audio_QueueEventSound` 0x21d0b0), `Boarder_Finish`'s `HUD_ShowItem` 7, and the places (+0x110) from the ported `placing::update` 0x115100 in place of the STANDIN `Race::places` | any | E1b2g7b | | Gap of E1b2g7b; split into E1b2g7d1 to E1b2g7d5 |
-| E1b2r2 | Split of E1b2r: the remaining `E1b2r` hook gated on `G10`: `worldsound.rs`' ambient and speech draws on the game's stream (`fxrand::lesson_path_var` was wired in `C11e`) | any | E1b2r1 | | Split of E1b2r; overlaps G10 |
+| E1b2r2 | Split of E1b2r: the remaining `E1b2r` hook gated on `G10`: `worldsound.rs`' ambient and speech draws on the game's stream (`fxrand::lesson_path_var` was wired in `C11e`) | any | E1b2r1 | irregulur/neon (2026-11-26) | Split of E1b2r; overlaps G10 |
 | E3 | Level files read by our code, as the game reads them, replacing the SSX-Library JSON project folder (`level.rs`) | unowned | E2b | | [repo] level-editing.md. Split before claiming: |
 | E2o | Split of E2: the `.aip` / `.sop` loaders checked on random files in the runner (`AIP_LoadAIPaths` 0x198518, `AIP_LoadEventPaths` 0x1983d0, `AIPath_Load` 0x196f28, `AIPath_LoadPoint` 0x197130, `AIPath_LoadEvent` 0x197170, the path classes' parameter methods) against `tricky_data::aip` | any | E2n | irregulur/lynx (2026-11-26) | |
 | E6 | Loading and memory: what the game loads when (load screens, course switch), only as far as it changes behaviour | unowned | E1 | | [est] |
@@ -1905,5 +1905,6 @@ matches the original.
 - 2026-11-26 irregulur/neon: claim E2m.
 - 2026-11-26 irregulur/lynx: added and claimed E2n (split of E2).
 - 2026-11-26 irregulur/neon: E2m done (ported and runner-checked `isnanf`, `__ieee754_fmodf`, `fmodf`, `__ieee754_logf`, `logf` in `libc.rs`; wired directly into `musicsong.rs`/`musichost.rs`/`texman.rs` and unstubbed in `tests/musicsong.rs`, `tests/musicsys.rs`, `tests/texman.rs`).
+- 2026-11-26 irregulur/neon: claim E1b2r2.
 - 2026-11-26 irregulur/lynx: E2n done.
 - 2026-11-26 irregulur/lynx: added and claimed E2o (split of E2).
