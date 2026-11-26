@@ -876,7 +876,8 @@ impl PortAi {
 }
 
 /// Headless check: ride the course on autopilot along the race line and report what happens.
-pub fn self_test(world: &mut CollisionWorld, rails: &Rails, line: &[Vec3], course: &AiCourse, race_lines: Option<&crate::aipath::RaceLines>, course_no: u32, paths: &tricky_data::course::AiPaths, ai_paths: &[crate::aipath::Path], tube: Option<&crate::props::Tube>, start_yaw: f32, seconds: f32) {
+#[allow(clippy::too_many_arguments)]
+pub fn self_test(world: &mut CollisionWorld, rails: &Rails, line: &[Vec3], course: &AiCourse, race_lines: Option<&crate::aipath::RaceLines>, course_no: u32, paths: &tricky_data::course::AiPaths, ai_paths: &[crate::aipath::Path], tube: Option<&crate::props::Tube>, start_yaw: f32, seconds: f32, anim: Option<crate::animhost::RiderAnim>) {
     if std::env::var("TRICKY_TRICKTEST").is_ok() {
         let Some(&start) = line.first() else { return };
         let tau = std::f32::consts::TAU;
@@ -1014,6 +1015,9 @@ pub fn self_test(world: &mut CollisionWorld, rails: &Rails, line: &[Vec3], cours
     }
     let Some(&start) = line.first() else { println!("no race line"); return };
     let mut r = Rider::new(start + Vec3::Y * 1.0, start_yaw);
+    if let Some(a) = anim {
+        r.attach_anim(a);
+    }
     let dt = 1.0 / 120.0;
     let (mut t, mut next_log, mut top, mut air, mut dist) = (0.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32);
     let mut finished = None;

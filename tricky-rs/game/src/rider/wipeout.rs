@@ -114,8 +114,9 @@ fn accumulate(s: &mut State, n: V4) {
 }
 
 /// What the motion calls, answered on the course and the port's rider.
+/// `world` is `None` only during `WipeoutMotion_Enter` 0x10c198, which never casts into the world.
 struct Glue<'a> {
-    world: &'a CollisionWorld,
+    world: Option<&'a CollisionWorld>,
     last: &'a mut LastHit,
     s: &'a mut State,
     /// stats+0x60 and rider+0x244 (the probe's start to the side)
@@ -138,7 +139,7 @@ fn out_of(h: Option<crate::world::CastHit>) -> CastOut {
 impl Glue<'_> {
     /// `World_RayCast` 0x25aff8 on the course with a `cWorldLine`(target, from, to, kind).
     fn line(&mut self, target: f32, from: V4, to: V4, kind: u32, last: bool) -> (f32, CastOut) {
-        let world = self.world;
+        let Some(world) = self.world else { return (-1.0, CastOut { kind: 3, ..Default::default() }) };
         let Some(course) = &world.course else { return mesh_line(world, from, to) };
         let mut q = WorldLine::new(target, from, to, kind);
         let last = if last { Some(&mut *self.last) } else { None };
@@ -193,21 +194,21 @@ fn mesh_body(world: &CollisionWorld, body: &CollBody) -> (f32, CastOut) {
 /// What the rollers the body hits ask of the world (`Ragdoll_HitRoller` 0x10ed68 waking them, `roller::on_hit`).
 impl RollerEnv for Glue<'_> {
     fn ray_cast(&mut self, q: &WorldSphTree) -> (f32, V4, V4) {
-        match &self.world.course {
-            Some(c) => roller_cast(self.world, c, q, false),
+        match self.world.and_then(|w| w.course.as_ref().map(|c| (w, c))) {
+            Some((w, c)) => roller_cast(w, c, q, false),
             None => (-1.0, [0.0; 4], [0.0; 4]),
         }
     }
     fn query_instances(&mut self, q: &WorldSphTree) -> (f32, V4, V4) {
-        match &self.world.course {
-            Some(c) => roller_cast(self.world, c, q, true),
+        match self.world.and_then(|w| w.course.as_ref().map(|c| (w, c))) {
+            Some((w, c)) => roller_cast(w, c, q, true),
             None => (-1.0, [0.0; 4], [0.0; 4]),
         }
     }
     /// STANDIN: nothing, for the race's broadphase (`Broadphase_MoveBox` 0x14fe68).
     fn move_box(&mut self, _: V4, _: V4) {}
     fn event_script(&self, object: u32, event: u32) -> i32 {
-        self.world.course.as_ref().map_or(-1, |c| c.ssf.event_script(object as usize, event as usize))
+        self.world.and_then(|w| w.course.as_ref()).map_or(-1, |c| c.ssf.event_script(object as usize, event as usize))
     }
     fn start_script(&mut self, script: i32, object: u32) {
         self.s.starts.push((script, object));
@@ -217,7 +218,7 @@ impl RollerEnv for Glue<'_> {
     fn sfx(&mut self, _: u32, object: u32) {
         let o = if object != 0 && object == self.s.contact_obj { object - 1 } else { object };
         self.s.contact_obj = 0;
-        if let Some(c) = &self.world.course {
+        if let Some(c) = self.world.and_then(|w| w.course.as_ref()) {
             c.knock.lock().unwrap_or_else(|e| e.into_inner()).knocks.push((o, self.s.speed));
         }
     }
@@ -229,7 +230,7 @@ impl RagEnv for Glue<'_> {
     }
     /// `World_RayCast` 0x25aff8 with the body's `cWorldBoarder`(+0x470, 0).
     fn cast_body(&mut self, q: &WorldBoarder) -> (f32, CastOut) {
-        let world = self.world;
+        let Some(world) = self.world else { return (-1.0, CastOut { kind: 3, ..Default::default() }) };
         let Some(course) = &world.course else { return mesh_body(world, &q.rider) };
         let mut q = q.clone();
         let (t, h) = course.ray_cast(&mut q, world.showoff, None, &|i| world.course_skips(i));
@@ -237,7 +238,7 @@ impl RagEnv for Glue<'_> {
     }
     /// `World_QueryInstances` 0x25b878 with it (nothing without the course's collision).
     fn query_body(&mut self, q: &WorldBoarder) -> (f32, CastOut) {
-        let world = self.world;
+        let Some(world) = self.world else { return (-1.0, CastOut { kind: 3, ..Default::default() }) };
         let Some(course) = &world.course else { return (-1.0, CastOut { kind: 3, ..Default::default() }) };
         let mut q = q.clone();
         let (t, h) = course.query_instances(&mut q, world.showoff, &|i| world.course_skips(i));
@@ -258,7 +259,7 @@ impl RagEnv for Glue<'_> {
         self.s.calls.push(Call::Spray(point, vel, n));
     }
     fn object_flags(&self, object: u32) -> u32 {
-        match (&self.world.course, object) {
+        match (self.world.and_then(|w| w.course.as_ref()), object) {
             (Some(c), 1..) => c.object_flags(object as usize - 1),
             _ => 0,
         }
@@ -267,7 +268,7 @@ impl RagEnv for Glue<'_> {
     /// the contact's velocity, the record with the tree the query hit. Without the course's collision: nothing.
     fn player_contact(&mut self, object: u32, c: &Contact, out: &CastOut) {
         self.s.contact_obj = object;
-        let (Some(course), 1..) = (&self.world.course, object) else { return };
+        let (Some(course), 1..) = (self.world.and_then(|w| w.course.as_ref()), object) else { return };
         let rider = crate::knockables::Rider { id: self.who.id, human: self.who.human, vel: scale(c.dir, c.speed_in) };
         let record = crate::knockables::record_context(out.pos, out.normal, self.s.tree);
         course.knock.lock().unwrap_or_else(|e| e.into_inner()).contact(course, object - 1, rider, c, record);
@@ -355,11 +356,12 @@ impl WipeEnv for Glue<'_> {
     /// (`walls::wall_collide`). Without the course's collision only the walls (on the drawn mesh).
     fn collide_world(&mut self, r: &mut RagRider, w: &mut WipeRider) {
         let _ = w;
+        let Some(world) = self.world else { return };
         let mut body = r.body;
         body.x24 = WALL_MASK;
         let mut wr = WallRider { pos: r.pos, vel: r.vel, ground: r.ground, knocks: self.s.knocks, mode: self.s.motion, state: self.s.state, up: r.up };
-        let mut walls = Walls { world: self.world, body, s: &mut *self.s, who: self.who };
-        if let Some(course) = self.world.course.clone() {
+        let mut walls = Walls { world, body, s: &mut *self.s, who: self.who };
+        if let Some(course) = world.course.clone() {
             crate::walls::instance_collisions(&mut wr, &mut walls);
             kick_rollers(&course, &mut wr, self.who.id, &mut walls, |w| w.body);
         }
@@ -369,9 +371,12 @@ impl WipeEnv for Glue<'_> {
         self.s.knocks = wr.knocks;
         r.body.x24 = -1;
     }
-    /// `Boarder_Translate` 0x1267a0: the collision body moved (the broadphase box the port does not keep).
+    /// `Boarder_Translate` 0x1267a0: moves the collision body (and cached pose snapshot when `AnimHost` is attached).
     fn translate(&mut self, r: &mut RagRider, d: V4) {
         r.body.translate(d);
+        if let Some(a) = self.anim {
+            a.translate_coll_body(d);
+        }
     }
     /// `AirPredict_AtTakeoff` 0x123b10 (`air::predict_at_takeoff`, its rays `cWorldLine`(0, …, 0) on the course) or
     /// `AirPredict_Tick` 0x123ec8; the motion reads the prediction's +8, +0x20, +0x30 and +0x40.
@@ -543,8 +548,25 @@ impl Wipe {
     pub(super) fn set_vel(&mut self, vel: V4) {
         self.rag.vel = vel;
     }
+    /// `rider+0x330` (the probe's sideways vector, for `Boarder_UpdatePose` 0x129628).
+    pub(super) fn probe_side(&self) -> V4 {
+        self.s.probe_side
+    }
     /// One game tick of motion 5 or 6.
-    fn tick(&mut self, world: &CollisionWorld, last: &mut LastHit, k: f32, lean: f32, kind: u8, who: Who, anim: Option<&crate::animhost::RiderAnim>) -> Out {
+    #[allow(clippy::too_many_arguments)]
+    fn tick(
+        &mut self,
+        world: &CollisionWorld,
+        last: &mut LastHit,
+        k: f32,
+        lean: f32,
+        steer: f32,
+        rider_up: V4,
+        body_height: f32,
+        kind: u8,
+        who: Who,
+        anim: Option<&crate::animhost::RiderAnim>,
+    ) -> Out {
         let was = self.s.motion;
         self.s.speed = dot(self.rag.vel, self.rag.vel).sqrt();
         // the rollers among the rider's broadphase pairs, for `Ragdoll_Contacts`. STANDIN: those whose boxes meet
@@ -555,7 +577,7 @@ impl Wipe {
         let (lo, hi) = ([c[0] - rad, c[1] - rad, c[2] - rad, 0.0], [c[0] + rad, c[1] + rad, c[2] + rad, 0.0]);
         let near: Vec<usize> = (0..all.len()).filter(|&i| crate::knockables::overlap(all[i].body.lo, all[i].body.hi, lo, hi)).collect();
         let mut pairs: Vec<(u32, crate::roller::RollerBody)> = near.iter().map(|&i| (all[i].object, all[i].body.clone())).collect();
-        let mut glue = Glue { world, last, s: &mut self.s, k, lean, who, anim };
+        let mut glue = Glue { world: Some(world), last, s: &mut self.s, k, lean, who, anim };
         if was == 5 {
             self.motion.update(&mut self.rag, &mut self.wr, &mut pairs, &mut glue);
         } else {
@@ -585,21 +607,22 @@ impl Wipe {
         }
         self.wr.stuck += std::mem::take(&mut self.s.impact);
         // Re-pose the collision body via `Boarder_UpdatePose` 0x129628 + `CollBody_UpdateFromBones` 0x2361b0
-        // when `AnimHost` is attached; otherwise fall back to the bind-pose STANDIN.
+        // when `AnimHost` is attached (row E7c3j: exact `rider+0x2c0` up, `rider+0x308` body_height, `rider+0x330`
+        // probe_side — never `rag.height` +0x1bc or board up +0x1a0); otherwise fall back to the bind-pose STANDIN.
         self.rag.body = match anim {
             Some(a) => {
                 let snap = a.update_pose(&crate::animhost::PoseUpdateIn {
                     quat: self.rag.q,
-                    steer: 0.0,
+                    steer,
                     motion: now,
                     state: self.s.state,
                     class: self.wr.x420,
                     natural_stance: self.wr.x464 as u32,
                     pos: self.rag.pos,
-                    up: self.rag.up,
+                    up: rider_up,
                     normal: self.rag.ground,
-                    height: self.rag.height,
-                    side: self.wr.side,
+                    height: body_height,
+                    side: self.s.probe_side,
                     lean,
                     scale: k,
                     spin: 0.0,
@@ -607,6 +630,7 @@ impl Wipe {
                     x1c0: 0.0,
                     x1cc: 0.0,
                 });
+                self.rag.hip = [snap.pivot[0], snap.pivot[1], snap.pivot[2], 0.0];
                 snap.coll_body
             }
             None => bind_body_at(self.rag.pos, self.wr.fwd, self.rag.up, k),
@@ -633,12 +657,14 @@ impl Wipe {
 
 impl Rider {
     /// `Boarder_Wipeout` 0x11d830's motion change: the crash's point and normal into the body (+0x20, +0x40 of the
-    /// body, from the contact's +0 and +0x20), then `WipeoutMotion_Enter` 0x10c198 on the rider as it is.
-    fn wipe_enter(&mut self, world: &CollisionWorld) -> Wipe {
+    /// body, from the contact's +0 and +0x20), then `WipeoutMotion_Enter` 0x10c198 on the rider as it is (using the
+    /// live posed `CollBody` from `Boarder_UpdatePose` 0x129628 + `CollBody_UpdateFromBones` 0x2361b0, already
+    /// shifted by any `Boarder_Translate` on the crash tick).
+    pub(super) fn wipe_enter(&mut self) -> Wipe {
         let k = self.stats.scale;
         let o = match self.att {
-            Some((a, yaw)) if yaw == self.yaw => a,
-            _ => {
+            Some((a, _)) => a,
+            None => {
                 let up = to_game(self.board_up(), 1.0, 0.0);
                 let h = to_game(heading(self.yaw), 1.0, 0.0);
                 let fwd = super::ground_tick::unit(crate::probe::sub(h, scale(up, dot(h, up))));
@@ -648,8 +674,20 @@ impl Rider {
             }
         };
         let pos = to_game(self.pos, 100.0, 1.0);
-        let ground = if self.grounded { to_game(self.normal, 1.0, 0.0) } else { [0.0, 0.0, 1.0, 0.0] };
+        let g = to_game(self.normal, 1.0, 0.0);
+        let ground = if dot(g, g) > 1e-6 { g } else { [0.0, 0.0, 1.0, 0.0] };
         let (course, course8) = self.course_pts.map_or((pos, pos), |(a, b)| (to_game(a, 100.0, 1.0), to_game(b, 100.0, 1.0)));
+        let body = match &self.anim {
+            Some(a) => match a.pose_snapshot() {
+                Some(snap) => snap.coll_body,
+                None => {
+                    let pin = self.pose_update_in();
+                    a.update_pose(&pin).coll_body
+                }
+            },
+            // STANDIN (without AnimHost): bind-pose spheres for `CollBody_UpdateFromBones` 0x2361b0
+            None => bind_body_at(pos, o.fwd, o.up, k),
+        };
         let mut rag = RagRider {
             id: 0,
             pos,
@@ -665,10 +703,7 @@ impl Rider {
             crash_n: [0.0; 4],
             side: o.fwd,
             course,
-            body: self.anim.as_ref().and_then(|a| a.pose_snapshot()).map_or_else(
-                || bind_body_at(pos, o.fwd, o.up, k),
-                |snap| snap.coll_body,
-            ),
+            body,
             hip: match &self.anim {
                 Some(a) => {
                     let p = a.pivot_pos();
@@ -696,8 +731,14 @@ impl Rider {
         let mut s = State { motion: 5, state: 0x13, clip: CLIP_CRUNCH, fwd: o.fwd, side: o.side, yaw: o.yaw, probe_side: o.side, impact_n: self.impact_n, knocks: self.knocks, ..Default::default() };
         let who = self.who();
         let anim = self.anim.clone();
-        let mut glue = Glue { world, last: &mut self.last_hit, s: &mut s, k, lean: self.lean[0], who, anim: anim.as_ref() };
+        let mut glue = Glue { world: None, last: &mut self.last_hit, s: &mut s, k, lean: self.lean[0], who, anim: anim.as_ref() };
         motion.enter(&mut rag, &mut wr, &mut glue);
+        // `WipeoutMotion_Enter` 0x10c198 sets the six ease pairs (brake, crouch, steer, lean, ...) to rate 2.0, target 0.
+        self.rec.brake[1..].copy_from_slice(&[2.0, 0.0]);
+        self.rec.crouch[1..].copy_from_slice(&[2.0, 0.0]);
+        self.rec.steer[1..].copy_from_slice(&[2.0, 0.0]);
+        self.lean[1..].copy_from_slice(&[2.0, 0.0]);
+        self.att = Some((Orient { q: rag.q, fwd: wr.fwd, side: wr.side, up: rag.up, yaw: s.yaw }, self.yaw));
         self.switch = false;
         self.clear_air();
         self.air_time = 0.0;
@@ -710,7 +751,7 @@ impl Rider {
     pub(super) fn wipe_step(&mut self, world: &CollisionWorld, dt: f32) {
         let mut w = match self.wipe.take() {
             Some(w) => w,
-            None => self.wipe_enter(world),
+            None => self.wipe_enter(),
         };
         self.down_t += dt;
         w.t += dt;
@@ -721,12 +762,20 @@ impl Rider {
                 _ => {}
             }
         }
+        // Pull the fresh `CollBody_UpdateFromBones` 0x2361b0 and pivot produced by `cPostAI::vf1` 0x114730 at the
+        // end of the previous tick (after `Boarder_UpdateAnimLayers` + `Boarder_UpdatePose` 0x129628).
         if let Some(a) = &self.anim {
             w.s.clip = a.clip(0) as u16;
+            let p = a.pivot_pos();
+            w.rag.hip = [p[0], p[1], p[2], 0.0];
+            if let Some(snap) = a.pose_snapshot() {
+                w.rag.body = snap.coll_body;
+            }
         }
         if let Some((near, ahead)) = self.course_pts {
             (w.rag.course, w.wr.course8) = (to_game(near, 100.0, 1.0), to_game(ahead, 100.0, 1.0));
         }
+        w.wr.x294 = self.band.0 * 100.0;
         (w.wr.stuck, w.s.impact_n, w.s.knocks) = (self.impact, self.impact_n, self.knocks);
         let dbg = std::env::var("TRICKY_WIPEDBG").is_ok();
         w.acc += dt;
@@ -736,7 +785,7 @@ impl Rider {
             let was = w.s.clip;
             let who = self.who();
             let anim = self.anim.clone();
-            out = w.tick(world, &mut self.last_hit, self.stats.scale, self.lean[0], self.stats.kind, who, anim.as_ref());
+            out = w.tick(world, &mut self.last_hit, self.stats.scale, self.lean[0], self.steer, self.up, self.body_height, self.stats.kind, who, anim.as_ref());
             for c in std::mem::take(&mut w.s.calls) {
                 self.wipe_call(c);
             }
@@ -757,6 +806,13 @@ impl Rider {
         if Vec3::new(f.x, 0.0, f.z).length() > 0.2 {
             self.yaw = f32::atan2(-f.x, -f.z);
         }
+        // Keep `self.att` synced to the tumbling/getting-up orientation (`rider+0x170..+0x1b0`) so end-of-tick
+        // `cPostAI::vf1` (`Boarder_UpdatePose` 0x129628 + `CollBody_UpdateFromBones` 0x2361b0) poses the live
+        // skeleton and collision body at the exact ragdoll attitude.
+        self.att = Some((
+            Orient { q: w.rag.q, fwd: w.wr.fwd, side: w.wr.side, up: w.rag.up, yaw: w.s.yaw },
+            self.yaw,
+        ));
         (w.q, w.clip, w.clip_t) = (w.draw_q(), w.s.clip, w.s.clip_t);
         self.getup = if w.s.motion == 6 { w.s.clip_t } else { -1.0 };
         match out {

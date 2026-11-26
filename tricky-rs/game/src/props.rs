@@ -367,6 +367,10 @@ impl Tube {
         }
         if Self::inside(p, self.z) && r.pos.y < self.top_y {
             r.pos.y = self.top_y;
+            if let Some(a) = &r.anim {
+                let pin = r.pose_update_in();
+                a.update_pose(&pin);
+            }
             return true;
         }
         if Self::inside(p, self.end) {

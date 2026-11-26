@@ -1101,10 +1101,13 @@ impl crate::walls::WallEnv for WallGlue<'_> {
     fn accumulate_impact(&mut self, _: &mut crate::walls::WallRider, n: V4) {
         accumulate_impact(&mut self.r.impact, &mut self.r.impact_n, n);
     }
-    /// `Boarder_Translate` 0x1267a0: `CollBody_Translate` 0x236448 on the body (the broadphase box, +0x6e0/+0x6f0, the
-    /// port does not keep).
+    /// `Boarder_Translate` 0x1267a0: `CollBody_Translate` 0x236448 on the body and cached pose snapshot (the
+    /// broadphase box, +0x6e0/+0x6f0, the port does not keep).
     fn translate(&mut self, _: &mut crate::walls::WallRider, by: V4) {
         self.body.translate(by);
+        if let Some(a) = &self.r.anim {
+            a.translate_coll_body(by);
+        }
     }
     /// `Boarder_TurnFromWall` 0x1257a0 (`orient::turn_from_wall`) on the game-side rider's attitude.
     fn turn_from_wall(&mut self, _: &mut crate::walls::WallRider, n: V4) {
@@ -1294,11 +1297,8 @@ pub(super) fn air_instance_collisions(
     world: &CollisionWorld,
     course: &crate::course_ground::CourseGround,
 ) -> crate::collbody::CollBody {
-    let o = match &r.att {
-        Some((o, _)) => *o,
-        None => orient::placed_attitude(super::placed_heading(r.yaw), None),
-    };
-    let up = r.board_frame()[2];
+    let f0 = r.board_frame();
+    let up = f0[2];
     let pos = to_game(r.pos, 100.0, 1.0);
     let vel = to_game(r.vel, 100.0, 0.0);
     let ground = to_game(r.normal, 1.0, 0.0);
@@ -1308,7 +1308,7 @@ pub(super) fn air_instance_collisions(
         .as_ref()
         .and_then(|a| a.pose_snapshot())
         .map(|s| s.coll_body)
-        .unwrap_or_else(|| bind_body_at(pos, o.fwd, up, r.stats.scale));
+        .unwrap_or_else(|| bind_body_at(f0[3], f0[1], up, r.stats.scale));
     body.x24 = -1;
     let id = rider_id(r);
     let mut glue = AirWallGlue { r, world, course, body, tree: None, starts: Vec::new() };
@@ -1489,7 +1489,13 @@ impl gm::Env for GroundEnv<'_> {
     fn instance_collisions(&mut self, g: &mut gm::Rider) {
         let Some(course) = self.world.course.clone() else { return };
         let mut wr = crate::walls::WallRider { pos: g.p.pos, vel: g.vel, ground: g.p.normal, knocks: self.r.knocks, mode: 2, state: g.state, up: g.board_up };
-        let body = bind_body_at(g.p.pos, g.p.fwd, g.board_up, g.p.stat60);
+        let body = self
+            .r
+            .anim
+            .as_ref()
+            .and_then(|a| a.pose_snapshot())
+            .map(|s| s.coll_body)
+            .unwrap_or_else(|| bind_body_at(g.p.pos, g.p.fwd, g.board_up, g.p.stat60));
         let id = rider_id(self.r);
         let mut glue = WallGlue { r: &mut *self.r, g: &mut *g, world: self.world, course: &course, body, tree: None, starts: Vec::new() };
         crate::walls::instance_collisions(&mut wr, &mut glue);

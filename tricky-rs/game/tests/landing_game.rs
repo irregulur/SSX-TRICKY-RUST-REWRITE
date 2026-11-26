@@ -135,13 +135,25 @@ fn landings_are_the_games() {
     });
     assert!(uber_nom4.crashed > 0.0 && uber_nom4.cause == "grab", "0xffff fourth marker must never clear landing gate");
 
-    // E8r: mid-backflip (`flip = pi`, even with upright `att`): `Landing_CheckAngles` folds `flip` into `att`
-    // via `SpinControl_Exit` 0x1029d0 before checking angles -> upside-down landing crashes!
+    // E8r: steep backflip (`flip = -1.50`, board positioned right at snow level so the board lands first, even
+    // with upright `att`): `Landing_CheckAngles` folds `flip` into `att` via `SpinControl_Exit` 0x1029d0 before
+    // checking angles -> crashes via `Landing_CheckAngles`!
+    let steep_flip = drop_with(&world, at, |r| {
+        r.flip = -1.50;
+        r.stats.bytes[8] = 0;
+        let board_z = r.board_frame()[3][2];
+        r.pos.y -= (board_z - (at[2] + 5.0)) * 0.01;
+    });
+    println!("steep backflip: crashed {} cause {}", steep_flip.crashed, steep_flip.cause);
+    assert!(steep_flip.crashed > 0.0 && steep_flip.cause == "landing angle", "steep bad flip must crash via Landing_CheckAngles");
+
+    // E7c3j: fully upside-down backflip (`flip = pi`) dropped from above snow: the pivot-rotated body places the
+    // head below the board, so `AirMotion_Update`'s `0xcf` upper-body wall ray catches the head hitting snow first.
     let mid_flip = drop_with(&world, at, |r| {
         r.flip = pi;
     });
     println!("mid backflip: crashed {} cause {}", mid_flip.crashed, mid_flip.cause);
-    assert!(mid_flip.crashed > 0.0 && mid_flip.cause == "landing angle", "upside-down flip must crash via Landing_CheckAngles");
+    assert!(mid_flip.crashed > 0.0 && mid_flip.cause == "air wall", "fully upside-down flip hits head on snow first via 0xcf air wall");
 
     // E8r: short hop (`air_time = 0.05 <= 0.15`) STILL goes through `AirMotion_Update` landing (no artificial
     // `air_time > 0.15` gate): clears `predict.t_land`, sets `land_fall > 0`, and catches a bad flip/grab!

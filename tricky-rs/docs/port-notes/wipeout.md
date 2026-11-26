@@ -264,6 +264,51 @@ Part of the port notes (index: [README.md](README.md)); units and wording as des
   position; shove heading 0 right, π left). Still STANDIN: the collision body (our riders have no game skeleton in
   the game crate, so one sphere), the pair records (not kept), the hop.
 
+## Upside-down wipe-out collision body and initial `Ragdoll_Contacts` push (board row E7c3j)
+
+- **Proven (`SLUS_203.26` disassembly: `AirMotion_Update` 0x108378, `Boarder_Wipeout` 0x11d830, `WipeoutMotion_Enter`
+  0x10c198, `cPostAI::vf1` 0x114730, `Boarder_UpdatePose` 0x129628, `Boarder_UpdateBroadphase` 0x126748,
+  `CollBody_UpdateFromBones` 0x2361b0)**:
+  - In `AirMotion_Update` 0x108378, `rider+0x470` (`CollBody`) was posed by `cPostAI::vf1` 0x114730 on the previous
+    tick around the pivot bone (`rider+0x8d0`), so an upside-down rider (`up ≈ (-0.08, -0.16, -0.98)`) has its head
+    sphere (sphere 0, bit 0 of mask `0xcf`) below the board and hits the snow in the `0xcf` air wall ray (`0x108a2c`)
+    before the board reaches ground. `AirMotion_Update` translates both `rider+0x470` and `rider+0x140` out by
+    `1.1 * frac * normal` (`0x108a7c..0x108a90`), then calls `Boarder_Wipeout` 0x11d830.
+  - `Boarder_Wipeout` 0x11d830 calls `Boarder_SetState(0x13)` **first** (running `SpinControl_Exit` 0x1029d0 to fold
+    any remaining `spin`/`flip` into `rider+0x170` and adjust `rider+0x140` to preserve the pivot), then
+    `Boarder_SetMotion(5)` **second** (invoking `WipeoutMotion_Enter` 0x10c198 immediately on the crash tick:
+    `Ragdoll_InitFromBoarder` 0x10dad8 on the already-translated `CollBody`, `AnimCtl_BlendOutAll`,
+    `Wipeout_PlayImpactClip` 0x10f9a0, and setting the six ease pairs to rate `2.0`, target `0`).
+  - At the end of each tick, `cPostAI::vf1` 0x114730 runs `Boarder_UpdateAnimLayers`, `Boarder_UpdatePose` 0x129628
+    (reading `rider+0x2c0` smoothed ground up, `rider+0x308` body height, and `rider+0x330` probe side — **never**
+    `rider+0x1bc` ground height or `rider+0x1a0` board up), and `Boarder_UpdateBroadphase` 0x126748
+    (`CollBody_UpdateFromBones` 0x2361b0).
+- **Root causes fixed (`rider/wipeout.rs`, `rider.rs`, `rider/ground_tick.rs`, `race.rs`, `src/main.rs`)**:
+  - `Wipe::tick` was passing `height: self.rag.height` (`+0x1bc`), `up: self.rag.up` (`+0x1a0`), and `side: self.wr.side`
+    (`+0x190`) into `AnimHost::update_pose` — shifting an upside-down rider's body `rag.height * (-Z)` straight down
+    into the snow — and `Rider::wipe_step` never synced `w.rag.q` back into `Rider::att`, so end-of-tick `cPostAI::vf1`
+    overwrote `AnimHost` with the stale pre-crash quaternion.
+  - `Rider::fall` called `set_motion(5)` before `set_control(WIPEOUT)` and deferred `wipe_enter` until the next tick;
+    it now runs `set_control(WIPEOUT)` -> `set_motion(5)` -> `wipe_enter()` immediately on the crash tick, and
+    `wipe_step` refreshes `w.rag.body` and `w.rag.hip` from `cPostAI::vf1`'s `pose_snapshot()` each tick.
+  - `air_wall` and `air_instance_collisions`'s no-`AnimHost` fallback (`bind_body_at`) now uses `board_frame()[3]`
+    (the pivot-rotated board origin) instead of unrotated `self.pos`, which previously placed an inverted rider's
+    `body.center` 183 cm too low under the snow so `Side::Front` missed the snow; `GroundEnv::instance_collisions` and
+    `WallGlue::translate` also use/translate the live `AnimHost` `CollBody`.
+  - `Rider::place` (`Boarder_PlaceAt` 0x11cae8), `Rider::step`'s `place_ray` resolution, and `Tube::apply`
+    (`props.rs`) now re-pose `AnimHost`'s `CollBody` immediately after any respawn or lap teleport so the first
+    post-respawn `AirMotion_Update` / `WipeoutMotion_Enter` never reads a stale pre-respawn `CollBody`.
+  - `TRICKY_SIM` (`src/main.rs` -> `race::self_test`) now attaches live `AnimHost` when `TRICKY_DISC` is set (disable
+    with `TRICKY_NOANIM=1`). All eleven courses, both AIs (`TRICKY_SIM=600`, `TRICKY_OLDAI=1` and ported AI, 22/22
+    runs) report `0` non-respawn moves > 3 m.
+- **Verified (`tests/wipeout_upside_down.rs`, `tests/landing_game.rs`)**:
+  - `Boarder_UpdatePose` 0x129628 + `Boarder_UpdateSkeleton` 0x12ae18 + `CollBody_UpdateFromBones` 0x2361b0 match
+    `SLUS_203.26` bit-for-bit in `r5900::Runner` for motion 5 / state `0x13` at `up = unit(-0.08, -0.16, -0.98)` on
+    real disc clips `0x2e4`, `0x2eb`, `0x2df`.
+  - Upside-down head-first and `flip = π` landings on `alaska` enter `WipeoutMotion` immediately on the crash tick,
+    play head-impact clips (`0x2e4`/`0x2eb`), keep `Rider::att` and `CollBody` synced, and stay well under `0.75 m`
+    per tick across the initial `Ragdoll_Contacts` push and tumble (no 3.1 m jolt).
+
 ## Names from F1c batch 30 (proven)
 
 - `Ragdoll_OnContact` 0x10ebc8: empty. `Ragdoll_Contacts` calls it at 0x10eb4c for each contact with the ragdoll

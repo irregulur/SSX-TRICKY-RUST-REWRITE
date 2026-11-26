@@ -724,7 +724,7 @@ impl Rider {
             up: self.up,
             normal: ground_tick::game_dir(self.normal),
             height: self.body_height,
-            side: o.side,
+            side: self.wipe.as_ref().map_or(o.side, |w| w.probe_side()),
             lean: self.lean[0],
             scale: self.stats.scale,
             spin: self.spin,
@@ -910,6 +910,15 @@ impl Rider {
         }
         self.reset_flag = 0;
         self.respawns += 1;
+        // `Boarder_PlaceAt` 0x11cae8 updates the posed skeleton & `CollBody` at the new spawn so the first
+        // post-respawn `AirMotion_Update` / `WipeoutMotion_Enter` never reads the stale pre-respawn `CollBody`.
+        if let Some(a) = self.anim.clone() {
+            let inp = self.anim_inputs();
+            a.sync_rider(&inp);
+            a.update_layers(0.0, &mut crate::rand::rand_game);
+            let pin = self.pose_update_in();
+            a.update_pose(&pin);
+        }
     }
     pub fn clear_air(&mut self) {
         self.end_spin();
@@ -1048,13 +1057,18 @@ impl Rider {
         self.wipe = None;
         self.recover = None;
         self.rail = None;
-        self.set_motion(5);
+        // `Boarder_Wipeout` 0x11d830 order: `Boarder_SetState(0x13)` first (`SpinControl_Exit` 0x1029d0 folds any
+        // remaining spin/flip into `att` and adjusts `pos`), then `Boarder_SetMotion(5)` -> `WipeoutMotion_Enter`
+        // 0x10c198 (`Ragdoll_InitFromBoarder` 0x10dad8 on the live `CollBody` + `Wipeout_PlayImpactClip` 0x10f9a0)
+        // immediately on the crash tick before `cPostAI::vf1` 0x114730 runs `Boarder_UpdatePose`.
         self.set_control(control_tick::WIPEOUT);
+        self.set_motion(5);
         self.charge = 0.0;
         self.jump_c = 0.0;
         self.jump_delay = 0.0;
         self.uber = 0.0;
         self.grab = 0;
+        self.wipe = Some(self.wipe_enter());
     }
     /// `Boarder_Stumble` 0x124dd0: a knock that does not put you down (state 2): a moment off balance.
     pub fn stumble_by(&mut self, meter: bool) {
@@ -1619,6 +1633,10 @@ impl Rider {
                 self.up = ground_tick::placed_normal(Some(n));
                 self.normal = ground_tick::port_dir(self.up);
                 self.att = Some((orient::placed_attitude(heading, Some(n)), self.yaw));
+            }
+            if let Some(a) = self.anim.clone() {
+                let pin = self.pose_update_in();
+                a.update_pose(&pin);
             }
         }
         // Reconcile `motion` (+0x424) with any direct host/test mutation of `reset`, `crashed`, `rail`, `grounded`
@@ -2193,7 +2211,7 @@ impl Rider {
             pos: ground_tick::to_game(self.pos, 100.0, 1.0),
             up: self.up,
             height: self.body_height,
-            side: o.side,
+            side: self.wipe.as_ref().map_or(o.side, |w| w.probe_side()),
             lean: self.lean[0],
             lean_scale: self.stats.scale,
             spin: self.spin,
@@ -2599,7 +2617,8 @@ impl Rider {
     /// to [`Self::air_wall_hit_up`] with the pre-RK4 board up (`rider+0x4ac0`), and leaves the live body's mask at `-1`.
     fn air_wall(&mut self, world: &CollisionWorld, body: Option<crate::collbody::CollBody>, fwd: [f32; 4], up: [f32; 4]) {
         let mut body = body.or_else(|| self.anim.as_ref().and_then(|a| a.pose_snapshot()).map(|s| s.coll_body)).unwrap_or_else(|| {
-            ground_tick::bind_body_at(ground_tick::to_game(self.pos, 100.0, 1.0), fwd, up, self.stats.scale)
+            let f0 = self.board_frame();
+            ground_tick::bind_body_at(f0[3], fwd, up, self.stats.scale)
         });
         body.x24 = 0xcf;
         let hit = match &world.course {

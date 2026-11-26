@@ -527,7 +527,31 @@ fn main() {
     }
     if let Ok(secs) = std::env::var("TRICKY_SIM") {
         let (race_lines, course_no) = race_lines_of(&loaded.level);
-        rider::self_test(&mut loaded.world, &loaded.rails, &loaded.line, &loaded.course, race_lines.as_ref(), course_no, &loaded.paths, &tricky_game::aiglue::paths_of(&loaded.level.ai), loaded.tube.as_ref(), loaded.yaw, secs.parse().unwrap_or(300.0));
+        // Attach live `AnimHost` (`Boarder_UpdatePose` 0x129628 + `CollBody_UpdateFromBones` 0x2361b0, row E7c3j)
+        // when `TRICKY_DISC` is set unless `TRICKY_NOANIM` asks for the bind-pose fallback.
+        let anim = if std::env::var("TRICKY_NOANIM").is_err() {
+            std::env::var("TRICKY_DISC").ok().and_then(|p| {
+                let mut raw = tricky_data::disc::Disc::open(&p).ok()?;
+                let elf = raw.read_path("/SLUS_203.26").ok()??;
+                let mut files = tricky_data::big::Files::new(raw);
+                files.mount_game_archives().ok()?;
+                let body = tricky_data::character::CharModel::rider_from_disc(&mut files, "eddie").ok()?;
+                let board = tricky_data::character::CharModel::board_from_disc(&mut files, Some("Bx")).ok()?;
+                let body_bones = body.slot_raw_bones(0);
+                let board_bones = board.slot_raw_bones(1);
+                if body_bones.is_empty() || board_bones.is_empty() { return None; }
+                let roster = [tricky_game::animhost::RosterEntry { character: 0, board_class: 0, load_uber: true }];
+                let mut host = tricky_game::animhost::AnimHost::from_disc(&elf, &mut files, &roster).ok()?;
+                let slot = host.add_rider(0, 0, 1.0, &[(0, &body_bones), (1, &board_bones)]);
+                if !board.ik_points.is_empty() {
+                    host.set_board_ik_points(slot, &board.ik_points);
+                }
+                Some(tricky_game::animhost::RiderAnim::new(std::sync::Arc::new(std::sync::Mutex::new(host)), slot))
+            })
+        } else {
+            None
+        };
+        rider::self_test(&mut loaded.world, &loaded.rails, &loaded.line, &loaded.course, race_lines.as_ref(), course_no, &loaded.paths, &tricky_game::aiglue::paths_of(&loaded.level.ai), loaded.tube.as_ref(), loaded.yaw, secs.parse().unwrap_or(300.0), anim);
         return;
     }
     // TRICKY_CAM=x,y,z,yaw,pitch flies; x,y,z,tx,ty,tz is a fixed camera while the race runs (chase_camera)
