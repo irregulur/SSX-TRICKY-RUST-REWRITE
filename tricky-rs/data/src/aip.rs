@@ -33,6 +33,9 @@ pub struct AipEvent {
 #[derive(Clone, Debug, PartialEq)]
 pub struct AipPath {
     pub params: Vec<(u32, Vec<u8>)>,
+    /// Each parameter's first word as the game takes it (`Mem_Copy4` 0x198738 / `Float_Assign` 0x198750 from the
+    /// parameter's data): 4 bytes even when the parameter is shorter, so the bytes after it.
+    pub param_words: Vec<u32>,
     pub start: [f32; 3],
     pub v1: [f32; 3],
     pub v2: [f32; 3],
@@ -41,9 +44,11 @@ pub struct AipPath {
 }
 
 impl AipPath {
-    /// A parameter's first word, if the path has it.
+    /// A parameter's first word, if the path has it: the last one with that id, as each one is written over the
+    /// one before (`cAIPath::vf3` 0x196718, `cEventPath::vf3` 0x196998, called for each in order by
+    /// `AIPath_Load` 0x196f28)
     pub fn param(&self, id: u32) -> Option<u32> {
-        self.params.iter().find(|p| p.0 == id).and_then(|p| p.1.get(..4)).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        self.params.iter().zip(&self.param_words).rev().find(|(p, _)| p.0 == id).map(|(_, w)| *w)
     }
     /// `cAIPath`'s preference (+0x38): parameter 100, else 50.
     pub fn u3(&self) -> u32 {
@@ -99,9 +104,12 @@ impl Rd<'_> {
 fn path(r: &mut Rd) -> Result<AipPath, AipError> {
     let n = r.u32()? as i32;
     let mut params = Vec::new();
+    let mut param_words = Vec::new();
     for _ in 0..n.max(0) {
         let id = r.u32()?;
         let size = r.u32()? as usize;
+        let w: Vec<u8> = (0..4).map(|k| r.b.get(r.at + k).copied().unwrap_or(0)).collect();
+        param_words.push(u32::from_le_bytes([w[0], w[1], w[2], w[3]]));
         params.push((id, r.bytes(size)?));
     }
     let points = r.u32()? as i32;
@@ -109,7 +117,7 @@ fn path(r: &mut Rd) -> Result<AipPath, AipError> {
     let start = r.v3()?;
     let v1 = r.v3()?;
     let v2 = r.v3()?;
-    let mut p = AipPath { params, start, v1, v2, points: Vec::new(), events: Vec::new() };
+    let mut p = AipPath { params, param_words, start, v1, v2, points: Vec::new(), events: Vec::new() };
     for _ in 0..points.max(0) {
         p.points.push((r.v3()?, r.f32()?));
     }
@@ -131,12 +139,21 @@ pub fn read(b: &[u8]) -> Result<Aip, AipError> {
         let size = r.u32()? as usize;
         let end = r.at + size;
         match kind {
+            // a second section of a kind replaces the first's paths (the set's count and pointer written again);
+            // its start positions are written over the first's from the start, any further ones staying (as
+            // indices here; in the game they then point into the first section's paths)
             0 => {
                 let n = r.u32()? as i32;
                 let starts = r.u32()? as i32;
-                for _ in 0..starts.max(0) {
-                    out.start_positions.push(r.u32()?);
+                for k in 0..starts.max(0) as usize {
+                    let v = r.u32()?;
+                    if k < out.start_positions.len() {
+                        out.start_positions[k] = v;
+                    } else {
+                        out.start_positions.push(v);
+                    }
                 }
+                out.ai_paths.clear();
                 for _ in 0..n.max(0) {
                     out.ai_paths.push(path(&mut r)?);
                 }
@@ -144,6 +161,7 @@ pub fn read(b: &[u8]) -> Result<Aip, AipError> {
             1 => {
                 let n = r.u32()? as i32;
                 out.main_event_path = r.u32()?;
+                out.event_paths.clear();
                 for _ in 0..n.max(0) {
                     out.event_paths.push(path(&mut r)?);
                 }

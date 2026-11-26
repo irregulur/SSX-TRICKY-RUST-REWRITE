@@ -1466,3 +1466,29 @@ random values; 1,952 domain/singularity errors), checking both raw bits and `err
   43 cases skipped where the original never returns (a broken free list) and ours is not run.
   38 mutants: 36 killed; 2 equivalent (`EAMem_DestroyAll`'s `!= 0` on the repeated record only stops writing 0
   over 0, and comparing j < i too finds nothing, since slot j's own pass already cleared those).
+
+## The `.aip` / `.sop` loaders on random files (row E2o; `tricky_data::aip`, `game/tests/aip_random.rs`, proven)
+
+- `AIP_LoadAIPaths` 0x198518(set, data): count → set+0; `EAMem_Alloc("…", count × 0x40)` filled with 0xdeadc0ed,
+  each record's +0x34 = `cAIPath` vtable 0x38abd8, the array → set+4; then the start positions (count, then
+  indices) stored as addresses at set+0x14 + 4k, **with no limit**: the seventh lands on set+0x2c, the loaded
+  file's pointer (real files have six). Then `AIPath_Load` on each. `AIP_LoadEventPaths` 0x1983d0: count →
+  set+8, 0x3c-byte records filled likewise (`cEventPath` vtable 0x38ac10) → set+0xc, set+0x10 = the array + main index × 0x3c
+  (any index, unchecked). Both return the bytes read; `AIP_LoadPathsFromFile` ignores that and steps by each
+  section's size (a section that reads past its size has the next section's header read from inside it).
+- A second section of a kind loads again over the set's count and pointer (ours replaces the paths; start
+  positions are written over from the first, further old ones staying, which ours keeps as indices; repeated
+  AI-path sections are not in the test).
+- `AIPath_Load` 0x196f28: the class's vf2 (defaults: `cAIPath` 0x196700 +0x38 = 50, +0x3c = 1; `cEventPath`
+  0x196990 +0x38 = 0), then for each parameter the class's vf3 (`cAIPath` 0x196718: id 100 → +0x38, 101 → +0x3c;
+  `cEventPath` 0x196998: id 0 → +0x38), each copying the 4 bytes at the parameter's data **whatever its size** (so
+  a shorter parameter gives the bytes after it) and a later one of the same id overwriting the earlier. Fixed in
+  `tricky_data::aip`: `AipPath::param` now gives the last one's word, kept in `param_words` (it gave the first,
+  and nothing for one shorter than 4 bytes).
+- `AIPath_LoadPoint` 0x197130 copies a point onto itself; `AIPath_LoadEvent` 0x197170 rewrites the type in place as
+  its place in the table at 0x337e70 (the first match; 0 when not found, the same as −1).
+- Negative counts: the game stores them (a path's +0 / +8, the set's counts) and loads nothing; ours keeps no count,
+  so they are not in the test.
+- Checked in the runner: 3,000 random files (11,694 paths, 19,060 events, 2,665 paths with a repeated parameter,
+  6,619 parameters shorter than a word, sections cut short, unknown kinds, main indices anywhere): the set and every
+  record compared. 10 mutants of `tricky_data::aip`, all killed.
