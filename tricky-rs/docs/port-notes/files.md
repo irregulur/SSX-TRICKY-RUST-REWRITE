@@ -1389,3 +1389,37 @@ every byte and every answer equal. 38 hand mutants: 24 killed, the 12 of the fir
 above) and 2 equivalent (`strncpy` stopping at the 0 only while some `n` is left: the next step stops anyway;
 `strnicmp` looping while `left > 0` instead of `!= -1`: the loop's own `left == 0` test stops it at the same
 place).
+
+## The C library's float functions (row E2m; `game/src/libc.rs`, `tests/libc.rs`, proven)
+
+- The game's `fmodf` 0x2f2908 (`__ieee754_fmodf` 0x2f2b90), `logf` 0x2f2a48 (`__ieee754_logf` 0x2f2de0) and
+  `isnanf` 0x2f4200 are newlib fdlibm compiled for the EE FPU (`ps2f::F`: no NaNs, infinities or denormals), with
+  `_LIB_VERSION` (0x3b9f98) = `1` (`_XOPEN_`) and the default `matherr` 0x2f40d0 (calls `__cmpdf2` 0x2f64b0 on
+  `exc.arg1` and returns `0`), writing `errno` = `0x21` (`EDOM`) via `__getreent` 0x2fa4e0 (`_impure_ptr`
+  0x35e9ec -> 0x35e700; no game function reads `errno`).
+- `isnanf` 0x2f4200 reads the raw 32-bit pattern via `mfc1` (`|x| > 0x7f80_0000`), bypassing the EE FPU.
+- `__ieee754_fmodf` 0x2f2b90 is pure integer bit arithmetic for finite `x` and `y != 0` (including subnormal
+  inputs and subnormal remainders); for `y == 0`, `|x| >= inf` or `|y| > inf` it evaluates `(x * y) / (x * y)` on
+  the EE FPU (`+f32::MAX` `0x7f7f_ffff` when `x * y` flushes to 0, `1.0` otherwise).
+- `fmodf` 0x2f2908 calls `__ieee754_fmodf`, then checks `!isnanf(y) && !isnanf(x)` and `c.eq.s y, 0.0` — on the
+  EE FPU `load(y) == 0.0` is true for both `±0.0` **and every subnormal `y`**, taking the domain-error path
+  (`errno = 0x21`) and returning `__truncdfsf2(0x7ff8_0000_0000_0000)` = `0x7fb0_0000` (not `0x7fc0_0000`: GCC's
+  `fp-bit` `__unpack_d` 0x2f5be8 shifts bit 51 to bit 21 and `__pack_f` 0x2f6f08 ORs quiet bit `0x0010_0000`).
+- `__ieee754_logf` 0x2f2de0 returns `-inf` (`0xff80_0000`) for `±0.0`, `(x - x) / 0.0` (`+f32::MAX`) for negative
+  bit patterns (including negative NaNs), multiplies positive subnormals by `2^25` (`0x4c00_0000`, which flushes
+  to `0.0` on the EE FPU, yielding `(-152) * LN2_HI + (-152) * LN2_LO`), returns `x + x` (`+f32::MAX`) for
+  `+inf` / positive NaNs, and otherwise evaluates newlib's degree-7 rational polynomial (`LN2_HI` `0x3f31_7180`,
+  `LN2_LO` `0x3717_f7d1`, `Lg1..Lg7` `0x3f2a_aaab`..`0x3e17_8897`) in `ps2f::F`.
+- `logf` 0x2f2a48 calls `__ieee754_logf`, then checks `!isnanf(x)` and `c.lt.s 0.0, x`: when false on the EE FPU
+  (`x <= 0.0`, `-inf`, or any subnormal `x`), sets `errno = 0x21` and returns `__truncdfsf2(__subdf3(0.0, +inf))`
+  = `-inf` (`0xff80_0000`).
+- `musicsong::ms_to_next_beat` (`Song_MsToNextBeat` 0x224918, `fmodf`'s sole caller in `SLUS_203.26`) and
+  `texman::calc_lod_params` (`TexMan_CalcLodParams` 0x1c0da8, `logf`'s sole caller) now call `libc::fmodf` and
+  `libc::logf` directly; `musichost.rs` drops its `FMODF` stand-in, and `tests/musicsong.rs`, `tests/musicsys.rs`
+  and `tests/texman.rs` run the original `fmodf` / `logf` unstubbed.
+
+Checked in the runner (`tests/libc.rs`, `tests/musicsong.rs`, `tests/musicsys.rs`, `tests/texman.rs`): 21,225 `fmodf` / `__ieee754_fmodf`
+pairs (all 35 × 35 edge pairs + 20,000 random pairs across normal, subnormal, multiple, huge-gap and song-ms
+ranges; 1,511 domain errors, 1,453 subnormal remainders) and 34,513 `logf` / `__ieee754_logf` values (all edges,
+every exponent's `±20`-ULP power-of-two window and `0x30a3d0`/`0x3504e0`/`0x35c288` branch boundaries + 20,000
+random values; 1,952 domain/singularity errors), checking both raw bits and `errno` (`0x35e700`): every bit equal.

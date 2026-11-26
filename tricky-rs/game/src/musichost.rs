@@ -263,9 +263,6 @@ impl SongEnv for HostEnv<'_> {
         }
     }
     fn call_f(&mut self, m: &mut Mem, target: u32, a: &[u32]) -> f32 {
-        if target == song::FMODF {
-            return f32::from_bits(a[0]) % f32::from_bits(a[1]);
-        }
         f32::from_bits(SongEnv::call(self, m, target, a))
     }
     fn call_out(&mut self, m: &mut Mem, target: u32, a: &[u32], words: usize) -> Vec<u32> {

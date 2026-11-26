@@ -92,16 +92,21 @@ impl Io for r5900::Mem {
     }
 }
 
-const STANDINS: [u32; 15] = [
-    tx::STRNCMP, tx::STRNCPY, tx::POOL_ALLOC, tx::ALLOC, tx::MEM_SET, tx::MEM_COPY, tx::PRINTF, tx::LOGF, tx::FREE, tx::TEX_SWIZZLE,
+const STANDINS: [u32; 14] = [
+    tx::STRNCMP, tx::STRNCPY, tx::POOL_ALLOC, tx::ALLOC, tx::MEM_SET, tx::MEM_COPY, tx::PRINTF, tx::FREE, tx::TEX_SWIZZLE,
     tx::FLUSH_CACHE, tx::DMA_SEND, tx::MEM_MOVE, tx::EAMEM_FREE, IDLE,
+];
+/// `logf` 0x2f2a48 and its runtime callees, allowed to run as the original alongside `libc::logf`
+const LOGF_FUNCS: [u32; 17] = [
+    tx::LOGF, 0x2f2de0, 0x2f4200, 0x2f40d0, 0x2f64b0, 0x2f6398, 0x2f7aa8, 0x2f7018, 0x2f6728, 0x2f5ab8, 0x2f5f20,
+    0x2f5c88, 0x2f6758, 0x2f5be8, 0x2f7a78, 0x2f6f08, 0x2fa4e0,
 ];
 /// The renderer's +0x78 (is the GS idle)
 const IDLE: u32 = 0x01ff_0078;
 
-/// A stand-in's work and answer (and, for `logf`, a float), and its log. `fails` makes the heaps answer 0;
+/// A stand-in's work and answer, and its log. `fails` makes the heaps answer 0;
 /// `taken` counts what they have handed out in this call.
-fn standin(io: &mut dyn Io, func: u32, w: &[u32], f: &[u32], fails: bool, taken: &Cell<u32>) -> (u32, Call) {
+fn standin(io: &mut dyn Io, func: u32, w: &[u32], _f: &[u32], fails: bool, taken: &Cell<u32>) -> (u32, Call) {
     let mut log = Vec::new();
     let answer = match func {
         tx::STRNCMP => {
@@ -178,14 +183,10 @@ fn standin(io: &mut dyn Io, func: u32, w: &[u32], f: &[u32], fails: bool, taken:
             log.push(w[0]);
             0
         }
-        tx::PRINTF | tx::FREE => {
+        _ => {
+            // PRINTF | FREE
             log.push(w[0]);
             0
-        }
-        _ => {
-            // logf
-            log.push(f[0]);
-            f32::from_bits(f[0]).ln().to_bits()
         }
     };
     log.push(answer);
@@ -217,7 +218,7 @@ fn wf(m: &mut Mem, at: u32, v: f32) {
 fn texture_manager_matches_the_original() {
     let Some(mut r) = Runner::from_env() else { return };
     let funcs = [0x1c0cd8u32, 0x1c0da8, 0x1c0e78, 0x1c0ef8, 0x1c17c0];
-    for f in funcs {
+    for f in funcs.into_iter().chain(LOGF_FUNCS) {
         r.allow(f);
     }
     let log: Rc<RefCell<Vec<Call>>> = Rc::default();
@@ -349,6 +350,9 @@ fn texture_manager_matches_the_original() {
 /// The runner with the stand-ins, their log and their switches
 fn runner() -> Option<(Runner, Rc<RefCell<Vec<Call>>>, Rc<Cell<bool>>, Rc<Cell<u32>>)> {
     let mut r = Runner::from_env()?;
+    for f in LOGF_FUNCS {
+        r.allow(f);
+    }
     let log: Rc<RefCell<Vec<Call>>> = Rc::default();
     let fails = Rc::new(Cell::new(false));
     let taken = Rc::new(Cell::new(0u32));

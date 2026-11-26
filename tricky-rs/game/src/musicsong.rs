@@ -342,12 +342,12 @@ pub fn bars_ms(m: &Mem, s: u32) -> f32 {
     (F(beat_ms(m, s)) * F(m.r32(s + 0x104) as i32 as f32) * F(m.r32(s + 0x108) as i32 as f32)).0
 }
 
-/// `Song_MsToNextBeat` 0x224918: a beat less the position's remainder by a beat (`fmodf`)
+/// `Song_MsToNextBeat` 0x224918: a beat less the position's remainder by a beat (`fmodf` 0x2f2908)
 pub fn ms_to_next_beat(m: &mut Mem, e: &mut dyn SongEnv, s: u32) -> f32 {
     let beat = beat_ms(m, s);
     let pos = play_pos_ms(m, e, s);
     let b = beat_ms(m, s);
-    let r = e.call_f(m, FMODF, &[pos.to_bits(), b.to_bits()]);
+    let r = crate::libc::fmodf(pos, b);
     (F(beat) - F(r)).0
 }
 

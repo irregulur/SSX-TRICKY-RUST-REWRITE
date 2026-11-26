@@ -183,3 +183,192 @@ fn the_c_library_matches_the_original() {
     println!("{equal} answers 0, {nonzero} not, {overlaps} copies onto their own source");
     assert!(equal > 5000 && nonzero > 5000 && overlaps > 300);
 }
+
+#[test]
+fn the_c_library_floats_match_the_original() {
+    let Some(mut r) = Runner::from_env() else { return };
+    const FMODF: u32 = 0x2f2908;
+    const LOGF: u32 = 0x2f2a48;
+    const IEEE754_FMODF: u32 = 0x2f2b90;
+    const IEEE754_LOGF: u32 = 0x2f2de0;
+    const ISNANF: u32 = 0x2f4200;
+    const ERRNO_PTR: u32 = 0x35e9ec;
+    for f in [
+        FMODF, LOGF, IEEE754_FMODF, IEEE754_LOGF, ISNANF, 0x2f40d0, 0x2f64b0, 0x2f6398, 0x2f7aa8, 0x2f7018, 0x2f6728,
+        0x2f5ab8, 0x2f5f20, 0x2f5c88, 0x2f6758, 0x2f5be8, 0x2f7a78, 0x2f6f08, 0x2fa4e0,
+    ] {
+        r.allow(f);
+    }
+    let reent = r.mem.read_u32(ERRNO_PTR);
+    assert_ne!(reent, 0, "_impure_ptr must point to _reent");
+
+    // Exhaustive special values: +/-0, subnormals, min/max normals, powers of two, +/-inf, quiet & signaling NaNs.
+    const EDGES: &[u32] = &[
+        0x0000_0000, 0x8000_0000, // +0, -0
+        0x0000_0001, 0x0000_0002, 0x0040_0000, 0x007f_ffff, // +subnormals
+        0x8000_0001, 0x8040_0000, 0x807f_ffff, // -subnormals
+        0x0080_0000, 0x8080_0000, // +/-MIN_POSITIVE
+        0x3e80_0000, 0x3f00_0000, 0x3f35_04f3, 0x3f80_0000, 0x3f80_0001, 0x3f7f_ffff, // near 0.25, 0.5, sqrt(0.5), 1
+        0x3fb5_04f3, 0x4000_0000, 0x4049_0fdb, 0x42c8_0000, 0x4f00_0000, // sqrt(2), 2, pi, 100, 2^31
+        0xbf80_0000, 0xc000_0000, // -1, -2
+        0x7f7f_ffff, 0xff7f_ffff, // +/-MAX
+        0x7f80_0000, 0xff80_0000, // +/-inf
+        0x7f80_0001, 0x7fb0_0000, 0x7fc0_0000, 0x7fff_ffff, // +NaNs
+        0xff80_0001, 0xffc0_0000, 0xffff_ffff, // -NaNs
+    ];
+
+    let mut g = Rng(0xe2e0_0000_0000_0001);
+
+    // 1. isnanf 0x2f4200
+    for &b in EDGES {
+        r.cpu.fpr[12] = b;
+        r.call(ISNANF).unwrap();
+        assert_eq!(r.cpu.gpr(2) != 0, libc::isnanf(f32::from_bits(b)), "isnanf({b:#010x})");
+    }
+
+    // 2. __ieee754_fmodf 0x2f2b90 and fmodf 0x2f2908: all edge pairs + 20,000 random pairs
+    let mut fmod_pairs: Vec<(u32, u32)> = Vec::with_capacity(EDGES.len() * EDGES.len() + 20_000);
+    for &x in EDGES {
+        for &y in EDGES {
+            fmod_pairs.push((x, y));
+        }
+    }
+    for _ in 0..20_000 {
+        let pair = match g.below(8) {
+            // arbitrary bit patterns
+            0 => (g.next(), g.next()),
+            // finite normals of similar scale
+            1 | 2 => {
+                let ey = 1 + g.below(254);
+                let ex = (ey + g.below(20)).min(254);
+                let x = ((g.next() & 0x807f_ffff) | (ex << 23)) as u32;
+                let y = ((g.next() & 0x807f_ffff) | (ey << 23)) as u32;
+                (x, y)
+            }
+            // exact integer multiple of y (hits hz == 0 branch)
+            3 => {
+                let ey = 1 + g.below(200);
+                let y = f32::from_bits((g.next() & 0x807f_ffff) | (ey << 23));
+                let mult = (1 + g.below(64)) as f32 * if g.below(2) == 0 { 1.0 } else { -1.0 };
+                ((y * mult).to_bits(), y.to_bits())
+            }
+            // subnormal x or y, or remainder underflowing into subnormal
+            4 => {
+                let x = (g.next() & 0x80ff_ffff) as u32;
+                let y = (g.next() & 0x80ff_ffff) as u32;
+                (x, y)
+            }
+            // huge exponent gap (exercises long-division loop heavily)
+            5 => {
+                let x = (g.next() & 0x807f_ffff) | ((200 + g.below(55)) << 23);
+                let y = (g.next() & 0x807f_ffff) | ((1 + g.below(30)) << 23);
+                (x, y)
+            }
+            // |x| == |y| or |x| slightly above |y|
+            6 => {
+                let y = (g.next() & 0x807f_ffff) | ((1 + g.below(254)) << 23);
+                let delta = g.below(4);
+                let x = (y & 0x7fff_ffff).saturating_add(delta) | (g.next() & 0x8000_0000);
+                (x, y)
+            }
+            // realistic song ms / beat ms values
+            _ => {
+                let beat = (100.0 + (g.below(10_000) as f32) * 0.1).to_bits();
+                let pos = ((g.below(600_000) as f32) * 0.5).to_bits();
+                (pos, beat)
+            }
+        };
+        fmod_pairs.push(pair);
+    }
+
+    let (mut fmod_dom, mut fmod_sub_rem) = (0u32, 0u32);
+    for (idx, &(xb, yb)) in fmod_pairs.iter().enumerate() {
+        let (x, y) = (f32::from_bits(xb), f32::from_bits(yb));
+        // __ieee754_fmodf
+        r.cpu.fpr[12] = xb;
+        r.cpu.fpr[13] = yb;
+        r.call(IEEE754_FMODF).unwrap_or_else(|e| panic!("ieee754_fmodf[{idx}] ({xb:#010x}, {yb:#010x}): {e}"));
+        let ours_raw = libc::ieee754_fmodf(x, y).to_bits();
+        assert_eq!(r.cpu.fpr[0], ours_raw, "ieee754_fmodf[{idx}] ({xb:#010x}, {yb:#010x}): theirs {:#010x} ours {ours_raw:#010x}", r.cpu.fpr[0]);
+
+        // fmodf wrapper + errno check
+        r.mem.write_u32(reent, 0);
+        r.cpu.fpr[12] = xb;
+        r.cpu.fpr[13] = yb;
+        r.call(FMODF).unwrap_or_else(|e| panic!("fmodf[{idx}] ({xb:#010x}, {yb:#010x}): {e}"));
+        let ours = libc::fmodf(x, y).to_bits();
+        assert_eq!(r.cpu.fpr[0], ours, "fmodf[{idx}] ({xb:#010x}, {yb:#010x}): theirs {:#010x} ours {ours:#010x}", r.cpu.fpr[0]);
+        let expect_dom = !libc::isnanf(x) && !libc::isnanf(y) && tricky_game::ps2f::F(y).ee() == 0.0;
+        let got_errno = r.mem.read_u32(reent);
+        assert_eq!(got_errno, if expect_dom { 0x21 } else { 0 }, "fmodf[{idx}] ({xb:#010x}, {yb:#010x}) errno");
+        fmod_dom += expect_dom as u32;
+        fmod_sub_rem += ((ours & 0x7fff_ffff) != 0 && (ours & 0x7f80_0000) == 0) as u32;
+    }
+
+    // 3. __ieee754_logf 0x2f2de0 and logf 0x2f2a48: edges + power-of-two / threshold boundaries + 20,000 random
+    let mut log_vals: Vec<u32> = EDGES.to_vec();
+    for exp in 1u32..255 {
+        let base = exp << 23;
+        // exact powers of two and +/- 1..20 ulps (hits the (ix + 0xf) & 0x7fffff < 0x10 near-1 fast path)
+        for d in 0u32..=20 {
+            log_vals.push(base.wrapping_add(d));
+            if base > d {
+                log_vals.push(base.wrapping_sub(d));
+            }
+        }
+        // threshold boundaries for i wrap (0x3504e0) and v1 (0x30a3d0, 0x35c288)
+        for center in [0x0030_a3d0u32, 0x0035_04e0, 0x0035_c288] {
+            for d in -2i32..=2 {
+                log_vals.push(base | center.wrapping_add_signed(d));
+            }
+        }
+    }
+    for _ in 0..20_000 {
+        let b = match g.below(5) {
+            0 => g.next(),
+            1 | 2 => (1 + g.below(254)) << 23 | (g.next() & 0x007f_ffff),
+            3 => 0x3f80_0000u32.wrapping_add_signed((g.below(65) as i32) - 32),
+            _ => ((1 + g.below(254)) << 23) | (0x0030_a300 + g.below(0x0005_2100)),
+        };
+        log_vals.push(b);
+    }
+
+    let (mut log_dom, mut log_fast_zero, mut log_fast_nz, mut log_hfsq, mut log_nohfsq) = (0u32, 0u32, 0u32, 0u32, 0u32);
+    for (idx, &xb) in log_vals.iter().enumerate() {
+        let x = f32::from_bits(xb);
+        // __ieee754_logf
+        r.cpu.fpr[12] = xb;
+        r.call(IEEE754_LOGF).unwrap_or_else(|e| panic!("ieee754_logf[{idx}] ({xb:#010x}): {e}"));
+        let ours_raw = libc::ieee754_logf(x).to_bits();
+        assert_eq!(r.cpu.fpr[0], ours_raw, "ieee754_logf[{idx}] ({xb:#010x}): theirs {:#010x} ours {ours_raw:#010x}", r.cpu.fpr[0]);
+
+        // logf wrapper + errno check
+        r.mem.write_u32(reent, 0);
+        r.cpu.fpr[12] = xb;
+        r.call(LOGF).unwrap_or_else(|e| panic!("logf[{idx}] ({xb:#010x}): {e}"));
+        let ours = libc::logf(x).to_bits();
+        assert_eq!(r.cpu.fpr[0], ours, "logf[{idx}] ({xb:#010x}): theirs {:#010x} ours {ours:#010x}", r.cpu.fpr[0]);
+        let expect_dom = !libc::isnanf(x) && !(0.0 < tricky_game::ps2f::F(x).ee());
+        let got_errno = r.mem.read_u32(reent);
+        assert_eq!(got_errno, if expect_dom { 0x21 } else { 0 }, "logf[{idx}] ({xb:#010x}) errno");
+        log_dom += expect_dom as u32;
+        if (xb as i32) >= 0x0080_0000 && (xb as i32) < 0x7f80_0000 {
+            let ix = (xb & 0x007f_ffff) as i32;
+            if (ix.wrapping_add(0x0f) & 0x007f_ffff) < 0x10 {
+                if ix == 0 { log_fast_zero += 1; } else { log_fast_nz += 1; }
+            } else if (ix.wrapping_sub(0x0030_a3d0) | 0x0035_c288i32.wrapping_sub(ix)) > 0 {
+                log_hfsq += 1;
+            } else {
+                log_nohfsq += 1;
+            }
+        }
+    }
+
+    println!(
+        "fmodf: {} pairs ({fmod_dom} domain, {fmod_sub_rem} subnormal rem); logf: {} values ({log_dom} domain/sing, {log_fast_zero} exact pow2, {log_fast_nz} near pow2, {log_hfsq} hfsq, {log_nohfsq} non-hfsq)",
+        fmod_pairs.len(),
+        log_vals.len(),
+    );
+    assert!(fmod_dom > 50 && fmod_sub_rem > 50);
+    assert!(log_dom > 500 && log_fast_zero > 200 && log_fast_nz > 500 && log_hfsq > 500 && log_nohfsq > 500);
+}

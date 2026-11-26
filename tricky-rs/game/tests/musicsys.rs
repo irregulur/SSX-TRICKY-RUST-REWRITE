@@ -71,7 +71,6 @@ impl Answers {
             song::ALLOC => [0u32, ARENA + 0xe000][g.below(2) as usize],
             song::INI_FIND_SECTION => 0,
             song::PF_SLOT_OF => g.below(4),
-            song::FMODF => FLOATS[g.below(FLOATS.len() as u32) as usize].to_bits(),
             song::SND_HANDLE_STATE => g.below(3),
             PICK_VARIANT => g.below(3),
             V_24 => g.below(8),
@@ -129,7 +128,7 @@ const LEAVES: &[(u32, usize, bool)] = &[
     (song::PF_SET_LATENCY, 2, false), (song::PF_SLOT_OF, 1, false), (song::PF_SET_VARIABLE, 2, false), (song::PF_POST_EVENT, 3, false),
     (song::PF_STOP_TRACKS, 1, false), (song::BANK_CANCEL, 2, false), (song::BANK_HANDLE, 2, false), (song::SND_LOCK, 0, false),
     (song::SND_UNLOCK, 0, false), (song::SND_HANDLE_STATE, 1, false), (song::STREAM_STATUS, 1, true), (song::HANDLE_STATE, 1, true),
-    (song::STREAM_SET_VOLUME, 2, false), (song::STREAM_FADE, 3, false), (song::STREAM_SET_PITCH, 2, false), (song::FMODF, 0, false),
+    (song::STREAM_SET_VOLUME, 2, false), (song::STREAM_FADE, 3, false), (song::STREAM_SET_PITCH, 2, false),
     (SCHEDULE, 8, false), (CANCEL, 2, false), (MEMSET, 3, false), (BANK_LOAD, 4, false), (PICK_VARIANT, 1, false),
     (RANDOM_SEGMENT, 3, false), (INI_CLOSE, 2, false), (STREAM_SYS_DTOR, 2, false), (V_74, 2, false), (V_24, 1, false),
     (V_RAND, 1, false), (REPLAY_IS_PLAYING, 1, false), (LISTENER_RIDER, 2, false),
@@ -162,7 +161,6 @@ fn music_system_matches_the_original() {
             let mut v: Vec<u32> = (0..n).map(|k| c.gpr(reg(k)) as u32).collect();
             match f {
                 song::PF_LOAD_SONG => v.push(mem.read_u32(c.gpr(29) as u32)),
-                song::FMODF => v = vec![c.f(12).to_bits(), c.f(13).to_bits()],
                 SCHEDULE => {
                     let d = c.gpr(6);
                     v = vec![c.gpr(4) as u32, c.gpr(5) as u32, d as u32, (d >> 32) as u32, c.gpr(7) as u32, c.gpr(8) as u32, c.gpr(9) as u32, c.gpr(10) as u32, c.gpr(11) as u32];
@@ -188,7 +186,9 @@ fn music_system_matches_the_original() {
         });
     }
     for f in [
-        song::STRICMP, 0x223ca8, 0x223d60, 0x224368, 0x2243e8, 0x224420, 0x224458, 0x224470, 0x224488, 0x224490, 0x224498,
+        song::STRICMP, song::FMODF, 0x2f2b90, 0x2f4200, 0x2f40d0, 0x2f64b0, 0x2f6398, 0x2f7aa8, 0x2f7018, 0x2f6728,
+        0x2f5ab8, 0x2f6758, 0x2f5be8, 0x2f7a78, 0x2f6f08, 0x2fa4e0, 0x223ca8, 0x223d60, 0x224368, 0x2243e8, 0x224420,
+        0x224458, 0x224470, 0x224488, 0x224490, 0x224498,
         0x2245b8, 0x224620, 0x224790, 0x2247c0, 0x2247f8, 0x224898, 0x224918, 0x224978, 0x225090, 0x225260, 0x225280,
         0x225318, 0x225448, 0x225660, 0x2256c0, 0x225768, 0x2257d8, 0x225878, 0x225948, 0x225ca8, 0x225e40, 0x224a50,
         0x21c6c0, 0x2246a8, 0x224658, 0x21c610, 0x225c40, 0x20c948, 0x20c680, 0x21c0a0, 0x21c348, 0x21c370,

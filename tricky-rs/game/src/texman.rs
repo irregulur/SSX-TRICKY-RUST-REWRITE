@@ -79,7 +79,7 @@ pub fn init(m: &mut Mem, env: &mut dyn TextBoxEnv, tm: u32) {
 /// `TexMan_CalcLodParams` 0x1c0da8(p): from the course's settings (the game +0x730, its +0x2c, while its +0x68
 /// is set): +0 0, +4 the shift (+0x70, or +0x78 with other than one player), +8 −16 × log2(the distance (+0x6c /
 /// +0x74)) × 2^shift as an integer. With no game, course or settings: 1, 0, 0.
-pub fn calc_lod_params(m: &mut Mem, env: &mut dyn TextBoxEnv, p: u32) {
+pub fn calc_lod_params(m: &mut Mem, _env: &mut dyn TextBoxEnv, p: u32) {
     let game = m.r32(m.r32(APP) + 0x730);
     let set = if game != 0 { m.r32(game + 0x2c) } else { 0 };
     if game == 0 || set == 0 || m.r32(set + 0x68) == 0 {
@@ -91,7 +91,7 @@ pub fn calc_lod_params(m: &mut Mem, env: &mut dyn TextBoxEnv, p: u32) {
     m.w32(p, 0);
     let (dist, shift) = if m.r32(game + 0x298) == 1 { (rf(m, set + 0x6c), m.r32(set + 0x70)) } else { (rf(m, set + 0x74), m.r32(set + 0x78)) };
     m.w32(p + 4, shift);
-    let ln = F(f32::from_bits(env.call(m, LOGF, &[], &[dist])));
+    let ln = F(crate::libc::logf(dist.0));
     let log2 = crate::animseq::div(ln, F(f32::from_bits(0x3f31_7218)));
     let scale = crate::animseq::cvt_s_w(1i32.wrapping_shl(m.r32(p + 4)));
     let v = -(log2 * scale) * F(16.0);

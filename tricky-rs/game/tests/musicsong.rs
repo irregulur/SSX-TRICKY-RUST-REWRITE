@@ -67,7 +67,6 @@ impl Answers {
             INI_READ_STRING | INI_READ_FLOAT | INI_READ_INT => g.below(2),
             PF_SLOT_OF => g.below(4),
             STREAM_STATUS | HANDLE_STATE | PF_PLAYING => g.next(),
-            FMODF => FLOATS[g.below(FLOATS.len() as u32) as usize].to_bits(),
             SND_HANDLE_STATE => g.below(3),
             _ => g.next(),
         }
@@ -140,7 +139,7 @@ const LEAVES: &[(u32, usize, bool)] = &[
     (LOAD_FILE, 3, false), (PF_REGISTER, 1, false), (PF_LOAD_SONG, 8, false), (PF_SET_LATENCY, 2, false), (PF_SLOT_OF, 1, false),
     (PF_PLAYING, 1, true), (PF_SET_VARIABLE, 2, false), (PF_POST_EVENT, 3, false), (PF_STOP_TRACKS, 1, false), (BANK_CANCEL, 2, false),
     (BANK_HANDLE, 2, false), (SND_LOCK, 0, false), (SND_UNLOCK, 0, false), (SND_HANDLE_STATE, 1, false), (STREAM_STATUS, 1, true),
-    (HANDLE_STATE, 1, true), (STREAM_SET_VOLUME, 2, false), (STREAM_FADE, 3, false), (STREAM_SET_PITCH, 2, false), (FMODF, 0, false),
+    (HANDLE_STATE, 1, true), (STREAM_SET_VOLUME, 2, false), (STREAM_FADE, 3, false), (STREAM_SET_PITCH, 2, false),
 ];
 
 const REGIONS: [(u32, u32); 4] = [(ARENA, 0x1_0000), (0x343050, 0x200), (0x39ff00, 0x200), (0, 0x400)];
@@ -168,9 +167,6 @@ fn song_objects_match_the_original() {
             let mut v: Vec<u32> = (0..n).map(|k| c.gpr(reg(k)) as u32).collect();
             if f == PF_LOAD_SONG {
                 v.push(mem.read_u32(c.gpr(29) as u32));
-            }
-            if f == FMODF {
-                v = vec![c.f(12).to_bits(), c.f(13).to_bits()];
             }
             a2.borrow_mut().log.push((f, v.clone()));
             let ans = a2.borrow_mut().answer(f);
@@ -200,8 +196,12 @@ fn song_objects_match_the_original() {
             c.set_f(0, f32::from_bits(ans));
         });
     }
-    // stricmp runs as the original; the song's own functions call each other
-    for f in [STRICMP, 0x223d60, 0x224620, 0x224790, 0x2247c0, 0x2247f8, 0x224898, 0x2248b8, 0x224840] {
+    // stricmp and fmodf run as the original; the song's own functions call each other
+    for f in [
+        STRICMP, FMODF, 0x2f2b90, 0x2f4200, 0x2f40d0, 0x2f64b0, 0x2f6398, 0x2f7aa8, 0x2f7018, 0x2f6728, 0x2f5ab8,
+        0x2f6758, 0x2f5be8, 0x2f7a78, 0x2f6f08, 0x2fa4e0, 0x223d60, 0x224620, 0x224790, 0x2247c0, 0x2247f8, 0x224898,
+        0x2248b8, 0x224840,
+    ] {
         r.allow(f);
     }
     // the stricmp log: the runner's calls to it are not stubbed, so the port's entries are dropped before comparing
