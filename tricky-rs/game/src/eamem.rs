@@ -6,6 +6,9 @@
 //!
 //! Its heaps (row E2j): `EAMem_InitHeap`, `EAMem_AllocEx` and its wrappers, `EAMem_Free`, `EAMem_Resize` and the
 //! helpers they share, below [`HEAPS`]; checked in the runner (`tests/eamem_heap.rs`).
+//!
+//! The rest (row E2n): making the main heap, destroying heaps, freeing a whole heap, the heap checks, and the
+//! compressor's two wrappers, below [`MAIN_HEAP_BASE`]; checked in the runner (`tests/eamem_rest.rs`).
 
 use crate::libc::strlen;
 use crate::pf::Mem;
@@ -538,4 +541,307 @@ pub fn resize(m: &mut Mem, p: u32, size: u32) -> u32 {
         m.w32(b + 8, f);
     }
     p
+}
+
+// ---- The rest of the library (row E2n) ----
+
+/// `gEAMem_MainHeapBase` 0x3bb97c (gp − 0x7f74): where the main heap starts (set by the first
+/// `EAMem_InitMainHeap`, or by `EAMem_InitDefaultHeap` to what it allocated; 0 after `EAMem_DestroyAll`)
+pub const MAIN_HEAP_BASE: u32 = 0x3bb97c;
+/// `gEAMem_AllocFlags` 0x3bb978 (gp − 0x7f78): the flags `Compress_Alloc` allocates with (also set for a while by
+/// the archives and the front end: `asyncbig::MEM_FLAGS`)
+pub const ALLOC_FLAGS: u32 = 0x3bb978;
+/// `gEAMem_AllocName` 0x3bb98c (gp − 0x7f64): the name `Compress_Alloc` gives its blocks
+pub const ALLOC_NAME: u32 = 0x3bb98c;
+/// `gEAMem_CheckError` 0x3bb9ac (gp − 0x7f44): why the last heap check failed (1 not a list block, 2 an end block
+/// without its end flag, 3 "BEND" missing, 4 an unknown tag, 5 a link not pointing back, 6 the free list not
+/// closing on the sentinel)
+pub const CHECK_ERROR: u32 = 0x3bb9ac;
+/// "RAM" (0x3bb9a8), the main heap's name
+pub const MAIN_HEAP_NAME: u32 = 0x3bb9a8;
+/// `EAMem_DestroyAll` 0x2cd8b0, the exit handler `EAMem_InitDefaultHeap` registers
+pub const DESTROY_ALL: u32 = 0x2cd8b0;
+/// The out-of-memory word the main heap keeps at +0x3c (0x2cd790, a function that answers 0)
+pub const MAIN_HEAP_WORD: u32 = 0x2cd790;
+
+/// `EAMem_Zero` 0x2cc938(p, n): `EAMem_Set` with 0
+pub fn zero(m: &mut Mem, p: u32, n: u32) {
+    set(m, p, 0, n);
+}
+
+/// `Compress_Alloc` 0x2cc958(size): `EAMem_Alloc` with the name at [`ALLOC_NAME`] and the flags at
+/// [`ALLOC_FLAGS`]
+pub fn compress_alloc(m: &mut Mem, size: u32, out_of_memory: &mut dyn FnMut(&mut Mem, u32, u32, u32, u32) -> u32) -> u32 {
+    let (name, flags) = (m.r32(ALLOC_NAME), m.r32(ALLOC_FLAGS));
+    alloc(m, name, size, flags, out_of_memory)
+}
+
+/// `Compress_Free` 0x2cc980(p): `EAMem_Free`
+pub fn compress_free(m: &mut Mem, p: u32) -> u32 {
+    free(m, p)
+}
+
+/// `EAMem_ClearHeapTable` 0x2cd250: the 16 heaps forgotten (their records left as they are)
+pub fn clear_heap_table(m: &mut Mem) {
+    set(m, HEAPS, 0, 0x40);
+}
+
+/// `EAMem_DestroyHeap` 0x2cd500(id): heap `id & 0xf`'s lock destroyed (`RecMutex_Destroy` 0x2cf4b0, our host's:
+/// `destroy_lock` gets its handle), its record zeroed, its table entry cleared. 0 when there was no heap, else 1.
+/// The blocks are left as they are.
+pub fn destroy_heap(m: &mut Mem, id: u32, destroy_lock: &mut dyn FnMut(u32)) -> u32 {
+    let slot = HEAPS + 4 * (id & 0xf);
+    let h = m.r32(slot);
+    if h == 0 {
+        return 0;
+    }
+    let l = m.r32(h + 0x38);
+    if l != 0 {
+        destroy_lock(l);
+    }
+    set(m, h, 0, 0x44);
+    m.w32(slot, 0);
+    1
+}
+
+/// `EAMem_FreeAll` 0x2cd570(id): every block of heap `id & 0xf` but the two ends passed to `EAMem_Free`, walking
+/// from the base by each block's next link, read after the free. As in the game, this is only sound when no
+/// block is free to begin with: a free block is freed again (put in the list a second time), and the next link
+/// read after a block was joined to the free block after it leads into that free block's old header. Never
+/// called by the game.
+pub fn free_all(m: &mut Mem, id: u32) {
+    let mut b = m.r32(heap_of(m, id) + 8);
+    while b != 0 {
+        if m.r16(b + 2) & 0x8000 == 0 {
+            free(m, b + 0x10);
+        }
+        b = m.r32(b + 8);
+    }
+}
+
+/// `EAMem_InitMainHeap` 0x2cd798(base, size): heap 0, "RAM", in `size` bytes at `base` (alignment 0x40, large
+/// alignment 0x80, nothing kept, no "BEND", no names, a lock: `lock` is the handle our host made, the word
+/// 0x2cd790), copied to slot 1; [`MAIN_HEAP_BASE`] set to `base` when it was 0. Returns `EAMem_InitHeap`'s answer.
+pub fn init_main_heap(m: &mut Mem, base: u32, size: u32, lock: u32) -> u32 {
+    let n = init_heap(m, 0, MAIN_HEAP_NAME, base, size, 0x40, 0x80, 0, false, false, Some(lock), MAIN_HEAP_WORD);
+    m.w32(HEAPS + 4, m.r32(HEAPS));
+    if m.r32(MAIN_HEAP_BASE) == 0 {
+        m.w32(MAIN_HEAP_BASE, base);
+    }
+    n
+}
+
+/// `EAMem_InitDefaultHeap` 0x2cd820(size): [`DESTROY_ALL`] registered to run at exit (`Sys_AddExitHandler`
+/// 0x2ce9d0: `add_exit_handler`), `size` bytes from the C library (`malloc` 0x2fa818: `malloc`, both our host's)
+/// kept in [`MAIN_HEAP_BASE`], made the main heap, and kept at the main heap's +0x40 (for `EAMem_DestroyAll` to
+/// give back). 0 when `malloc` gave nothing, else `EAMem_InitMainHeap`'s answer. Never called by the game (only
+/// by `EAMem_InitDefaultHeapMax`, which nothing calls).
+pub fn init_default_heap(
+    m: &mut Mem,
+    size: u32,
+    add_exit_handler: &mut dyn FnMut(u32),
+    malloc: &mut dyn FnMut(u32) -> u32,
+    lock: u32,
+) -> u32 {
+    add_exit_handler(DESTROY_ALL);
+    let p = malloc(size);
+    m.w32(MAIN_HEAP_BASE, p);
+    if p == 0 {
+        return 0;
+    }
+    let n = init_main_heap(m, p, size, lock);
+    let h = m.r32(HEAPS);
+    m.w32(h + 0x40, m.r32(MAIN_HEAP_BASE));
+    n
+}
+
+/// `EAMem_InitDefaultHeapMax` 0x2cd890: `EAMem_InitDefaultHeap` with 0x6000000 bytes
+pub fn init_default_heap_max(
+    m: &mut Mem,
+    add_exit_handler: &mut dyn FnMut(u32),
+    malloc: &mut dyn FnMut(u32) -> u32,
+    lock: u32,
+) -> u32 {
+    init_default_heap(m, 0x600_0000, add_exit_handler, malloc, lock)
+}
+
+/// `EAMem_DestroyAll` 0x2cd8b0: every table entry that repeats an earlier one's heap cleared (for each slot, the
+/// later and earlier slots holding the same record), then every heap left destroyed (`EAMem_DestroyHeap`) and the
+/// memory at its +0x40 (read before) given back to the C library (`free` 0x2fa840, our host's: `free_fn`), and
+/// [`MAIN_HEAP_BASE`] cleared.
+pub fn destroy_all(m: &mut Mem, destroy_lock: &mut dyn FnMut(u32), free_fn: &mut dyn FnMut(u32)) {
+    for i in 0..16 {
+        for j in 0..16 {
+            if i != j {
+                let a = m.r32(HEAPS + 4 * i);
+                if a == m.r32(HEAPS + 4 * j) && a != 0 {
+                    m.w32(HEAPS + 4 * j, 0);
+                }
+            }
+        }
+    }
+    for i in 0..16 {
+        let h = m.r32(HEAPS + 4 * i);
+        if h != 0 {
+            let p = m.r32(h + 0x40);
+            destroy_heap(m, i, destroy_lock);
+            if p != 0 {
+                free_fn(p);
+            }
+        }
+    }
+    m.w32(MAIN_HEAP_BASE, 0);
+}
+
+/// `EAMem_IsBlockHeader` 0x2cdc60(p): 1 when `p` is not 0 (`Mem_IsReadable` 0x2ce2c0, which only checks that)
+/// and is a free block (0x4246) or an end block (0x4253); else [`CHECK_ERROR`] 1 and 0
+pub fn is_block_header(m: &mut Mem, p: u32) -> u32 {
+    if p != 0 && matches!(m.r16(p), TAG_FREE | TAG_END) {
+        return 1;
+    }
+    m.w32(CHECK_ERROR, 1);
+    0
+}
+
+/// `EAMem_CheckNeighbours` 0x2cdcc8(b): an end block: 2 with its end flag (0x8000), else error 2 and 0. A free
+/// block: 0 without its free flag (no error), else whether its next and previous free blocks are list blocks
+/// (`EAMem_IsBlockHeader`). A made block: 2 without "BEND" (0x200), else 1 when "BEND" follows its data (read
+/// big-endian), error 3 and 0 when not. Any other tag (a block taken from the free list and not made): error 4, 0.
+pub fn check_neighbours(m: &mut Mem, b: u32) -> u32 {
+    match m.r16(b) {
+        TAG_END => {
+            if m.r16(b + 2) & 0x8000 != 0 {
+                return 2;
+            }
+            m.w32(CHECK_ERROR, 2);
+            0
+        }
+        TAG_FREE => {
+            if m.r16(b + 2) & FREE == 0 {
+                return 0;
+            }
+            if is_block_header(m, m.r32(b + 0x10)) == 0 {
+                return 0;
+            }
+            is_block_header(m, m.r32(b + 0x14))
+        }
+        TAG_MADE => {
+            if m.r16(b + 2) & 0x200 == 0 {
+                return 2;
+            }
+            let at = m.r32(b + 4).wrapping_add(b).wrapping_add(0x10);
+            let mut v = 0u32;
+            for k in 0..4 {
+                v = (v << 8).wrapping_add(m.r8(at.wrapping_add(k)) as u32);
+            }
+            if v == 0x4245_4e44 {
+                return 1;
+            }
+            m.w32(CHECK_ERROR, 3);
+            0
+        }
+        _ => {
+            m.w32(CHECK_ERROR, 4);
+            0
+        }
+    }
+}
+
+/// `EAMem_CheckBackLinks` 0x2cddc0(b): an end block: 2 with its end flag, else error 2 and 0. A free block: 0
+/// without its free flag (no error), else 1 when its next free block's previous and its previous one's next are
+/// `b`, error 5 and 0 when not. A made block: the same with the block chain (+8 / +0xc). Any other tag: error 4, 0.
+pub fn check_back_links(m: &mut Mem, b: u32) -> u32 {
+    let links = |m: &Mem, next: u32, prev: u32| m.r32(m.r32(b + next) + prev) == b && m.r32(m.r32(b + prev) + next) == b;
+    match m.r16(b) {
+        TAG_END => {
+            if m.r16(b + 2) & 0x8000 != 0 {
+                return 2;
+            }
+            m.w32(CHECK_ERROR, 2);
+            0
+        }
+        TAG_FREE => {
+            if m.r16(b + 2) & FREE == 0 {
+                return 0;
+            }
+            if links(m, 0x10, 0x14) {
+                return 1;
+            }
+            m.w32(CHECK_ERROR, 5);
+            0
+        }
+        TAG_MADE => {
+            if links(m, 8, 0xc) {
+                return 1;
+            }
+            m.w32(CHECK_ERROR, 5);
+            0
+        }
+        _ => {
+            m.w32(CHECK_ERROR, 4);
+            0
+        }
+    }
+}
+
+/// `EAMem_CheckInHeap` 0x2cde70(s): from the sentinel `s`, along the free list's next links past every free block
+/// (tag 0x4246 with the free flag) to an end block, then back along the previous links past every free block:
+/// 1 when that ends at `s`, else error 6 and 0. (A list that never reaches a block of another kind loops, as in
+/// the game.)
+pub fn check_in_heap(m: &mut Mem, s: u32) -> u32 {
+    let free = |m: &Mem, b: u32| m.r32(b) & 0x4000_ffff == 0x4000_4246;
+    let mut b = m.r32(s + 0x10);
+    while free(m, b) {
+        b = m.r32(b + 0x10);
+    }
+    let mut ok = false;
+    if m.r16(b) == TAG_END {
+        b = m.r32(b + 0x14);
+        while free(m, b) {
+            b = m.r32(b + 0x14);
+        }
+        ok = b == s;
+    }
+    if !ok {
+        m.w32(CHECK_ERROR, 6);
+    }
+    ok as u32
+}
+
+/// `EAMem_ValidateHeap` 0x2cdf08(id): heap `id & 0xf`'s blocks from its base along the next links, each through
+/// `EAMem_CheckNeighbours` and `EAMem_CheckBackLinks` until one fails, then its free list (`EAMem_CheckInHeap`).
+/// 1 when all pass, else 0 ([`CHECK_ERROR`] says why). (The lock around it is our host's.)
+pub fn validate_heap(m: &mut Mem, id: u32) -> u32 {
+    let h = heap_of(m, id);
+    let mut b = m.r32(h + 8);
+    let mut ok;
+    loop {
+        ok = check_neighbours(m, b) != 0 && check_back_links(m, b) != 0;
+        if ok {
+            b = m.r32(b + 8);
+        }
+        if b == 0 || !ok {
+            break;
+        }
+    }
+    if ok {
+        check_in_heap(m, h + 0x10)
+    } else {
+        0
+    }
+}
+
+/// `EAMem_ValidateAll` 0x2cdfd8: every heap in the table, in order, through `EAMem_ValidateHeap` until one
+/// fails. 1 when none did.
+pub fn validate_all(m: &mut Mem) -> u32 {
+    let mut r = 1;
+    for i in 0..16 {
+        if m.r32(HEAPS + 4 * i) != 0 {
+            r = validate_heap(m, i);
+        }
+        if r == 0 {
+            break;
+        }
+    }
+    r
 }

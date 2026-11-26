@@ -1423,3 +1423,46 @@ pairs (all 35 × 35 edge pairs + 20,000 random pairs across normal, subnormal, m
 ranges; 1,511 domain errors, 1,453 subnormal remainders) and 34,513 `logf` / `__ieee754_logf` values (all edges,
 every exponent's `±20`-ULP power-of-two window and `0x30a3d0`/`0x3504e0`/`0x35c288` branch boundaries + 20,000
 random values; 1,952 domain/singularity errors), checking both raw bits and `errno` (`0x35e700`): every bit equal.
+
+## The rest of the memory library (row E2n; `game/src/eamem.rs`, `tests/eamem_rest.rs`, proven)
+
+- Globals (gp 0x3c38f0): `gEAMem_MainHeapBase` 0x3bb97c (gp − 0x7f74), `gEAMem_AllocFlags` 0x3bb978 (− 0x7f78,
+  the same word the archives and the front end set for a while), `gEAMem_AllocName` 0x3bb98c (− 0x7f64),
+  `gEAMem_CheckError` 0x3bb9ac (− 0x7f44). "RAM" is at 0x3bb9a8.
+- `EAMem_InitMainHeap` 0x2cd798(base, size): `EAMem_InitHeap(0, "RAM", base, size, 0x40, 0x80, 0, no BEND;
+  stack: 0, names 0, lock 1, word 0x2cd790)`, then table slot 1 = slot 0 and the main heap base set if it was 0.
+  Called by `Iop_RebootAndLoadModules` (0x182b28).
+- `EAMem_InitDefaultHeap` 0x2cd820(size): `Sys_AddExitHandler` 0x2ce9d0(`EAMem_DestroyAll`), `malloc` 0x2fa818,
+  the base word set to what it gave (0 too), the main heap made there and the pointer kept at record +0x40.
+  `EAMem_InitDefaultHeapMax` 0x2cd890 asks for 0x6000000. Neither is called by the game.
+- `EAMem_DestroyHeap` 0x2cd500(id): `RecMutex_Destroy` 0x2cf4b0 on the lock if any, the 0x44-byte record zeroed,
+  the slot cleared; 1, or 0 with no heap. `EAMem_DestroyAll` 0x2cd8b0 (the exit handler): first clears every
+  slot j ≠ i holding the same record as slot i (in i, j order), then destroys each heap, reading its +0x40 first
+  and handing it to `free` 0x2fa840 when not 0; the base word cleared. `EAMem_ClearHeapTable` 0x2cd250 zeroes
+  the table (uncalled). `EAMem_Zero` 0x2cc938 is `EAMem_Set(p, 0, n)` (`Speech_LoadNarration`).
+- `EAMem_FreeAll` 0x2cd570(id) (uncalled): `EAMem_Free` on every block without the end flag, along the next
+  links, each link read **after** the free. It frees free blocks again (the list gets a self-link) and, after a
+  block was joined to the free block behind it, walks into that block's stale header; only a heap with no free
+  block survives it. Ported as is; in the test it is run on random heaps and memory still matches.
+- `Compress_Alloc` 0x2cc958(size) = `EAMem_Alloc(gEAMem_AllocName, size, gEAMem_AllocFlags)`, `Compress_Free`
+  0x2cc980 = `EAMem_Free` (both from `Compress_Block` / `Huff_CreateHeader`).
+- The checks (`EAMem_ValidateAll` 0x2cdfd8 from `Init` 0x17e9c0 and a virtual at 0x111420):
+  - `EAMem_IsBlockHeader` 0x2cdc60(p): 1 for p ≠ 0 (`Mem_IsReadable` 0x2ce2c0 only tests that) tagged FB or SB;
+    else error 1.
+  - `EAMem_CheckNeighbours` 0x2cdcc8(b): SB → 2 with flag 0x8000, else error 2; FB → 0 (no error) without the
+    free flag, else IsBlockHeader of its next then previous free block; MB → 2 without 0x200, else the 4 bytes
+    after the data read big-endian must be "BEND" (1) or error 3; any other tag (a 0x424f block) error 4.
+  - `EAMem_CheckBackLinks` 0x2cddc0(b): the same SB / tag cases; FB: the next free block's +0x14 and the
+    previous one's +0x10 must be b; MB: the next block's +0xc and the previous block's +8; else error 5.
+  - `EAMem_CheckInHeap` 0x2cde70(sentinel): along +0x10 past every word with `& 0x4000ffff == 0x40004246`, the
+    block reached must be SB, then back along +0x14 the same way to the sentinel; else error 6. A cycle of free
+    blocks loops for ever.
+  - `EAMem_ValidateHeap` 0x2cdf08(id): under the heap's lock, from the base block along +8, CheckNeighbours and
+    CheckBackLinks on each until one gives 0, then CheckInHeap. `EAMem_ValidateAll` runs it on each heap in
+    slot order until one fails (1 with no heaps).
+- Host: the locks, `Sys_AddExitHandler`, `malloc`, `free` (closures in the port).
+- Checked in the runner: 6,000 cases on one to three random heaps (made and used by our E2j code), a third of
+  them with broken tags, flags, links, sizes or "BEND" bytes before a check; every error code 0–6 reached;
+  43 cases skipped where the original never returns (a broken free list) and ours is not run.
+  38 mutants: 36 killed; 2 equivalent (`EAMem_DestroyAll`'s `!= 0` on the repeated record only stops writing 0
+  over 0, and comparing j < i too finds nothing, since slot j's own pass already cleared those).

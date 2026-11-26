@@ -6723,6 +6723,10 @@ G 2551d8 Course_FindSplineByHash
 D 3352b8 gCheat_Character
 D 34eff8 gEAMem_Heaps
 D 3bb990 gEAMem_OutOfMemoryFn
+D 3bb97c gEAMem_MainHeapBase
+D 3bb978 gEAMem_AllocFlags
+D 3bb98c gEAMem_AllocName
+D 3bb9ac gEAMem_CheckError
 G 2f2880 tanf
 G 2f3e38 __kernel_tanf
 G 2f3108 __ieee754_rem_pio2f
