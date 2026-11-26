@@ -355,3 +355,129 @@ fn gather_for_listener_matches_the_original() {
     }
     assert!(hits[0] > 3_000, "{hits:?}");
 }
+
+#[test]
+fn world_chant_pick_matches_the_original() {
+    let Some(mut r) = Runner::from_env() else { return };
+    use tricky_game::fxrand::{world_chant_pick, ChantPick};
+    use tricky_game::rand::Rand;
+
+    const LOAD_BANKS: u32 = 0x22c648;
+    const GET_LISTENER: u32 = 0x20ed20;
+    const FIND_BANK: u32 = 0x21a640;
+    const STRCPY: u32 = 0x2fd14c;
+    const VF3_RAND: u32 = 0x21e6c0;
+    const RAND_FX: u32 = 0x23d4a8;
+    const RAND_NEXT: u32 = 0x2401e0;
+    const FX_STATE: u32 = 0x345e58;
+
+    for f in [LOAD_BANKS, STRCPY, VF3_RAND, RAND_FX, RAND_NEXT] {
+        r.allow(f);
+    }
+
+    let app = r.mem.alloc(0x800);
+    let game = r.mem.alloc(0x200);
+    let rider = r.mem.alloc(0x500);
+    let profile = r.mem.alloc(0x80);
+    let audio = r.mem.alloc(0x40);
+    let vtable = r.mem.alloc(0x40);
+    let trig_mgr = r.mem.alloc(0x4200);
+    let emitter = r.mem.alloc(0x60);
+    let out_bank = r.mem.alloc(0x10);
+
+    r.mem.write_u32(0x337c58, app);
+    r.mem.write_u32(app + 0x730, game);
+    r.mem.write_u32(game + 0xa4, rider); // slot 0 rider
+    r.mem.write_u32(rider + 0x464, profile);
+    r.mem.write_u32(0x343050, audio);
+    r.mem.write_u32(audio + 4, vtable);
+    r.mem.write_u16(vtable + 0x20, 0);
+    r.mem.write_u32(vtable + 0x24, VF3_RAND);
+    r.mem.write_u32(0x34370c, trig_mgr);
+    r.mem.write_u32(emitter + 0x3c, 0);
+
+    // Populate chant bank path slots: char c (0..12) slot k -> "R<c>_<k>", generic slot k -> "G_<k>"
+    for c in 0..12u32 {
+        for k in 0..20u32 {
+            let s = format!("R{c}_{k}\0");
+            r.mem.write(trig_mgr + c * 0x500 + 4 + k * 0x40, s.as_bytes()).unwrap();
+        }
+    }
+    for k in 0..20u32 {
+        let s = format!("G_{k}\0");
+        r.mem.write(trig_mgr + 0x3c04 + k * 0x40, s.as_bytes()).unwrap();
+    }
+
+    let listener = Rc::new(std::cell::Cell::new(rider));
+    let l2 = listener.clone();
+    r.stub(GET_LISTENER, move |c, _| {
+        c.set_gpr(2, l2.get() as u64);
+    });
+    let picked: Rc<RefCell<Option<String>>> = Rc::default();
+    let p2 = picked.clone();
+    r.stub(FIND_BANK, move |c, mem| {
+        let ptr = c.gpr(5) as u32;
+        let mut s = Vec::new();
+        for o in 0..64u32 {
+            let mut b = [0u8];
+            mem.read(ptr + o, &mut b).unwrap();
+            if b[0] == 0 {
+                break;
+            }
+            s.push(b[0]);
+        }
+        *p2.borrow_mut() = Some(String::from_utf8(s).unwrap());
+        c.set_gpr(2, 42);
+    });
+
+    let mut g = Rng(0x22c6_4800_0000_0001);
+    let (mut rider_hits, mut gen_hits, mut none_hits) = (0u32, 0u32, 0u32);
+    for case in 0..4_000u32 {
+        let seed = g.next() | 1;
+        let mut fx = Rand::seeded(seed);
+        for (k, &w) in fx.s.iter().enumerate() {
+            r.mem.write_u32(FX_STATE + 4 * k as u32, w);
+        }
+
+        let place = (case % 6) as i32;
+        let char_id = g.next() % 12;
+        let n_rider = 1 + (g.next() % 10);
+        let n_generic = 1 + (g.next() % 10);
+        r.mem.write_u32(rider + 0x110, place as u32);
+        r.mem.write_u32(profile + 0x38, char_id);
+        r.mem.write_u32(trig_mgr + 0x4104, n_rider);
+        r.mem.write_u32(trig_mgr + 0x4108, n_generic);
+        r.mem.write_u32(out_bank, 0xffff_ffff);
+        *picked.borrow_mut() = None;
+
+        r.cpu.set_gpr(4, emitter as u64);
+        r.cpu.set_gpr(5, 0x66);
+        r.cpu.set_gpr(6, out_bank as u64);
+        r.call(LOAD_BANKS).unwrap_or_else(|e| panic!("case {case}: {e}"));
+        let ret = r.cpu.gpr(2) as u32;
+        let theirs = picked.borrow_mut().take();
+
+        let ours = world_chant_pick(place, n_rider, n_generic, &mut || fx.draw());
+        match ours {
+            None => {
+                assert_eq!(ret, 0, "case {case} place {place}");
+                assert!(theirs.is_none());
+                none_hits += 1;
+            }
+            Some(ChantPick::Rider(k)) => {
+                assert_eq!(ret, 1, "case {case} place {place}");
+                assert_eq!(theirs.as_deref(), Some(format!("R{char_id}_{k}").as_str()), "case {case}");
+                rider_hits += 1;
+            }
+            Some(ChantPick::Generic(k)) => {
+                assert_eq!(ret, 1, "case {case} place {place}");
+                assert_eq!(theirs.as_deref(), Some(format!("G_{k}").as_str()), "case {case}");
+                gen_hits += 1;
+            }
+        }
+        // Verify exact Rand_Fx draw count by matching final state word-for-word
+        let after_fx: [u32; 6] = std::array::from_fn(|k| r.mem.read_u32(FX_STATE + 4 * k as u32));
+        assert_eq!(after_fx, fx.s, "case {case} Rand_Fx state after draws");
+    }
+    assert!(rider_hits > 1000 && gen_hits > 1000, "rider={rider_hits} gen={gen_hits} none={none_hits}");
+}

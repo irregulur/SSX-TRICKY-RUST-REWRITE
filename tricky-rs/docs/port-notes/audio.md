@@ -1947,3 +1947,25 @@ Proven (`SLUS_203.26`):
   `boardsound::listener_matrix` stays only as fallback when an override camera (menu orbit, intro director,
   free cam, `TRICKY_ORBIT`/`TRICKY_CAM`) is on screen. Verified in
   `boardsound::tests::exact_cam_view_matrix_feeds_listener_locate_directly`.
+
+## World ambient & spectator chant RNG (`Snd_Rand`, `Snd_RandRange`, `Audio_LoadWorldTriggerBanks` `case 0x66`; row E1b2r2, proven)
+
+- **`Snd_Rand` 0x2d6928 & `Snd_RandRange` 0x2dff90** (`game/src/sndlib.rs`, checked in `tests/sndlib.rs`):
+  - `Snd_Rand` is EA `lib-snd`'s six-word carry-add PRNG at `0x351a98..0x351aac`, initialized in `.data` to
+    `[0xf22d0e56, 0x883126e9, 0xc624dd2f, 0x0702c49c, 0x9e353f7d, 0x6fdf3b64]` (never reseeded).
+  - `Snd_RandRange(range)` clamps `range` to `0..=0x10000`, draws `u = Snd_Rand()`, and returns
+    `(((u & 0x7fff) - 0x4000) * range) >> 14` (signed, in `[-range, +range)`). `SndVoice_PlayLayer` 0x2d59d8 calls
+    it only when the BNK layer's `pitch_rand` (tag `0x11`, `layer+0x06`) is non-zero, then converts total cents
+    via `Snd_CentsToPitchMult` 0x2d51f8 (`sndlib::pitch_ratio`).
+- **Spectator chant banks (`Audio_LoadWorldTriggerBanks` 0x22c648 `case 0x66`, `Audio_LoadChantBanks` 0x22dce0;
+  `game/src/fxrand.rs`, checked in `tests/worldemitter.rs`)**:
+  - Draws from `cBXAudio::vf3` 0x21e6c0 (`Rand_Fx` 0x23d4a8) via `segment_pick(r, n) = (r & 0x7fff) * n / 0x7fff`:
+    - `place < 2` (1st–2nd): `Rider(k)` from `n_rider` (`0x4104`), returning `0` if `k >= n_rider`;
+    - `place < 4` (3rd–4th): draws `segment_pick(r, 101)`: if `< 50` picks `Rider(k)` from `n_rider`, else
+      `Generic(k)` from `n_generic` (`0x4108`);
+    - `place >= 4` (5th–6th): `Generic(k)` from `n_generic`.
+- **App wiring (`src/worldsound.rs`)**: removed the xorshift `seed`/`rand()` stand-in completely. `WorldSounds::tune`
+  now uses `sndlib::snd_rand_range` (only when `pitch_rand != 0`) and `sndlib::pitch_ratio`; `WorldSounds::pick_speech`
+  loads `speech_groups` (`general` + per-character) from `worldsounds.json` and uses `fxrand::world_chant_pick` on
+  `rand::rand_fx`; finished one-shot emitters stay silent until the listener leaves their sphere (matching
+  `WorldEmitter_Update` 0x22bf60: `BankMonitor_Find == 0` returns without clearing `e+0x30`, no repeat timer).

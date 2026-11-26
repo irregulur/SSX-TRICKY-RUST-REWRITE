@@ -1,6 +1,8 @@
-//! Pieces of EA's sound library (board row G10d), each the game's and checked in the function runner
+//! Pieces of EA's sound library (board rows G10d, E1b2r2), each the game's and checked in the function runner
 //! (`tests/sndlib.rs`): `SNDVoice_CalcPitchMult` 0x2d5288 and the pitch-ratio function 0x2d51f8 it uses,
-//! `SndVoice_SetVolume` 0x20ae28 and `SndVoice_IsDone` 0x20a8e0.
+//! `SndVoice_SetVolume` 0x20ae28, `SndVoice_IsDone` 0x20a8e0, `Snd_Rand` 0x2d6928 and `Snd_RandRange` 0x2dff90.
+
+use std::sync::{Mutex, MutexGuard};
 
 /// The pitch table at 0x351288 read from the executable: byte `i` is about `256 * 2^(i / 256) - 256`. The negative
 /// side of the ratio uses the same bytes from the end (the game reads 0x351388 + index).
@@ -223,4 +225,82 @@ pub fn is_done(kind: i32, handle: u32, env: &mut dyn VoiceEnv) -> bool {
         }
         _ => true,
     }
+}
+
+/// Initial state of EA `lib-snd`'s six-word carry-add generator (`0x351a98..0x351ab0` in `SLUS_203.26`).
+pub const SND_RAND_INIT: [u32; 6] = [
+    0xf22d_0e56, 0x8831_26e9, 0xc624_dd2f, 0x0702_c49c, 0x9e35_3f7d, 0x6fdf_3b64,
+];
+
+/// EA `lib-snd`'s own six-word carry-add random generator (`Snd_Rand` 0x2d6928, state at 0x351a98..0x351aac).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SndRand {
+    pub state: [u32; 6],
+}
+
+impl Default for SndRand {
+    fn default() -> Self {
+        Self { state: SND_RAND_INIT }
+    }
+}
+
+impl SndRand {
+    /// `Snd_Rand` 0x2d6928: adds the six words with carries, increments word 5 (propagating rollover across
+    /// words 4..0 when a word wraps to 0), and returns word 0.
+    pub fn next(&mut self) -> u32 {
+        let [a, b, c, d, e, f] = self.state;
+        let u1 = f.wrapping_add(e);
+        let c1 = (u1 < f || u1 < e) as u32;
+        let u2 = u1.wrapping_add(d).wrapping_add(c1);
+        let c2 = (u2 < d) as u32;
+        let u3 = u2.wrapping_add(c).wrapping_add(c2);
+        let c3 = (u3 < c) as u32;
+        let f1 = f.wrapping_add(1);
+        let u4 = u3.wrapping_add(b).wrapping_add(c3);
+        let c4 = (u4 < b) as u32;
+        let mut s = [u4.wrapping_add(a).wrapping_add(c4), u4, u3, u2, u1, f1];
+        if s[5] == 0 {
+            s[4] = s[4].wrapping_add(1);
+            if s[4] == 0 {
+                s[3] = s[3].wrapping_add(1);
+                if s[3] == 0 {
+                    s[2] = s[2].wrapping_add(1);
+                    if s[2] == 0 {
+                        s[1] = s[1].wrapping_add(1);
+                        if s[1] == 0 {
+                            s[0] = s[0].wrapping_add(1);
+                        }
+                    }
+                }
+            }
+        }
+        self.state = s;
+        s[0]
+    }
+
+    /// `Snd_RandRange` 0x2dff90: clamps `range` to `0..=0x10000`, draws one word from `Snd_Rand` 0x2d6928, and
+    /// returns `(((u & 0x7fff) - 0x4000) * range) >> 14` (signed, in `[-range, +range)`).
+    pub fn range(&mut self, range: i32) -> i32 {
+        let r = range.clamp(0, 0x1_0000);
+        let u = (self.next() & 0x7fff) as i32;
+        (u - 0x4000).wrapping_mul(r) >> 14
+    }
+}
+
+/// Global `lib-snd` random stream (`0x351a98..0x351aac`).
+static SND_RAND: Mutex<SndRand> = Mutex::new(SndRand { state: SND_RAND_INIT });
+
+/// Lock the global `lib-snd` random stream (`0x351a98..0x351aac`).
+pub fn snd_rand_state() -> MutexGuard<'static, SndRand> {
+    SND_RAND.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// `Snd_Rand` 0x2d6928 on the global `lib-snd` stream.
+pub fn snd_rand() -> u32 {
+    snd_rand_state().next()
+}
+
+/// `Snd_RandRange` 0x2dff90 on the global `lib-snd` stream.
+pub fn snd_rand_range(range: i32) -> i32 {
+    snd_rand_state().range(range)
 }

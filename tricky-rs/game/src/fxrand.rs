@@ -77,6 +77,44 @@ pub fn lesson_path_var(rand_fx: u32) -> u32 {
     rand_fx % 100
 }
 
+/// Which spectator chant bank `Audio_LoadWorldTriggerBanks` 0x22c648 (`case 0x66`, at `0x22c800..0x22c9cc`) picks
+/// for the listener rider's 0-based race place (`rider+0x110`), drawing from `cBXAudio::vf3` 0x21e6c0 (`Rand_Fx`
+/// 0x23d4a8).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChantPick {
+    /// Character-specific chant bank index (`0..n_rider`).
+    Rider(u32),
+    /// Generic crowd chant bank index (`0..=n_generic`; the caller guards `k < n_generic`).
+    Generic(u32),
+}
+
+/// `Audio_LoadWorldTriggerBanks` 0x22c648 (`case 0x66`):
+/// - `place < 2` (1st–2nd): draws once via [`segment_pick`] against `n_rider`; returns `None` when `k >= n_rider`
+///   (i.e. `r & 0x7fff == 0x7fff` or `n_rider == 0`).
+/// - `place < 4` (3rd–4th): draws `segment_pick(r, 101)`: if `< 50` picks from `n_rider` as above, else draws
+///   `segment_pick(r, n_generic)` for `Generic`.
+/// - `place >= 4` (5th–6th): draws `segment_pick(r, n_generic)` for `Generic`.
+pub fn world_chant_pick(
+    place: i32,
+    n_rider: u32,
+    n_generic: u32,
+    rand_fx: &mut dyn FnMut() -> u32,
+) -> Option<ChantPick> {
+    if place < 2 {
+        let k = segment_pick(rand_fx(), n_rider);
+        ((k as i32) < n_rider as i32).then_some(ChantPick::Rider(k))
+    } else if place < 4 {
+        if (segment_pick(rand_fx(), 101) as i32) < 50 {
+            let k = segment_pick(rand_fx(), n_rider);
+            ((k as i32) < n_rider as i32).then_some(ChantPick::Rider(k))
+        } else {
+            Some(ChantPick::Generic(segment_pick(rand_fx(), n_generic)))
+        }
+    } else {
+        Some(ChantPick::Generic(segment_pick(rand_fx(), n_generic)))
+    }
+}
+
 /// What `cGame::Init` 0x17e148 draws for the snow after `ParticleMan_Init`, in this order.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GameSnow {

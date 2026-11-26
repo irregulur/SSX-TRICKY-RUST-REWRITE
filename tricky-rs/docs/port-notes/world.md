@@ -823,8 +823,12 @@ velocity, +0x424 motion, +0x428 state, +0x2e4 impact counter; recordings kept on
     segments wait in the stream queue, draws once and queues `8 + (r & 0x7fff) * 8 / 0x7fff` (unsigned; 8..=16, the
     closing segment only when the low fifteen bits are all set); in courses 3, 7, 8 and 0xb it queues instead a counter
     (+0x6e44, 0 at the start) that wraps from 16 to 8, with no draw other than the call. Ported: `coursemusic.rs`.
-  STANDIN: the ambient and speech draws of `worldsound.rs` are the port's own picks on its own generator, not the
-  game's draws (E1b2i).
+  - the world ambient/speech draws of `worldsound.rs` (row E1b2r2, proven): BNK `pitch_rand` draws from EA
+    `lib-snd`'s own six-word generator (`Snd_Rand` 0x2d6928, state `0x351a98..0x351aac`, through `Snd_RandRange`
+    0x2dff90 when `pitch_rand != 0`; `sndlib.rs`, checked in `tests/sndlib.rs`); spectator chant emitters
+    (`id == 0x66`, `Audio_LoadWorldTriggerBanks` 0x22c648 `case 0x66`) draw from `Rand_Fx` 0x23d4a8 (`cBXAudio::vf3`
+    0x21e6c0) by rider place (`fxrand::world_chant_pick`, checked in `tests/worldemitter.rs`). One-shot world
+    emitters do not re-trigger on a random timer while inside the sphere (`WorldEmitter_Update` 0x22bf60).
 
 ## Course file loading (`cCourseResolve_Common` / `cCourseResolve_PS2`)
 

@@ -12,7 +12,7 @@
 //! Knocks and script sounds: one-shots scaled by ((30 - max(d - 0.5, 0)) / 30)^2 from the
 //! camera (metres), none past 30 m; a knock's volume follows the rider's speed.
 
-use crate::{ui, LevelRes, Mode, Props, RiderRes, World};
+use crate::{ui, LevelRes, Mode, Props, RaceRes, RiderRes, World};
 use bevy::audio::{PlaybackMode, Volume};
 use bevy::prelude::*;
 use std::collections::HashMap;
@@ -28,17 +28,20 @@ pub struct WorldSounds {
     files: HashMap<String, Handle<AudioSource>>,
     /// per file: (root note, volume 0..127, detune cents, pitch randomness cents)
     meta: HashMap<String, (f32, f32, f32, f32)>,
+    /// flat spectator chant list fallback when `speech_groups` is absent
     speech: Vec<String>,
+    /// `Audio_LoadChantBanks` 0x22dce0 groups: generic chants (`GENERAL%d`) and per-character chants (`<NAME>%d`)
+    speech_general: Vec<String>,
+    speech_character: HashMap<String, Vec<String>>,
     kinds: HashMap<u32, (String, bool)>,
     level: Option<PathBuf>,
     emitters: Vec<Emitter>,
     collision: HashMap<usize, String>,
     /// trigger instance -> (where, sample) of the sounds its scripts play
     script: HashMap<usize, Vec<(Vec3, String)>>,
-    /// emitters sounding: emitter -> (entity, current gain, wait before a one-shot repeats)
-    active: HashMap<usize, (Entity, f32, f32)>,
+    /// emitters sounding: emitter -> (entity, current gain, started)
+    active: HashMap<usize, (Entity, f32, bool)>,
     cool: HashMap<usize, f32>,
-    seed: u32,
 }
 
 #[derive(Component)]
@@ -73,10 +76,6 @@ fn knock_level(cms: f32) -> f32 {
 fn falloff(d: f32) -> f32 { let k = ((30.0 - (d - 0.5).max(0.0)) / 30.0).max(0.0); k * k }
 
 impl WorldSounds {
-    fn rand(&mut self) -> f32 {
-        self.seed ^= self.seed << 13; self.seed ^= self.seed >> 17; self.seed ^= self.seed << 5;
-        (self.seed % 10000) as f32 / 10000.0
-    }
     fn get(&mut self, assets: &mut Assets<AudioSource>, name: &str) -> Option<Handle<AudioSource>> {
         if let Some(h) = self.files.get(name) { return Some(h.clone()); }
         let bytes = std::fs::read(self.dir.join(name)).ok()?;
@@ -84,7 +83,8 @@ impl WorldSounds {
         self.files.insert(name.to_string(), h.clone());
         Some(h)
     }
-    /// Pitch and level of a bank sample from its program settings (bnk2wav's json beside it).
+    /// Pitch and level of a bank sample from its program settings (`SndVoice_PlayLayer` 0x2d59d8 +
+    /// `Snd_RandRange` 0x2dff90 -> `Snd_Rand` 0x2d6928 + `Snd_CentsToPitchMult` 0x2d51f8).
     fn tune(&mut self, name: &str) -> (f32, f32) {
         if !self.meta.contains_key(name) {
             // "Bank/Bank_12_loop.wav" -> Bank/Bank.json, program 12
@@ -106,9 +106,45 @@ impl WorldSounds {
             }
             self.meta.insert(name.to_string(), m);
         }
-        let (root, vol, detune, rand) = self.meta[name];
-        let r = (self.rand() - 0.5) * rand;
-        (2f32.powf((detune + r - (root - 60.0) * 100.0) / 1200.0), vol / 127.0)
+        let (root, vol, detune, pitch_rand) = self.meta[name];
+        let mut cents = detune.round() as i32 + (60 - root.round() as i32) * 100;
+        let pr = pitch_rand.round() as i32;
+        if pr != 0 {
+            cents += tricky_game::sndlib::snd_rand_range(pr);
+        }
+        (tricky_game::sndlib::pitch_ratio(cents) as f32 / 4096.0, vol / 127.0)
+    }
+    /// Pick a spectator chant sample (`Audio_LoadWorldTriggerBanks` 0x22c648 `case 0x66`) on the game's `Rand_Fx`
+    /// stream (`0x23d4a8`) using the listener rider's character name and 0-based race place (`rider+0x110`).
+    fn pick_speech(&self, rider_name: &str, place: i32) -> Option<String> {
+        self.pick_speech_with(rider_name, place, &mut tricky_game::rand::rand_fx)
+    }
+    fn pick_speech_with(&self, rider_name: &str, place: i32, rand_fx: &mut dyn FnMut() -> u32) -> Option<String> {
+        let char_lines: &[String] = self
+            .speech_character
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(rider_name))
+            .map(|(_, v)| v.as_slice())
+            .unwrap_or(&[]);
+        let gen_lines: &[String] = if !self.speech_general.is_empty() { &self.speech_general } else { &self.speech };
+        if char_lines.is_empty() && gen_lines.is_empty() {
+            return None;
+        }
+        if !char_lines.is_empty() && !gen_lines.is_empty() {
+            match tricky_game::fxrand::world_chant_pick(
+                place,
+                char_lines.len() as u32,
+                gen_lines.len() as u32,
+                rand_fx,
+            )? {
+                tricky_game::fxrand::ChantPick::Rider(k) => char_lines.get(k as usize).cloned(),
+                tricky_game::fxrand::ChantPick::Generic(k) => gen_lines.get(k as usize).cloned(),
+            }
+        } else {
+            let pool = if !char_lines.is_empty() { char_lines } else { gen_lines };
+            let k = tricky_game::fxrand::segment_pick(rand_fx(), pool.len() as u32);
+            pool.get(k as usize).cloned()
+        }
     }
     fn load_level(&mut self, dir: &std::path::Path) {
         self.emitters.clear();
@@ -153,7 +189,7 @@ pub fn setup_world_sound(mut commands: Commands, level: Res<LevelRes>) {
     let audio_of = |p: &std::path::Path| p.parent().and_then(|p| p.parent()).map(|p| p.join("audio").join("world"));
     let given = std::path::absolute(&level.0.dir).unwrap_or(level.0.dir.clone());
     let real = std::fs::canonicalize(&level.0.dir).unwrap_or(given.clone());
-    let mut ws = WorldSounds { seed: 0x2545f491, ..default() };
+    let mut ws = WorldSounds::default();
     if let Some(dir) = [audio_of(&given), audio_of(&real)].into_iter().flatten().find(|d| d.join("worldsounds.json").is_file()) {
         if let Ok(v) = std::fs::read_to_string(dir.join("worldsounds.json")).map_err(|_| ()).and_then(|t| serde_json::from_str::<serde_json::Value>(&t).map_err(|_| ())) {
             for (k, e) in v.get("world_sounds").and_then(|w| w.as_object()).into_iter().flatten() {
@@ -162,6 +198,13 @@ pub fn setup_world_sound(mut commands: Commands, level: Res<LevelRes>) {
                 ws.kinds.insert(id, (kind, e.get("loop").and_then(|x| x.as_bool()).unwrap_or(false)));
             }
             ws.speech = v.get("speech").and_then(|s| s.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
+            if let Some(g) = v.get("speech_groups") {
+                ws.speech_general = g.get("general").and_then(|s| s.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
+                for (name, arr) in g.get("character").and_then(|c| c.as_object()).into_iter().flatten() {
+                    let list: Vec<String> = arr.as_array().into_iter().flatten().filter_map(|x| x.as_str().map(String::from)).collect();
+                    if !list.is_empty() { ws.speech_character.insert(name.clone(), list); }
+                }
+            }
             ws.on = true;
         }
         ws.dir = dir;
@@ -175,7 +218,7 @@ pub fn setup_world_sound(mut commands: Commands, level: Res<LevelRes>) {
 #[allow(clippy::too_many_arguments)]
 pub fn world_sound(
     time: Res<Time>, level: Res<LevelRes>, world: Res<World>, game: Res<ui::Game>, mode: Res<Mode>, sounds: Res<crate::sound::Sounds>,
-    mut ws: ResMut<WorldSounds>, mut rider: ResMut<RiderRes>, mut props: ResMut<Props>, mut parts: ResMut<crate::particles::Particles>,
+    race: Res<RaceRes>, mut ws: ResMut<WorldSounds>, mut rider: ResMut<RiderRes>, mut props: ResMut<Props>, mut parts: ResMut<crate::particles::Particles>,
     mut assets: ResMut<Assets<AudioSource>>, mut commands: Commands, cam: Query<&GlobalTransform, With<Camera3d>>,
     mut sinks: Query<&mut AudioSink, With<WorldLoop>>,
 ) {
@@ -240,40 +283,79 @@ pub fn world_sound(
     want.truncate(40);
     let wanted: HashMap<usize, f32> = want.iter().copied().collect();
     let mut swap_now = swap_now;
+    let place = race.0.line_riders.first().map_or(0, |m| m.place) as i32;
+    let rider_name = rider.0.data.name;
     for (i, g) in want {
         if ws.active.contains_key(&i) || fx <= 0.0 { continue; }
         let e = ws.emitters[i].clone();
         if e.swap { if swap_now.is_some_and(|s| s != e.id) { continue; } swap_now = Some(e.id); }
-        let file = match &e.wav { Some(w) => w.clone(), None => { if ws.speech.is_empty() { continue; } let k = (ws.rand() * ws.speech.len() as f32) as usize; ws.speech[k.min(ws.speech.len() - 1)].clone() } };
+        let file = match &e.wav { Some(w) => w.clone(), None => { let Some(w) = ws.pick_speech(rider_name, place) else { continue }; w } };
         let (speed, lvl) = ws.tune(&file);
         let Some(h) = ws.get(&mut assets, &file) else { continue };
         let mode = if e.looped { PlaybackMode::Loop } else { PlaybackMode::Despawn };
         let ent = commands.spawn((AudioPlayer::new(h), PlaybackSettings { mode, volume: Volume::Linear(g * lvl * 0.6), speed, ..default() }, WorldLoop)).id();
-        ws.active.insert(i, (ent, g * lvl, 0.0));
+        ws.active.insert(i, (ent, g * lvl, false));
     }
-    // follow the gains; fade out what has left its sphere (0.25 s); a sample that does not loop
-    // comes back after a pause while the listener stays near
+    // Follow the gains and fade out emitters that left their sphere over 0.25 s (`WorldEmitter_Stop` 0x22c5a0).
+    // A one-shot that finishes while the listener stays inside stays silent until leaving the sphere
+    // (`WorldEmitter_Update` 0x22bf60: `BankMonitor_Find == 0` returns without clearing `e+0x30`).
     let keys: Vec<usize> = ws.active.keys().copied().collect();
     for i in keys {
-        let (ent, gain, wait) = ws.active[&i];
+        let (ent, gain, started) = ws.active[&i];
         let lvl = ws.emitters[i].wav.as_ref().map(|w| ws.meta.get(w).map_or(1.0, |m| m.1 / 127.0)).unwrap_or(1.0);
         let target = wanted.get(&i).map_or(0.0, |g| g * lvl) * fx;
         let g = if target < gain { (gain - dt / 0.25).max(target) } else { target };
         if let Ok(mut sink) = sinks.get_mut(ent) {
-            // playing (wait < 0 marks "has started")
             sink.set_volume(Volume::Linear(g * 0.6));
-            if g <= 0.0 && target <= 0.0 { commands.entity(ent).try_despawn(); ws.active.remove(&i); } else { ws.active.insert(i, (ent, g, -1.0)); }
-        } else if wait < 0.0 {
-            // a one-shot that has finished: rest a while before it may start again
-            let w = 3.0 + 6.0 * ws.rand();
-            ws.active.insert(i, (ent, g, w));
-        } else if wait > 0.0 {
-            let w = wait - dt;
-            if w <= 0.0 || target <= 0.0 { ws.active.remove(&i); } else { ws.active.insert(i, (ent, g, w)); }
+            if g <= 0.0 && target <= 0.0 { commands.entity(ent).try_despawn(); ws.active.remove(&i); } else { ws.active.insert(i, (ent, g, true)); }
         } else if target <= 0.0 {
-            // left before it got going
-            commands.entity(ent).try_despawn();
+            if !started { commands.entity(ent).try_despawn(); }
             ws.active.remove(&i);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tricky_game::{fxrand, rand, sndlib};
+
+    #[test]
+    fn tune_uses_snd_rand_range_only_when_pitch_rand_nonzero() {
+        let mut ws = WorldSounds::default();
+        ws.meta.insert("fixed".into(), (60.0, 127.0, 100.0, 0.0));
+        ws.meta.insert("varied".into(), (60.0, 100.0, -50.0, 200.0));
+
+        let before = sndlib::snd_rand_state().state;
+        let (sp, lvl) = ws.tune("fixed");
+        assert_eq!(sndlib::snd_rand_state().state, before, "zero pitch_rand must not advance Snd_Rand");
+        assert_eq!(sp, sndlib::pitch_ratio(100) as f32 / 4096.0);
+        assert_eq!(lvl, 1.0);
+
+        let mut want = sndlib::SndRand { state: before };
+        let expected_cents = -50 + want.range(200);
+        let (sp2, lvl2) = ws.tune("varied");
+        assert_eq!(sndlib::snd_rand_state().state, want.state, "nonzero pitch_rand advances Snd_Rand once");
+        assert_eq!(sp2, sndlib::pitch_ratio(expected_cents) as f32 / 4096.0);
+        assert!((lvl2 - 100.0 / 127.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn pick_speech_uses_game_rand_fx_and_place_rules() {
+        let mut ws = WorldSounds::default();
+        ws.speech_general = vec!["G0".into(), "G1".into(), "G2".into()];
+        ws.speech_character.insert("Eddie".into(), vec!["E0".into(), "E1".into()]);
+
+        let mut fx = rand::Rand::seeded(0xe1b2_0002);
+        for place in [0, 1, 2, 3, 4, 5] {
+            let mut copy = fx;
+            let want = fxrand::world_chant_pick(place, 2, 3, &mut || copy.draw()).map(|p| match p {
+                fxrand::ChantPick::Rider(k) => format!("E{k}"),
+                fxrand::ChantPick::Generic(k) => format!("G{k}"),
+            });
+            let got = ws.pick_speech_with("Eddie", place, &mut || fx.draw());
+            assert_eq!(got, want, "place {place}");
+            assert_eq!(fx, copy, "Rand_Fx stream state after place {place}");
         }
     }
 }

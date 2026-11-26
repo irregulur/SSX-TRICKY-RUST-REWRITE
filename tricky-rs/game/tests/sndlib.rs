@@ -247,3 +247,75 @@ fn set_volume_and_is_done_match_the_original() {
         assert_eq!(done, mine_done as u32, "case {case} isdone kind {kind} ret {rv} state {st}");
     }
 }
+
+#[test]
+fn snd_rand_and_range_match_the_original() {
+    let Some(mut r) = runner() else { return };
+    const STATE_AT: u32 = 0x351a98;
+    const SND_RAND_ADDR: u32 = 0x2d6928;
+    const SND_RAND_RANGE_ADDR: u32 = 0x2dff90;
+    r.allow(SND_RAND_ADDR);
+    r.allow(SND_RAND_RANGE_ADDR);
+
+    // 1. Verify initial state in SLUS_203.26 matches SND_RAND_INIT
+    let init: [u32; 6] = std::array::from_fn(|k| r.mem.read_u32(STATE_AT + 4 * k as u32));
+    assert_eq!(init, SND_RAND_INIT, "0x351a98 initial state");
+
+    // 2. Step Snd_Rand 10,000 times from initial state
+    let mut sr = SndRand::default();
+    for step in 0..10_000u32 {
+        r.call(SND_RAND_ADDR).unwrap_or_else(|e| panic!("step {step}: {e}"));
+        let ours = sr.next();
+        assert_eq!(r.cpu.gpr(2) as u32, ours, "Snd_Rand step {step}");
+    }
+    let after: [u32; 6] = std::array::from_fn(|k| r.mem.read_u32(STATE_AT + 4 * k as u32));
+    assert_eq!(after, sr.state, "Snd_Rand state after 10,000 steps");
+
+    // 3. Rollover & carry-chain edge states (s[5] wrapping to 0 and propagating through s[4]..s[0])
+    for (idx, st) in [
+        [0, 0, 0, 0, 0, 0xffff_ffff],
+        [0xffff_ffff, 0xffff_ffff, 0xffff_ffff, 0xffff_ffff, 0xffff_ffff, 0xffff_ffff],
+        [0x1234_5678, 0xffff_fffe, 0xffff_ffff, 0xffff_ffff, 0xffff_ffff, 0xffff_ffff],
+        [0x8000_0000, 0x8000_0000, 0x8000_0000, 0x8000_0000, 0x8000_0000, 0xffff_ffff],
+        [0, 0, 0, 0, 0, 0],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        for (k, &w) in st.iter().enumerate() {
+            r.mem.write_u32(STATE_AT + 4 * k as u32, w);
+        }
+        let mut s = SndRand { state: st };
+        for t in 0..8 {
+            r.call(SND_RAND_ADDR).unwrap();
+            assert_eq!(r.cpu.gpr(2) as u32, s.next(), "edge {idx} step {t}");
+            let cur: [u32; 6] = std::array::from_fn(|k| r.mem.read_u32(STATE_AT + 4 * k as u32));
+            assert_eq!(cur, s.state, "edge {idx} state {t}");
+        }
+    }
+
+    // 4. Snd_RandRange 0x2dff90 over negative, zero, small, normal, boundary, and over-max ranges
+    for (k, &w) in SND_RAND_INIT.iter().enumerate() {
+        r.mem.write_u32(STATE_AT + 4 * k as u32, w);
+    }
+    let mut sr = SndRand::default();
+    let mut g = Rng(0x2dff_9000_1234_5678);
+    let fixed = [-100, -1, 0, 1, 2, 10, 50, 100, 127, 600, 1200, 0xffff, 0x1_0000, 0x1_0001, i32::MAX, i32::MIN];
+    for case in 0..10_000u32 {
+        let range = if (case as usize) < fixed.len() {
+            fixed[case as usize]
+        } else {
+            match g.next() % 5 {
+                0 => -(g.next() as i32 & 0x1fff),
+                1 => (g.next() & 0x3ff) as i32,
+                2 => (g.next() & 0x1_ffff) as i32,
+                3 => 0x1_0000 + (g.next() & 0xff) as i32,
+                _ => g.next() as i32,
+            }
+        };
+        r.cpu.set_gpr(4, range as i64 as u64);
+        r.call(SND_RAND_RANGE_ADDR).unwrap_or_else(|e| panic!("range case {case} ({range}): {e}"));
+        let ours = sr.range(range);
+        assert_eq!(r.cpu.gpr(2) as u32 as i32, ours, "Snd_RandRange case {case} range {range}");
+    }
+}
