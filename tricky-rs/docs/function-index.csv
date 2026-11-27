@@ -1282,14 +1282,14 @@ address,size,name,system,status
 0x163f50,52,Career_GetPlayerFlags,race,ported
 0x163f88,96,Career_CountPlayerFlags,race,ported
 0x163fe8,52,Career_GetPlayerStats,race,checked
-0x164020,64,TrickBook_IsPageComplete,scoring,not started
-0x164060,68,TrickBook_CountCompletePages,scoring,ported
-0x1640a8,92,TrickBook_CountToTier,scoring,ported
-0x164108,8,TrickBook_TricksPerPage,scoring,not started
-0x164110,100,TrickBook_PageFirstTrick,scoring,ported
-0x164178,124,TrickBook_CountDoneInPage,scoring,ported
-0x1641f8,92,TrickBook_FirstUndoneTrick,scoring,ported
-0x164258,44,TrickBook_IsTrickDone,scoring,ported
+0x164020,64,TrickBook_IsPageComplete,scoring,checked
+0x164060,68,TrickBook_CountCompletePages,scoring,checked
+0x1640a8,92,TrickBook_CountToTier,scoring,checked
+0x164108,8,TrickBook_TricksPerPage,scoring,checked
+0x164110,100,TrickBook_PageFirstTrick,scoring,checked
+0x164178,124,TrickBook_CountDoneInPage,scoring,checked
+0x1641f8,92,TrickBook_FirstUndoneTrick,scoring,checked
+0x164258,44,TrickBook_IsTrickDone,scoring,checked
 0x164288,140,Career_CountProfiles,race,ported
 0x164318,20,Career_GetPlayerSlot,race,checked
 0x164330,56,Career_GetPlayerProfile,race,ported

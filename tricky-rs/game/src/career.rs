@@ -920,17 +920,23 @@ impl Career {
         (self.r32(book + 4) as i32 >> (t & 31)) & 1 != 0
     }
 
-    /// `TrickBook_CountDoneInPage` 0x164178 (five a page, `TrickBook_PageFirstTrick` 5·page, 0x1e for page 6, 0
-    /// past it)
+    /// `TrickBook_CountDoneInPage` 0x164178: of the page's `book_tricks_per_page` tricks from
+    /// `book_page_first_trick`, how many are done
     pub fn tricks_done_in_page(&self, p: i8, page: u32) -> u32 {
-        let first = if page <= 6 { 5 * page } else { 0 };
-        (0..5).filter(|i| self.trick_done(p, first + i)).count() as u32
+        let first = book_page_first_trick(page);
+        (0..book_tricks_per_page(page)).filter(|i| self.trick_done(p, first + i)).count() as u32
     }
 
-    /// `TrickBook_CountCompletePages` 0x164060
+    /// `TrickBook_IsPageComplete` 0x164020
+    pub fn page_complete(&self, p: i8, page: u32) -> bool {
+        self.tricks_done_in_page(p, page) == book_tricks_per_page(page)
+    }
+
+    /// `TrickBook_CountCompletePages` 0x164060: complete pages from the first. (Past page 6 a page is page 0's
+    /// tricks again, so a book with all 32 bits done or forced never ends, in the game as here.)
     pub fn complete_pages(&self, p: i8) -> u32 {
         let mut n = 0;
-        while self.tricks_done_in_page(p, n) == 5 {
+        while self.page_complete(p, n) {
             n += 1;
         }
         n
@@ -1606,7 +1612,17 @@ pub fn trick_matches(id: [u32; 2], info: [u32; 2]) -> bool {
     id[0] == info[0] && ((id[1] ^ info[1]) & 0x0700_0f00) == 0
 }
 
-/// `FUN_001640a8` 0x1640a8: the page a book trick is on (five a page)
+/// `TrickBook_TricksPerPage` 0x164108(page): 5
+pub fn book_tricks_per_page(_page: u32) -> u32 {
+    5
+}
+
+/// `TrickBook_PageFirstTrick` 0x164110(page): 5 · page for pages 0..6, 0 for any other (unsigned)
+pub fn book_page_first_trick(page: u32) -> u32 {
+    if page <= 6 { 5 * page } else { 0 }
+}
+
+/// `TrickBook_CountToTier` 0x1640a8: the page a book trick is on (five a page)
 pub fn trick_page(t: u32) -> u32 {
     let t = t as i32;
     if t < 5 {

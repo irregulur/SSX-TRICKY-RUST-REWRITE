@@ -299,6 +299,16 @@ block has +0xc the count and from +0x10 the strings' offsets; strings are 16-bit
   `kOvCombo` 0xe41, `kOVInvalidCard` 0x16e, ...). Use it to read which text a `Loc_GetString` call asks for.
 - `LETTER.LOC`: the English text with a few strings changed (a variant, unused).
 
+### The trick book's functions checked (row E12h; `tricky_game::career`, `tests/trickbook.rs`)
+
+- `TrickBook_IsTrickDone` 0x164258 (book +8 forced or +4 done, bit t & 31), `TrickBook_TricksPerPage` 0x164108
+  (5), `TrickBook_PageFirstTrick` 0x164110 (5 · page for 0..6, else 0, unsigned), `TrickBook_CountDoneInPage`
+  0x164178, `TrickBook_IsPageComplete` 0x164020, `TrickBook_CountCompletePages` 0x164060,
+  `TrickBook_FirstUndoneTrick` 0x1641f8 (0..0x1d, else −1), `TrickBook_CountToTier` 0x1640a8 (signed). Proven equal
+  in the runner on 3,000 career blocks × 4 players. Page 6 is bits 30, 31, 0, 1, 2 (the shift wraps) and pages past
+  6 are page 0 again, so `TrickBook_CountCompletePages` never returns on a book with all 32 bits done or forced (the
+  test keeps a hole). 6 mutants, all killed.
+
 ### The string tables' lookups checked (row E5g; `tricky_data::loc`, `tests/loc.rs`)
 
 - `Loc_GetString` 0x2c5160 and `Loc_MapId` 0x2c50b0 as `LocFile::get_raw` reads them, proven equal in the runner
