@@ -263,6 +263,7 @@ pub mod skinpart;
 pub mod riderskin;
 pub mod limbik;
 pub mod streak;
+pub mod strm;
 pub mod marker;
 pub mod attitude;
 pub mod renderstate;

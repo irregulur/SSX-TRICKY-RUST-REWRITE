@@ -1874,3 +1874,15 @@ most 0x1000 bytes (always at least one write, even of 0 or a negative size), clo
 `Host_WriteFileChecked` 0x2c87e8 is the same but answers 0 when a write fails (returning at once, the file left
 open) or the close fails. Host: the kernel's calls. Checked in the runner: 3,000 calls; 10 mutants, 9 killed, 1
 equivalent (a last piece of exactly 0x1000 bytes is one write either way).
+
+## The stream library's small calls (row E2z; `tricky_game::strm`, `tests/strm.rs`)
+
+Proven (from the disassembly): a stream handle's first word points at the header, which starts with "STRM"
+(0x4d525453); `Strm_GetHeader` 0x2c6358 answers 1 for no handle or another magic, else 0 with the header and the
+handle out. Handle +4 a word callers set (`Strm_GetWord4`), +8 bytes buffered. Header +0x20 / +0x24 the chunk table
+(16-byte entries, `Strm_GetChunk` by number from 1) and its count, +0x28 / +0x30 the buffer, +0x34 the state, +0x38
+/ +0x3c the priorities (the second given to `FileSys_SetPriority` for the operation at +0x170 when the stream
+becomes urgent while reading, state 1), +0x40 the low-water mark (`Strm_SetLowWater` makes it urgent, or not, when
+the fill at +0x48 crosses it), +0x44 urgent. `Strm_IsFinished`: state 0 and nothing buffered. `RingBuf_InRange`
+0x2c6390: start ≤ at < end, or (end below start) at ≥ start or at < end. `Strm_CalcMemSize` 0x2c6e48:
+a × 0x124 + b × 0xc + c × 16 + 0x1b8. Checked in the runner: 12,000 calls; 18 mutants, all killed.
