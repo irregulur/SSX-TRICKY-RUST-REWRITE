@@ -1346,7 +1346,7 @@ address,size,name,system,status
 0x1668f0,116,HighScore_Reset,race,ported
 0x166968,240,HighScore_Insert,race,ported
 0x166a58,536,Career_UpdateAttributes,race,ported
-0x166c70,60,Profile_NumberCharacterRecords,save,not started
+0x166c70,60,Profile_NumberCharacterRecords,save,checked
 0x166cb0,748,Career_UpdateBestStats,race,ported
 0x166fa0,60,Career_RecordBestTime,race,ported
 0x166fe0,48,Career_RecordBestScore,race,ported
@@ -2812,10 +2812,10 @@ address,size,name,system,status
 0x1ce580,44,cMCOverlayManager::~cMCOverlayManager,save,ported
 0x1ce5b0,264,MemCardOp_StartLoad,save,ported
 0x1ce6b8,72,MCOverlay_BeginLoad,save,ported
-0x1ce700,44,MCOverlay_EndLoad,save,not started
+0x1ce700,44,MCOverlay_EndLoad,save,checked
 0x1ce730,72,MCOverlay_SetSaveBytes,save,ported
 0x1ce778,264,MemCardOp_StartSave,save,ported
-0x1ce880,44,MCOverlay_EndSave,save,not started
+0x1ce880,44,MCOverlay_EndSave,save,checked
 0x1ce8b0,72,MemCardOp_Begin,save,ported
 0x1ce8f8,256,MemCard_FormatSaveTitle,save,checked
 0x1ce9f8,1068,cSelectNextEventOverlay::vf54_1ce9f8,frontend,ported
@@ -2825,9 +2825,9 @@ address,size,name,system,status
 0x1ceee0,348,MemCardOp_Update,save,ported
 0x1cf040,1512,MCOverlay_RunState,save,ported
 0x1cf628,28,MCOverlay_Draw,save,ported
-0x1cf648,76,MCOverlay_DispatchByCount,save,not started
-0x1cf698,76,MCOverlay_DispatchByMode,save,not started
-0x1cf6e8,484,MCOverlay_DrawState,save,not started
+0x1cf648,76,MCOverlay_DispatchByCount,save,checked
+0x1cf698,76,MCOverlay_DispatchByMode,save,checked
+0x1cf6e8,484,MCOverlay_DrawState,save,checked
 0x1cf8d0,68,MCOverlay_WaitTimer,save,ported
 0x1cf918,396,MCOverlay_CheckCard,save,ported
 0x1cfaa8,288,MCOverlay_State02,save,ported
@@ -2863,9 +2863,9 @@ address,size,name,system,status
 0x1d1bc0,108,MCOverlay_State24,save,ported
 0x1d1c30,332,MCOverlay_State07,save,ported
 0x1d1d80,84,MemCardOp_StartWrite,save,ported
-0x1d1dd8,84,MCOverlay_OpenSave,save,not started
-0x1d1e30,84,MCOverlay_BeginSave,save,not started
-0x1d1e88,44,MCOverlay_ResetCard,save,not started
+0x1d1dd8,84,MCOverlay_OpenSave,save,checked
+0x1d1e30,84,MCOverlay_BeginSave,save,checked
+0x1d1e88,44,MCOverlay_ResetCard,save,checked
 0x1d1eb8,96,MemCardUI_GetSlotCount,save,ported
 0x1d1f18,68,MCOverlay_SaveMore,save,ported
 0x1d1f60,108,MCOverlay_CancelSave,save,ported
@@ -2879,7 +2879,7 @@ address,size,name,system,status
 0x1d2200,44,cMCOverlayManager::vf48_1d2200,save,ported
 0x1d2230,72,cMCOverlayManager::vf51_1d2230,save,ported
 0x1d2278,76,cMCOverlayManager::vf50_1d2278,save,ported
-0x1d22c8,88,cMCOverlayManager::vf17_1d22c8,save,not started
+0x1d22c8,88,cMCOverlayManager::vf17_1d22c8,save,checked
 0x1d2320,140,cSelectNextEventOverlay::vf18_1d2320,frontend,not started
 0x1d23b0,116,cSelectNextEventOverlay::vf19_1d23b0,frontend,not started
 0x1d2428,116,cSelectNextEventOverlay::vf20_1d2428,frontend,not started
@@ -2908,20 +2908,20 @@ address,size,name,system,status
 0x1d2fc8,32,MemCard_WriteTagSET,save,ported
 0x1d2fe8,2092,MemCardUI_SetMessage,save,ported
 0x1d3818,372,MCOverlay_ReadSlotStatus,save,ported
-0x1d3a48,8,cMCOverlayManager::vf53_1d3a48,save,not started
-0x1d3a50,8,cMCOverlayManager::vf52_1d3a50,save,not started
-0x1d3a58,8,cMCOverlayManager::vf49_1d3a58,save,not started
+0x1d3a48,8,cMCOverlayManager::vf53_1d3a48,save,checked
+0x1d3a50,8,cMCOverlayManager::vf52_1d3a50,save,checked
+0x1d3a58,8,cMCOverlayManager::vf49_1d3a58,save,checked
 0x1d3a60,8,cSelectNextEventOverlay::vf46_1d3a60,frontend,not started
 0x1d3a68,8,cSelectNextEventOverlay::vf45_1d3a68,frontend,not started
 0x1d3a70,8,cSelectNextEventOverlay::vf44_1d3a70,frontend,not started
 0x1d3a78,8,cSelectNextEventOverlay::vf43_1d3a78,frontend,not started
 0x1d3a80,8,cSelectNextEventOverlay::vf42_1d3a80,frontend,not started
-0x1d3a88,8,cMCOverlayManager::vf26_1d3a88,save,not started
-0x1d3a90,8,cMCOverlayManager::vf23_1d3a90,save,not started
+0x1d3a88,8,cMCOverlayManager::vf26_1d3a88,save,checked
+0x1d3a90,8,cMCOverlayManager::vf23_1d3a90,save,checked
 0x1d3a98,8,cSelectNextEventOverlay::vf21_1d3a98,frontend,not started
-0x1d3aa0,8,cMCOverlayManager::vf16_1d3aa0,save,not started
-0x1d3aa8,8,cMCOverlayManager::vf15_1d3aa8,save,not started
-0x1d3ab0,8,cMCOverlayManager::vf13_1d3ab0,save,not started
+0x1d3aa0,8,cMCOverlayManager::vf16_1d3aa0,save,checked
+0x1d3aa8,8,cMCOverlayManager::vf15_1d3aa8,save,checked
+0x1d3ab0,8,cMCOverlayManager::vf13_1d3ab0,save,checked
 0x1d3ab8,8,cSelectNextEventOverlay::vf11_1d3ab8,frontend,not started
 0x1d3ac0,8,cSelectNextEventOverlay::vf10_1d3ac0,frontend,not started
 0x1d3ac8,8,cSelectNextEventOverlay::vf9_1d3ac8,frontend,not started
@@ -2930,8 +2930,8 @@ address,size,name,system,status
 0x1d3ae0,8,cSelectNextEventOverlay::vf6_1d3ae0,frontend,not started
 0x1d3ae8,8,cSelectNextEventOverlay::vf5_1d3ae8,frontend,not started
 0x1d3af0,8,cSelectNextEventOverlay::vf4_1d3af0,frontend,not started
-0x1d3af8,8,cSaveOverlay::vf3_1d3af8,save,not started
-0x1d3b00,8,cMCOverlayManager::vf2_1d3b00,save,not started
+0x1d3af8,8,cSaveOverlay::vf3_1d3af8,save,checked
+0x1d3b00,8,cMCOverlayManager::vf2_1d3b00,save,checked
 0x1d3b08,64,cMCOverlayManager::__tf,runtime,host
 0x1d3b88,8,MockupEditorEntry_Construct,game,not started
 0x1d3b90,28,MockupEditorEntry_Destruct,game,not started
@@ -4317,7 +4317,7 @@ address,size,name,system,status
 0x23d5b0,16,Rand_SaveGameSnapshot,common,checked
 0x23d5c0,16,Rand_LoadGameSnapshot,common,checked
 0x23d5d0,40,Debug_Printf,common,checked
-0x23d5f8,44,StaticInit_MemCard,save,not started
+0x23d5f8,44,StaticInit_MemCard,save,checked
 0x23d628,84,MemCard_AsciiToSjis,save,checked
 0x23d680,88,MemCard_SjisToAscii,save,checked
 0x23d6e0,84,MemCard_Create,save,ported

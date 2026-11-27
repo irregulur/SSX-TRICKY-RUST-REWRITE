@@ -1740,3 +1740,28 @@ Proven (from the disassembly; Ghidra was not running):
 - Checked in the runner: 400 runs, 16,000 calls of every function above (callbacks also on made-up blocks), memory
   (stack aside), answers and calls out equal; 51 mutants, 49 killed, 2 equivalent (a chunk of exactly 0x8000 cut
   to 0x8000, and where `File_GetSizeCb` keeps its handle on its own stack).
+
+## Remaining `save` / memory-card overlay helpers (row E12i; `tricky_game::memcard`, checked: `tests/save_tail.rs`)
+
+Proven (`SLUS_203.26` disassembly + runner):
+
+- **`Profile_NumberCharacterRecords` 0x166c70** (`memcard::profile_number_character_records`): iterates `i = 0..13`
+  over the `0x1c4`-byte records at `p + 0x114`, setting `+0 = i`, `+4 = 0`, `+8 = 0`.
+- **`StaticInit_MemCard` 0x23d5f8** (`memcard::static_init_memcard`): initializes the two 24-byte RNG states at
+  `0x345e58` and `0x345e70` via `Rand_Init` `0x2401a0`.
+- **Memory-card overlay dispatch & wrappers** (`memcard.rs`):
+  - `MCOverlay_EndLoad` 0x1ce700, `MCOverlay_EndSave` 0x1ce880, `MCOverlay_ResetCard` 0x1d1e88: dispatch card
+    virtuals `+0xd0`, `+0x120`, `+0x60` on `*(o + 0x224)`.
+  - `MCOverlay_OpenSave` 0x1d1dd8, `MCOverlay_BeginSave` 0x1d1e30: set `0x33efbc = 1`, dispatch card virtuals
+    `+0xf8` / `+0x100` forwarding `(a1, a2, a3)`, and store `a3` at `o + 0x24`.
+  - `MCOverlay_DispatchByCount` 0x1cf648 (`*(i32*)(o+0x44) > 0` → `+0x78` else `+0xc0`),
+    `MCOverlay_DispatchByMode` 0x1cf698 (`*(o+8) != 0` → `+0x88` else `+0xb0`), and
+    `MCOverlay_DrawState` 0x1cf6e8 (33-entry jump table `0x3920f0` mapping `*(o+0x54)` states `2..=34`, with
+    state `8` a no-op, to owner virtuals on `*(o+0x428)`).
+  - `cMCOverlayManager::vf17_1d22c8` 0x1d22c8: calls `MemCardUI_SetMessage(o, sp - 0x220, 0x100)` (`0x1d2fe8`),
+    then owner virtual `+0x80(sp - 0x220)` and owner virtual `+0xd8()`.
+  - Ten 8-byte virtual stubs: `cMCOverlayManager::{vf53_1d3a48, vf52_1d3a50, vf49_1d3a58, vf26_1d3a88, vf23_1d3a90,
+    vf16_1d3aa0, vf15_1d3aa8, vf13_1d3ab0}` and `cSaveOverlay::vf3_1d3af8` (no-ops), plus
+    `cMCOverlayManager::vf2_1d3b00` (returns `0`).
+- Checked bit-for-bit in `tests/save_tail.rs` (200 profile + 50 `StaticInit_MemCard` + 1,200 overlay dispatch
+  cases covering every `DrawState` value `-2..=40` + all 10 virtual stubs); `save` is now at 0 `not started`.

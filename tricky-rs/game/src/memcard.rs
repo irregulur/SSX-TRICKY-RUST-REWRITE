@@ -1340,3 +1340,140 @@ pub fn format_save_title(m: &mut Mem, e: &mut dyn FeEnv, o: u32, n: u32, sp: u32
     vcall(m, e, card, 0x130, &[buf]);
     e.call(m, WSTR_COPY, &[o + 0xd8, buf]);
 }
+
+/// Constants for row E12i (last 21 `save` functions):
+/// `MCOverlay` one-shot save flag (`0x33efbc`), `MemCardUI_SetMessage` (`0x1d2fe8`), and the two RNG states
+/// initialized by `StaticInit_MemCard` (`0x345e58`, `0x345e70`)
+pub const MC_SAVE_FLAG: u32 = 0x33efbc;
+pub const MEMCARD_UI_SET_MESSAGE: u32 = 0x1d2fe8;
+pub const MEMCARD_RAND_A: u32 = 0x345e58;
+pub const MEMCARD_RAND_B: u32 = 0x345e70;
+
+fn vcall_slot(m: &mut Mem, e: &mut dyn FeEnv, obj: u32, vt_off: u32, slot: u32, args: &[u32]) -> u32 {
+    let vt = m.r32(obj.wrapping_add(vt_off));
+    let adj = m.r16(vt.wrapping_add(slot)) as i16 as u32;
+    let f = m.r32(vt.wrapping_add(slot + 4));
+    let mut a = Vec::with_capacity(1 + args.len());
+    a.push(obj.wrapping_add(adj));
+    a.extend_from_slice(args);
+    e.call(m, f, &a)
+}
+
+/// `Profile_NumberCharacterRecords` 0x166c70(p): numbers the 13 `0x1c4`-byte character records starting at
+/// `p + 0x114` (`+0 = i`, `+4 = 0`, `+8 = 0`)
+pub fn profile_number_character_records(m: &mut Mem, p: u32) {
+    for i in 0..13u32 {
+        let base = p.wrapping_add(0x114 + i * 0x1c4);
+        m.w32(base, i);
+        m.w32(base + 4, 0);
+        m.w32(base + 8, 0);
+    }
+}
+
+/// `MCOverlay_EndLoad` 0x1ce700(o): calls card virtual `+0xd0/+0xd4` on `*(o + 0x224)`
+pub fn mc_overlay_end_load(m: &mut Mem, e: &mut dyn FeEnv, o: u32) {
+    let card = m.r32(o + 0x224);
+    vcall_slot(m, e, card, 0, 0xd0, &[]);
+}
+
+/// `MCOverlay_EndSave` 0x1ce880(o): calls card virtual `+0x120/+0x124` on `*(o + 0x224)`
+pub fn mc_overlay_end_save(m: &mut Mem, e: &mut dyn FeEnv, o: u32) {
+    let card = m.r32(o + 0x224);
+    vcall_slot(m, e, card, 0, 0x120, &[]);
+}
+
+/// `MCOverlay_ResetCard` 0x1d1e88(o): calls card virtual `+0x60/+0x64` on `*(o + 0x224)`
+pub fn mc_overlay_reset_card(m: &mut Mem, e: &mut dyn FeEnv, o: u32) {
+    let card = m.r32(o + 0x224);
+    vcall_slot(m, e, card, 0, 0x60, &[]);
+}
+
+/// `MCOverlay_OpenSave` 0x1d1dd8(o, a1, a2, a3): sets `0x33efbc = 1`, calls card virtual `+0xf8/+0xfc` on
+/// `*(o + 0x224)` forwarding `(a1, a2, a3)`, and stores `a3` at `o + 0x24`
+pub fn mc_overlay_open_save(m: &mut Mem, e: &mut dyn FeEnv, o: u32, a1: u32, a2: u32, a3: u32) {
+    m.w32(MC_SAVE_FLAG, 1);
+    let card = m.r32(o + 0x224);
+    vcall_slot(m, e, card, 0, 0xf8, &[a1, a2, a3]);
+    m.w32(o + 0x24, a3);
+}
+
+/// `MCOverlay_BeginSave` 0x1d1e30(o, a1, a2, a3): sets `0x33efbc = 1`, calls card virtual `+0x100/+0x104` on
+/// `*(o + 0x224)` forwarding `(a1, a2, a3)`, and stores `a3` at `o + 0x24`
+pub fn mc_overlay_begin_save(m: &mut Mem, e: &mut dyn FeEnv, o: u32, a1: u32, a2: u32, a3: u32) {
+    m.w32(MC_SAVE_FLAG, 1);
+    let card = m.r32(o + 0x224);
+    vcall_slot(m, e, card, 0, 0x100, &[a1, a2, a3]);
+    m.w32(o + 0x24, a3);
+}
+
+/// `MCOverlay_DispatchByCount` 0x1cf648(o): calls owner virtual (`*(o+0x428)`) `+0x78/+0x7c` when
+/// `*(i32*)(o+0x44) > 0`, else `+0xc0/+0xc4`
+pub fn mc_overlay_dispatch_by_count(m: &mut Mem, e: &mut dyn FeEnv, o: u32) {
+    let slot = if (m.r32(o + 0x44) as i32) > 0 { 0x78 } else { 0xc0 };
+    vcall_slot(m, e, o, 0x428, slot, &[]);
+}
+
+/// `MCOverlay_DispatchByMode` 0x1cf698(o): calls owner virtual (`*(o+0x428)`) `+0x88/+0x8c` when `*(o+8) != 0`,
+/// else `+0xb0/+0xb4`
+pub fn mc_overlay_dispatch_by_mode(m: &mut Mem, e: &mut dyn FeEnv, o: u32) {
+    let slot = if m.r32(o + 8) != 0 { 0x88 } else { 0xb0 };
+    vcall_slot(m, e, o, 0x428, slot, &[]);
+}
+
+/// `MCOverlay_DrawState` 0x1cf6e8(o): dispatches `*(o+0x54)` through the 33-entry jump table `0x3920f0`
+/// (states `2..=34`, except state `8` which does nothing) to the corresponding owner virtual on `*(o+0x428)`
+pub fn mc_overlay_draw_state(m: &mut Mem, e: &mut dyn FeEnv, o: u32) {
+    let slot: u32 = match m.r32(o + 0x54) {
+        2 => 0xe8,
+        3 => 0xe0,
+        4 => 0x100,
+        5 => 0x108,
+        6 => 0xf0,
+        7 => 0x88,
+        9 => 0xf8,
+        10 => 0x118,
+        11 => 0x120,
+        12 => 0x128,
+        13..=18 => 0x90,
+        19 => 0x98,
+        20 => 0xa0,
+        21 => 0xa8,
+        22 => 0x110,
+        23 => 0x130,
+        24 => 0x140,
+        25 => 0x138,
+        26 => 0x148,
+        27 => 0x150,
+        28 => 0xb0,
+        29..=32 => 0xb8,
+        33 => 0xc8,
+        34 => 0xd0,
+        _ => return,
+    };
+    vcall_slot(m, e, o, 0x428, slot, &[]);
+}
+
+/// `cMCOverlayManager::vf17_1d22c8` 0x1d22c8(o; sp on entry): calls `MemCardUI_SetMessage(o, sp - 0x220, 0x100)`
+/// (`0x1d2fe8`), then owner virtual `+0x80/+0x84(sp - 0x220)`, then owner virtual `+0xd8/+0xdc()`
+pub fn mc_overlay_vf17(m: &mut Mem, e: &mut dyn FeEnv, o: u32, sp: u32) {
+    let buf = sp.wrapping_sub(0x220);
+    e.call(m, MEMCARD_UI_SET_MESSAGE, &[o, buf, 0x100]);
+    vcall_slot(m, e, o, 0x428, 0x80, &[buf]);
+    vcall_slot(m, e, o, 0x428, 0xd8, &[]);
+}
+
+/// Empty virtual stubs: `cMCOverlayManager::{vf53_1d3a48, vf52_1d3a50, vf49_1d3a58, vf26_1d3a88, vf23_1d3a90,
+/// vf16_1d3aa0, vf15_1d3aa8, vf13_1d3ab0}` and `cSaveOverlay::vf3_1d3af8`
+pub fn mc_overlay_noop() {}
+
+/// `cMCOverlayManager::vf2_1d3b00` 0x1d3b00(): returns `0`
+pub fn mc_overlay_zero() -> u32 {
+    0
+}
+
+/// `StaticInit_MemCard` 0x23d5f8(): initializes the two 24-byte RNG states at `0x345e58` and `0x345e70` via
+/// `Rand_Init` (`0x2401a0`)
+pub fn static_init_memcard(m: &mut Mem) {
+    crate::copies::rand_init(m, MEMCARD_RAND_A);
+    crate::copies::rand_init(m, MEMCARD_RAND_B);
+}
