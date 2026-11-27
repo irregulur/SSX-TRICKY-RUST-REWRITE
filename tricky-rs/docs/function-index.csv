@@ -3714,8 +3714,8 @@ address,size,name,system,status
 0x21e738,80,SnowProgram_Destruct,game,checked
 0x21e788,88,OwnedBuf_Delete1,render,not started
 0x21e7e0,60,BankInstance_SetPitchBend,audio,checked
-0x21e8a0,56,cController::cController,audio,not started
-0x21e8d8,20,cController::~cController,audio,not started
+0x21e8a0,56,cController::cController,audio,checked
+0x21e8d8,20,cController::~cController,audio,checked
 0x21e8f0,220,BankInstance_Update,audio,ported
 0x21e9d0,116,cController::vf7_21e9d0,audio,ported
 0x21ea48,196,SndEvent_Tick,audio,checked
@@ -3723,7 +3723,7 @@ address,size,name,system,status
 0x21eb70,100,Audio_UpdateSystems,audio,ported
 0x21ec58,80,cController::__tf,runtime,host
 0x21eca8,52,CrowdSoundList_Construct,audio,ported
-0x21ece0,76,CrowdSoundList_Destruct,audio,not started
+0x21ece0,76,CrowdSoundList_Destruct,audio,checked
 0x21ed30,100,CrowdSoundList_Add,audio,ported
 0x21ed98,84,List_PickRandom,common,ported
 0x21edf0,124,PtrArray_FreeAll,common,checked
@@ -3739,13 +3739,13 @@ address,size,name,system,status
 0x2206c8,24,CrowdBox_Arm,world,ported
 0x2206e0,60,CrowdBox_Stop,world,ported
 0x220720,100,Crowd_StopCheer,world,ported
-0x220850,140,cCrowdSys::cCrowdSys,audio,not started
-0x2208e0,136,cCrowdSys::~cCrowdSys,audio,not started
+0x220850,140,cCrowdSys::cCrowdSys,audio,checked
+0x2208e0,136,cCrowdSys::~cCrowdSys,audio,checked
 0x220968,96,CrowdSys_UpdateBoxes,world,ported
 0x2209c8,496,Audio_LoadCrowd,audio,checked
 0x220bb8,300,CrowdSys_Free,world,not started
 0x220ce8,656,Sfx_LoadTrickConfig,audio,ported
-0x220f80,20,SoundId_Split,audio,not started
+0x220f80,20,SoundId_Split,audio,checked
 0x220f98,100,WorldEmitter_StopById,audio,ported
 0x221000,100,Audio_SetVoiceVolume,audio,ported
 0x221068,32,Audio_PlayCrowdCheer,audio,ported
@@ -3755,13 +3755,13 @@ address,size,name,system,status
 0x2210e8,440,SndSys_PushEntry,audio,ported
 0x2212a0,144,SndQueue_StartLastVoice,audio,ported
 0x221330,152,CrowdSys_StopAll,world,not started
-0x2213c8,40,cCrowdSys::vf5_2213c8,audio,not started
+0x2213c8,40,cCrowdSys::vf5_2213c8,audio,checked
 0x2213f8,44,CrowdSys_GetBoxState,world,ported
 0x221428,124,StaticInit_CrowdSys,world,checked
-0x2214a8,36,cCrowdSys::vf6_2214a8,audio,not started
+0x2214a8,36,cCrowdSys::vf6_2214a8,audio,checked
 0x2214e8,80,cCrowdSys::__tf,runtime,host
-0x221538,108,CrowdSoundSet_Destruct,audio,not started
-0x2215a8,60,Audio_SetHandlePitchBend,audio,not started
+0x221538,108,CrowdSoundSet_Destruct,audio,checked
+0x2215a8,60,Audio_SetHandlePitchBend,audio,checked
 0x221668,284,IniReader_Open,audio,ported
 0x221788,80,IniReader_Close,audio,ported
 0x2217d8,20,IniReader_GetChar,audio,ported
@@ -3774,7 +3774,7 @@ address,size,name,system,status
 0x221b60,136,IniReader_FindSectionMatching,audio,ported
 0x221be8,168,IniReader_ReadQuoted,audio,ported
 0x221c90,196,IniReader_ReadToken,audio,ported
-0x221d58,68,IniReader_ParseFloat,audio,not started
+0x221d58,68,IniReader_ParseFloat,audio,checked
 0x221da0,68,IniReader_ParseInt,audio,ported
 0x221de8,168,IniReader_Expect,audio,ported
 0x221e90,104,IniReader_AtSectionEnd,audio,ported
@@ -3796,7 +3796,7 @@ address,size,name,system,status
 0x222ab8,12,SndEvent_SetTimes,audio,checked
 0x222ac8,12,SndEvent_Enable,audio,checked
 0x222ad8,8,SndEvent_Disable,audio,checked
-0x222ae0,48,Monitor_TickCallback,audio,not started
+0x222ae0,48,Monitor_TickCallback,audio,checked
 0x222b10,144,cMonitor::cMonitor,audio,ported
 0x222ba0,144,cMonitor::~cMonitor,audio,ported
 0x222c30,32,cMonitor::vf4_222c30,audio,checked
@@ -3805,10 +3805,10 @@ address,size,name,system,status
 0x222db0,64,SndSys_CancelAllEvents,audio,checked
 0x222df0,164,SndSys_CancelEvents,audio,checked
 0x222ef8,80,cMonitor::__tf,runtime,host
-0x222fb0,56,PathX_FindFreeSlot,audio,not started
-0x222fe8,176,PathX_LoadBank,audio,not started
-0x223098,140,PathX_ReadFile,audio,not started
-0x223128,44,PathX_PollTask,audio,not started
+0x222fb0,56,PathX_FindFreeSlot,audio,checked
+0x222fe8,176,PathX_LoadBank,audio,checked
+0x223098,140,PathX_ReadFile,audio,checked
+0x223128,44,PathX_PollTask,audio,checked
 0x223158,76,PathX_TimeMs,audio,ported
 0x2231a8,44,PathDriver_GetTrackBytes,audio,ported
 0x2231d8,532,PathX_OpenSong,audio,ported

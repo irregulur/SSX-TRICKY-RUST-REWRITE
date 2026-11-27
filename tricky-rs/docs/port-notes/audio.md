@@ -2049,3 +2049,23 @@ Proven (`SLUS_203.26` disassembly + runner):
   24-byte header at `+8`, sign-extend byte 0 into `+0x3c[idx]`, zero the 8-byte callback at `+0x44+idx*8`, and set
   default 3D attenuation `(100, 0, 90, 50)` and flags.
 - Checked bit-for-bit across `tests/soundmgr_tail.rs` (reducing `audio` `not started` from 63 to 43).
+
+## `cController`, `cCrowdSys`, `IniReader`, `Monitor` & `PathX` tail (row G10t, `crowdbox.rs`, checked: `tests/crowd_pathx_tail.rs`)
+
+Proven (`SLUS_203.26` disassembly + runner):
+
+- **`cController` (`0x21e8a0`/`0x21e8d8`), `cCrowdSys` (`0x220850`/`0x2208e0`/`0x2213c8`/`0x2214a8`),
+  `CrowdSoundList_Destruct` (`0x21ece0`), `CrowdSoundSet_Destruct` (`0x221538`)**: `cCrowdSys` constructs
+  `cSpeechSys`, zeros `+0x3728`/`+0x372c`, sets vtable `0x39fc40`, initializes 3×3 `CrowdSoundList`s at `+0x3730`
+  (stride `0x54`), and publishes `gAudio` (`0x343120`); destructor tears down in reverse and tail-calls
+  `cSpeechSys::~cSpeechSys`. `cController` chains to `cCrowdSys` with vtable `0x39fad0` and zeros `+0x382c`.
+- **`SoundId_Split` (`0x220f80`), `Audio_SetHandlePitchBend` (`0x2215a8`), `IniReader_ParseFloat` (`0x221d58`),
+  `Monitor_TickCallback` (`0x222ae0`)**: `SoundId_Split` outputs `packed & 0xff` and arithmetic `packed >> 8`;
+  `Audio_SetHandlePitchBend` wraps `SndHandle_SetPitchBend(*(obj+4), bend)` in `SND_Lock`/`SND_Unlock`;
+  `IniReader_ParseFloat` skips space, reads token into `+0xc`, and calls `sscanf(..., "%f", &out)`;
+  `Monitor_TickCallback` dispatches virtual `+0x2c` on `gMonitor` (`0x343128`).
+- **`PathX_*` (`0x222fb0..0x223128`)**: `PathX_FindFreeSlot` scans 24 `0x3c`-byte slots at `0x343158` for a
+  negative first word; `PathX_ReadFile` reads a file into `"PATHXbnk"` (`EAMem_Alloc0`) via sync file ops;
+  `PathX_LoadBank` registers it (`SndBank_Register`), relocating resident header (`"PATHXbkh"`) on status `7` and
+  returning `-0x27` if read fails; `PathX_PollTask` calls `*(0x34313c)` if non-null and returns `0`.
+- Checked bit-for-bit across `tests/crowd_pathx_tail.rs` (reducing `audio` `not started` from 43 to 27).

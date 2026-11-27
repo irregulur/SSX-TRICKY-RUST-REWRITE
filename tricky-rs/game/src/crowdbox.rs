@@ -625,3 +625,211 @@ pub fn update(m: &mut dyn Mem, e: &mut dyn LoadEnv, b: u32, sp: u32) {
     put_quad(m, b + 0x10, pos);
     m.w32(b + 0x178, s7 as u32);
 }
+
+// ---- cController, cCrowdSys, IniReader, Monitor & PathX tail (row G10t) ----
+
+pub const MEM_DELETE: u32 = 0x114f80;
+pub const BANK_MONITOR_VF5: u32 = 0x20c0f8;
+pub const BANK_MONITOR_VF6: u32 = 0x20c148;
+pub const CROWD_SOUND_LIST_CTOR: u32 = 0x21eca8;
+pub const PTR_ARRAY_FREE_ALL: u32 = 0x21edf0;
+pub const CROWD_SYS_FREE: u32 = 0x220bb8;
+pub const CROWD_SYS_STOP_ALL: u32 = 0x221330;
+pub const INI_SKIP_SPACE: u32 = 0x2217f0;
+pub const INI_READ_TOKEN: u32 = 0x221c90;
+pub const SPEECH_SYS_INIT: u32 = 0x228728;
+pub const SPEECH_SYS_DTOR: u32 = 0x2287d8;
+pub const FILE_GET_SIZE: u32 = 0x2c7ec8;
+pub const FILE_OPEN_SYNC: u32 = 0x2c8d98;
+pub const FILE_READ_SYNC: u32 = 0x2c8e08;
+pub const FILE_CLOSE_SYNC: u32 = 0x2c8e48;
+pub const EAMEM_ALLOC0: u32 = 0x2ccf98;
+pub const SND_LOCK: u32 = 0x2d0908;
+pub const SND_UNLOCK: u32 = 0x2d0938;
+pub const SND_BANK_REGISTER: u32 = 0x2d0f98;
+pub const SND_BANK_GET_RESIDENT_SIZE: u32 = 0x2d1428;
+pub const SND_BANK_RELOCATE: u32 = 0x2d1448;
+pub const SND_HANDLE_SET_PITCH_BEND: u32 = 0x2d6a18;
+pub const SSCANF: u32 = 0x2fcaa0;
+
+pub const VT_CONTROLLER: u32 = 0x39fad0;
+pub const VT_CROWD_SYS: u32 = 0x39fc40;
+pub const FMT_FLOAT: u32 = 0x39fd48;
+pub const NAME_PATHX_BKH: u32 = 0x39fec8;
+pub const NAME_PATHX_BNK: u32 = 0x39fed8;
+pub const G_MONITOR: u32 = 0x343128;
+pub const G_PATHX_TASK: u32 = 0x34313c;
+pub const G_PATHX_SLOTS: u32 = 0x343158;
+
+/// `CrowdSoundList_Destruct` 0x21ece0(this, flags): call `PtrArray_FreeAll(this)` and `Mem_Delete(this)` when
+/// `flags & 1 != 0`.
+pub fn crowd_sound_list_destruct(m: &mut dyn Mem, e: &mut dyn LoadEnv, this: u32, flags: u32) {
+    e.call(m, PTR_ARRAY_FREE_ALL, &[this]);
+    if (flags & 1) != 0 {
+        e.call(m, MEM_DELETE, &[this]);
+    }
+}
+
+/// `CrowdSoundSet_Destruct` 0x221538(this, flags): destruct the three embedded `CrowdSoundList`s at `+0x30`, `+0x18`,
+/// `+0x00` with flags `2`, then `Mem_Delete(this)` when `flags & 1 != 0`.
+pub fn crowd_sound_set_destruct(m: &mut dyn Mem, e: &mut dyn LoadEnv, this: u32, flags: u32) {
+    crowd_sound_list_destruct(m, e, this.wrapping_add(0x30), 2);
+    crowd_sound_list_destruct(m, e, this.wrapping_add(0x18), 2);
+    crowd_sound_list_destruct(m, e, this, 2);
+    if (flags & 1) != 0 {
+        e.call(m, MEM_DELETE, &[this]);
+    }
+}
+
+/// `cCrowdSys::cCrowdSys` 0x220850(this): init `cSpeechSys`, clear `+0x3728`/`+0x372c`, set vtable `0x39fc40`,
+/// construct 3×3 `CrowdSoundList`s at `+0x3730` (stride `0x54`), publish `gAudio` (`0x343120`), and return `this`.
+pub fn crowd_sys_ctor(m: &mut dyn Mem, e: &mut dyn LoadEnv, this: u32) -> u32 {
+    e.call(m, SPEECH_SYS_INIT, &[this]);
+    m.w32(this + 0x3728, 0);
+    m.w32(this + 0x372c, 0);
+    m.w32(this + 4, VT_CROWD_SYS);
+    let mut set = this.wrapping_add(0x3730);
+    for _ in 0..3 {
+        e.call(m, CROWD_SOUND_LIST_CTOR, &[set]);
+        e.call(m, CROWD_SOUND_LIST_CTOR, &[set.wrapping_add(0x18)]);
+        e.call(m, CROWD_SOUND_LIST_CTOR, &[set.wrapping_add(0x30)]);
+        set = set.wrapping_add(0x54);
+    }
+    m.w32(AUDIO, this);
+    this
+}
+
+/// `cCrowdSys::~cCrowdSys` 0x2208e0(this, flags): restore vtable `0x39fc40`, call `CrowdSys_Free`, clear `gAudio`,
+/// destruct the 3 `CrowdSoundSet`s in reverse (`+0x37d8`, `+0x3784`, `+0x3730`), and tail-call `cSpeechSys::~cSpeechSys`.
+pub fn crowd_sys_dtor(m: &mut dyn Mem, e: &mut dyn LoadEnv, this: u32, flags: u32) {
+    m.w32(this + 4, VT_CROWD_SYS);
+    e.call(m, CROWD_SYS_FREE, &[this]);
+    m.w32(AUDIO, 0);
+    let start = this.wrapping_add(0x3730);
+    if start != 0 {
+        let mut cur = this.wrapping_add(0x382c);
+        while cur != start {
+            cur = cur.wrapping_sub(0x54);
+            crowd_sound_set_destruct(m, e, cur, 0);
+        }
+    }
+    e.call(m, SPEECH_SYS_DTOR, &[this, flags]);
+}
+
+/// `cController::cController` 0x21e8a0(this): construct base `cCrowdSys`, zero `+0x382c`, set vtable `0x39fad0`,
+/// and return `this`.
+pub fn controller_ctor(m: &mut dyn Mem, e: &mut dyn LoadEnv, this: u32) -> u32 {
+    crowd_sys_ctor(m, e, this);
+    m.w32(this + 0x382c, 0);
+    m.w32(this + 4, VT_CONTROLLER);
+    this
+}
+
+/// `cController::~cController` 0x21e8d8(this, flags): restore vtable `0x39fad0` and tail-call `cCrowdSys::~cCrowdSys`.
+pub fn controller_dtor(m: &mut dyn Mem, e: &mut dyn LoadEnv, this: u32, flags: u32) {
+    m.w32(this + 4, VT_CONTROLLER);
+    crowd_sys_dtor(m, e, this, flags);
+}
+
+/// `SoundId_Split` 0x220f80(_this, packed, out_lo, out_hi): split `packed` into `packed & 0xff` and `(packed as i32) >> 8`.
+pub fn sound_id_split(m: &mut dyn Mem, packed: u32, out_lo: u32, out_hi: u32) {
+    m.w32(out_lo, packed & 0xff);
+    m.w32(out_hi, ((packed as i32) >> 8) as u32);
+}
+
+/// `cCrowdSys::vf5_2213c8` 0x2213c8(this): call `CrowdSys_StopAll(this)` and tail-call `cBankMonitor::vf5(this)`.
+pub fn crowd_sys_vf5(m: &mut dyn Mem, e: &mut dyn LoadEnv, this: u32) {
+    e.call(m, CROWD_SYS_STOP_ALL, &[this]);
+    e.call(m, BANK_MONITOR_VF5, &[this]);
+}
+
+/// `cCrowdSys::vf6_2214a8` 0x2214a8(this, arg64): forward `(this, arg64)` to `cBankMonitor::vf6` (`0x20c148`).
+pub fn crowd_sys_vf6(m: &mut dyn Mem, e: &mut dyn LoadEnv, this: u32, arg64: u64) -> u32 {
+    e.call(m, BANK_MONITOR_VF6, &[this, arg64 as u32, (arg64 >> 32) as u32])
+}
+
+/// `Audio_SetHandlePitchBend` 0x2215a8(obj, bend): under `SND_Lock`/`SND_Unlock`, call
+/// `SndHandle_SetPitchBend(*(obj+4), bend)`.
+pub fn audio_set_handle_pitch_bend(m: &mut dyn Mem, e: &mut dyn LoadEnv, obj: u32, bend: u32) {
+    e.call(m, SND_LOCK, &[]);
+    let h = m.r32(obj + 4);
+    e.call(m, SND_HANDLE_SET_PITCH_BEND, &[h, bend]);
+    e.call(m, SND_UNLOCK, &[]);
+}
+
+/// `IniReader_ParseFloat` 0x221d58(reader, out_sp): skip whitespace, read next token into `reader+0xc`, parse with
+/// `sscanf(reader+0xc, "%f", out_sp)`, and return the parsed `f32`.
+pub fn ini_reader_parse_float(m: &mut dyn Mem, e: &mut dyn LoadEnv, reader: u32, out_sp: u32) -> f32 {
+    e.call(m, INI_SKIP_SPACE, &[reader]);
+    e.call(m, INI_READ_TOKEN, &[reader]);
+    e.call(m, SSCANF, &[reader.wrapping_add(0xc), FMT_FLOAT, out_sp]);
+    f32::from_bits(m.r32(out_sp))
+}
+
+/// `Monitor_TickCallback` 0x222ae0(): invoke virtual `+0x2c` (this-adjust `+0x28`) on `gMonitor` (`0x343128`).
+pub fn monitor_tick_callback(m: &mut dyn Mem, e: &mut dyn LoadEnv) {
+    let mon = m.r32(G_MONITOR);
+    let vt = m.r32(mon + 4);
+    let adj = (m.r16(vt + 0x28) as i16) as i32 as u32;
+    let f = m.r32(vt + 0x2c);
+    e.call(m, f, &[mon.wrapping_add(adj)]);
+}
+
+/// `PathX_FindFreeSlot` 0x222fb0(): return the first index `0..24` in `gPathXSlots` (`0x343158`, stride `0x3c`)
+/// whose first word is `< 0`, or `24` if none.
+pub fn pathx_find_free_slot(m: &dyn Mem) -> u32 {
+    for i in 0..24u32 {
+        if (m.r32(G_PATHX_SLOTS + i * 0x3c) as i32) < 0 {
+            return i;
+        }
+    }
+    24
+}
+
+/// `PathX_ReadFile` 0x223098(path, sp): query `File_GetSize`, allocate `"PATHXbnk"` via `EAMem_Alloc0`, read the
+/// whole file synchronously (`File_OpenSync` / `File_ReadSync` / `File_CloseSync`), and return the buffer pointer.
+pub fn pathx_read_file(m: &mut dyn Mem, e: &mut dyn LoadEnv, path: u32, sp: u32) -> u32 {
+    let sz = e.call(m, FILE_GET_SIZE, &[path]);
+    let buf = e.call(m, EAMEM_ALLOC0, &[NAME_PATHX_BNK, sz, 0]);
+    e.call(m, FILE_OPEN_SYNC, &[path, 1, 0, sp]);
+    let fh = m.r32(sp);
+    e.call(m, FILE_READ_SYNC, &[fh, 0, buf, sz, 0]);
+    let fh2 = m.r32(sp);
+    e.call(m, FILE_CLOSE_SYNC, &[fh2, 0]);
+    buf
+}
+
+/// `PathX_LoadBank` 0x222fe8(slot, path, sp): read bank file via `PathX_ReadFile`, store pointer at
+/// `gPathXSlots[slot]+0x20` (returning `-0x27` if null), register with `SndBank_Register`, and if status `== 7`,
+/// allocate `"PATHXbkh"` resident header (`SndBank_GetResidentSize`) and relocate via `SndBank_Relocate`. Returns
+/// the bank ID written to `*sp`.
+pub fn pathx_load_bank(m: &mut dyn Mem, e: &mut dyn LoadEnv, slot: u32, path: u32, sp: u32) -> u32 {
+    m.w32(sp, 0xffff_ffff);
+    let buf = pathx_read_file(m, e, path, sp.wrapping_add(0x10));
+    let dst = G_PATHX_SLOTS.wrapping_add(slot.wrapping_mul(0x3c)).wrapping_add(0x20);
+    m.w32(dst, buf);
+    if buf == 0 {
+        return (-0x27i32) as u32;
+    }
+    let rc = e.call(m, SND_BANK_REGISTER, &[sp, buf]);
+    if rc == 7 {
+        let bank_id = m.r32(sp);
+        let res_sz = e.call(m, SND_BANK_GET_RESIDENT_SIZE, &[bank_id]);
+        let res = e.call(m, EAMEM_ALLOC0, &[NAME_PATHX_BKH, res_sz, 0]);
+        if res != 0 {
+            let bank_id2 = m.r32(sp);
+            e.call(m, SND_BANK_RELOCATE, &[res, bank_id2]);
+            m.w32(dst, res);
+        }
+    }
+    m.r32(sp)
+}
+
+/// `PathX_PollTask` 0x223128(): invoke `*(0x34313c)` if non-null and return `0`.
+pub fn pathx_poll_task(m: &mut dyn Mem, e: &mut dyn LoadEnv) -> u32 {
+    let cb = m.r32(G_PATHX_TASK);
+    if cb != 0 {
+        e.call(m, cb, &[]);
+    }
+    0
+}
