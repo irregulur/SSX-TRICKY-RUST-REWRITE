@@ -659,3 +659,12 @@ Named in Ghidra after the ported Rust and these notes, each read there: `ReplayC
 at 0x1ece08..0x1ece20). The snapshot loads `cComputer::LoadSnapshot` 0x13a4b8 and `cPlayer::LoadSnapshot` 0x153450
 (made functions in Ghidra) are the vtable slots after `SaveSnapshot` (0x36aa0c, 0x36f264): `Boarder_LoadSnapshot`,
 then `Replay_Read` of 0x40 / 0xc bytes at +0x860.
+
+## `Huff_CreateHeader` 0x241bb8 (row E1l, proven, checked in `tests/common_replay_tail.rs`)
+
+- Allocates `0x84` bytes via `Compress_Alloc` 0x2cc958 (returning `0` on null), zeroes the block (`memset`
+  0x2fb468), writes magic `"FFUH"` (`0x48554646`) at `+0x0`, size `0x84` at `+0x4`, version `100` (`0x64`) at
+  `+0x8`, capabilities `0xf` at `+0xc`, flag `1` at `+0x1c`, and the five codec strings from `0x3a4ad8..0x3a4b14`
+  (`"FrANK G. Barchard"`, `"1.03"`, `"huf"`, `"Huffman"`, `"Huffman RLE"`). Ported in `tricky_game::replay`
+  (`huff_create_header`, `huff_header_bytes`), checked bit-for-bit across 200 alignments + null path against
+  real ELF `memset`.

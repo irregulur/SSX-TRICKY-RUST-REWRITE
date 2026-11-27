@@ -72,17 +72,26 @@ pub struct Mem {
     ram: Vec<u8>,
     spr: Vec<u8>,
     io: Vec<u8>,
+    vu0_data: Vec<u8>,
     gs: Vec<u8>,
     heap: u32,
 }
 
-/// The EE's hardware registers and the GS's privileged ones (see [`Mem`])
+/// The EE's hardware registers, VU0 data memory (4 KiB) and the GS's privileged ones (see [`Mem`])
 pub const IO_REGS: u32 = 0x1000_0000;
+pub const VU0_DATA: u32 = 0x1100_4000;
 pub const GS_REGS: u32 = 0x1200_0000;
 
 impl Mem {
     fn new() -> Mem {
-        Mem { ram: vec![0; RAM_SIZE], spr: vec![0; SCRATCHPAD_SIZE], io: vec![0; 0x1_0000], gs: vec![0; 0x2000], heap: HEAP_BASE }
+        Mem {
+            ram: vec![0; RAM_SIZE],
+            spr: vec![0; SCRATCHPAD_SIZE],
+            io: vec![0; 0x1_0000],
+            vu0_data: vec![0; 0x1000],
+            gs: vec![0; 0x2000],
+            heap: HEAP_BASE,
+        }
     }
 
     fn slice(&mut self, addr: u32, len: usize) -> Option<&mut [u8]> {
@@ -93,6 +102,10 @@ impl Mem {
         if (IO_REGS..IO_REGS + 0x1_0000).contains(&addr) {
             let o = (addr - IO_REGS) as usize;
             return self.io.get_mut(o..o + len);
+        }
+        if (VU0_DATA..VU0_DATA + 0x1000).contains(&addr) {
+            let o = (addr - VU0_DATA) as usize;
+            return self.vu0_data.get_mut(o..o + len);
         }
         if (GS_REGS..GS_REGS + 0x2000).contains(&addr) {
             let o = (addr - GS_REGS) as usize;

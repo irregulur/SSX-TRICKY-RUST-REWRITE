@@ -366,3 +366,38 @@ pub fn record_or_play(ctl: &mut Control, input: &mut Input, pad: &mut u32) -> bo
         _ => false,
     }
 }
+
+/// Size in bytes of the `HUFF` codec descriptor built by `Huff_CreateHeader` 0x241bb8.
+pub const HUFF_HEADER_SIZE: u32 = 0x84;
+
+/// Fill the `0x84`-byte `HUFF` codec descriptor (`Huff_CreateHeader` 0x241bb8: magic `"FFUH"` `0x48554646`,
+/// size `0x84`, version `100`, capabilities `0xf`, flag `+0x1c = 1`, and the five strings from `0x3a4ad8..0x3a4b14`).
+pub fn huff_header_bytes() -> [u8; 0x84] {
+    let mut b = [0u8; 0x84];
+    b[0x00..0x04].copy_from_slice(&0x4855_4646u32.to_le_bytes());
+    b[0x04..0x08].copy_from_slice(&0x84u32.to_le_bytes());
+    b[0x08..0x0c].copy_from_slice(&0x64u32.to_le_bytes());
+    b[0x0c..0x10].copy_from_slice(&0x0fu32.to_le_bytes());
+    b[0x1c..0x20].copy_from_slice(&1u32.to_le_bytes());
+    b[0x24..0x36].copy_from_slice(b"FrANK G. Barchard\0");
+    b[0x44..0x49].copy_from_slice(b"1.03\0");
+    b[0x4c..0x50].copy_from_slice(b"huf\0");
+    b[0x54..0x5c].copy_from_slice(b"Huffman\0");
+    b[0x64..0x70].copy_from_slice(b"Huffman RLE\0");
+    b
+}
+
+/// `Huff_CreateHeader` 0x241bb8(): allocates `0x84` bytes via `Compress_Alloc` (`0x2cc958`), returns `0` if null,
+/// zeroes `0x84` bytes (`memset` `0x2fb468`), writes the `HUFF` codec descriptor fields and metadata strings, and
+/// returns the allocated pointer.
+pub fn huff_create_header(m: &mut crate::pf::Mem, alloc: &mut dyn FnMut(&mut crate::pf::Mem, u32) -> u32) -> u32 {
+    let p = alloc(m, HUFF_HEADER_SIZE);
+    if p == 0 {
+        return 0;
+    }
+    let bytes = huff_header_bytes();
+    for (i, &v) in bytes.iter().enumerate() {
+        m.w8(p + i as u32, v);
+    }
+    p
+}

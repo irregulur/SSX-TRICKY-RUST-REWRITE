@@ -3,7 +3,30 @@
 //! (`cWorldIntersectType` +0x48, 0x25c7c8) that finds the first triangle a query hits, trying the last hit's quad
 //! first. Checked against the game in the function runner (`tests/terrain.rs`).
 
+use crate::pf::Mem;
 use crate::worldline::{Hit, WorldLine};
+
+/// VU0 data memory output base (`0x11004200`, qword 32) and byte count (`0x640` = 100 quadwords = 10×10 grid)
+/// read by `Vu0_CopyOutData` 0x257708.
+pub const VU0_OUT_ADDR: u32 = 0x1100_4200;
+pub const VU0_OUT_BYTES: usize = 0x640;
+
+/// `Vu0_CopyOutData` 0x257708(_, dst): copies 10 × `0xa0` = `0x640` bytes (100 quadwords) from VU0 data memory
+/// `0x11004200` into `dst`.
+pub fn vu0_copy_out_data(m: &mut Mem, dst: u32) {
+    let mut buf = [0u8; VU0_OUT_BYTES];
+    for (i, b) in buf.iter_mut().enumerate() {
+        *b = m.r8(VU0_OUT_ADDR + i as u32);
+    }
+    for (i, &b) in buf.iter().enumerate() {
+        m.w8(dst + i as u32, b);
+    }
+}
+
+/// `Vu0_GetVi1` 0x257780: `cfc2 $v0, vi1` (returns VU0 integer register `vi1` zero-extended to `u32`).
+pub fn vu0_get_vi1(vi1: u16) -> u32 {
+    vi1 as u32
+}
 
 type V4 = [f32; 4];
 

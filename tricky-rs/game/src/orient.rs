@@ -222,6 +222,23 @@ pub fn quat_multiply(p: V4, q: V4) -> V4 {
     ]
 }
 
+/// `Quat_RotateByVecToVec` 0x250728: `q` right-multiplied by the rotation taking `a` to `b` (both unit length,
+/// four lanes): identical to [`rotate_vec_to_vec`] (`0x2508b8`) except the final product is `q · delta` instead of
+/// `delta · q`.
+pub fn rotate_by_vec_to_vec(q: V4, a: V4, b: V4) -> V4 {
+    let c = crate::probe::cross(a, b);
+    let s = crate::jump::dot(c, c).sqrt();
+    if s == 0.0 {
+        return q;
+    }
+    let k = 1.0 / s;
+    let axis = [c[0] * k, c[1] * k, c[2] * k, c[3] * k];
+    let s = if 0.99999 < s { 0.99999 } else { s };
+    let angle = if crate::jump::dot(a, b) < 0.0 { PI - math::asin(s) } else { math::asin(s) };
+    let (sin, cos) = math::sin_cos(angle * 0.5);
+    quat_multiply(q, [cos, sin * axis[0], sin * axis[1], sin * axis[2]])
+}
+
 /// `Quat_RotateVecToVec` 0x2508b8: `q` turned further by the rotation taking `a` to `b` (both unit length, four
 /// lanes): the axis a × b (vopmula / vopmsub) and its length s (vsqrt; 0: `q` as it was), the axis divided by s
 /// (vdiv, vmulq), the angle asin(min(s, 0.99999)), or π less it when a · b < 0, then (cos ½θ, sin ½θ · axis) · q

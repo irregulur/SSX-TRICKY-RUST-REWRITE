@@ -36,3 +36,14 @@ left equivalent: a self-copy, a zero written over a zero). The 28 `Vec4_ScaleCop
 source and destination are the same (then `v0` is left as it was); `Rand_Init` copies 24 bytes from 0x3a4a00;
 `Vec3_PackShort` writes x, y, z × 32767 (0x46fffe00, `cvt.w.s`) as halfwords at `base + 6i`;
 `PtrArray_FreeAll` frees and clears each set pointer, re-reading the (signed) count every pass, then zeroes it.
+
+## Remaining `common` helpers (row E1l, proven, checked in `tests/common_replay_tail.rs`)
+
+- `Quat_RotateByVecToVec` 0x250728 (`tricky_game::orient::rotate_by_vec_to_vec`, 5,000 cases): identical to
+  `Quat_RotateVecToVec` 0x2508b8 except the final quaternion product is right-multiplied (`q · delta`) instead of
+  left-multiplied (`delta · q`).
+- `Vu0_CopyOutData` 0x257708 (`tricky_game::terrain::vu0_copy_out_data`, 500 cases; `tools/r5900` maps VU0 data
+  memory `0x11004000..0x11005000`): copies 10 × `0xa0` = `0x640` bytes (100 quadwords, the 10 × 10 patch grid)
+  from VU0 data memory `0x11004200` into `$a1`.
+- `Vu0_GetVi1` 0x257780 (`tricky_game::terrain::vu0_get_vi1`, 2,005 cases): `cfc2 $v0, vi1` (returns VU0 integer
+  register `vi1`, zero-extended to `u32`).
