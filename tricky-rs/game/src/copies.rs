@@ -119,3 +119,13 @@ pub fn ptr_array_free_all(m: &mut Mem, e: &mut dyn FeEnv, arr: u32) {
 
 /// `Misc_EmptyStubA` 0x256100(...): varargs empty stub (spills `$a1..$t3` into its own stack frame and returns)
 pub fn empty_stub() {}
+
+/// `SnowProgram_Destruct` 0x21e738(p, how): deletes `*(u32*)p` (`Mem_Delete` 0x114f80), then deletes `p` when
+/// `how` has bit 0
+pub fn snow_program_destruct(m: &mut Mem, e: &mut dyn FeEnv, p: u32, how: u32) {
+    let inner = m.r32(p);
+    e.call(m, MEM_DELETE, &[inner]);
+    if how & 1 != 0 {
+        e.call(m, MEM_DELETE, &[p]);
+    }
+}

@@ -435,3 +435,22 @@ Row X3c (proven, 2026-11-24): `ParticleSys_CalcBounds` 0x1d5b60 takes the longes
 (the spread doubled first, `add.s f2, f0, f0` at 0x1d5bb4: one rounding), not `(base + spread) + spread`; the two
 part by one ulp on rare records (the emitter test's case 134: the box's min y 0xc36a388b against 0xc36a388a). Fixed in
 `emitter::calc_bounds`; `tests/emitter.rs` passes again.
+
+## E1m: `MockupEditor` and `SnowProgram_Destruct` (`game/src/mockup.rs`, `game/src/copies.rs`, `tests/game_tail.rs`)
+
+Proven (`SLUS_203.26` disassembly + runner):
+
+- **`MockupEditor`** (`0x1d3b88..0x1d4de8`, 25 functions): a 20-item HUD layout mockup tool (`+0` selected index,
+  `+4` count, `+8..+0x1098` twenty `0xd4`-byte `MockupItem` records, `+0x1098` open flag, `+0x109c/+0x10a0` target
+  coords). `MockupEditor_Update` `0x1d47f0` polls pad 0 (`Input_GetDevice(gApp+0x24, 0)`), opens on held `0x400` +
+  pressed `0x100`, computes step count (`1` or `3` with `0x200`, `+8` with `0x1000`), edits x/y (axes `0/1`) when
+  `cur & 0x2400 == 0` or sx/sy (axes `3/4`) when `cur & 0x400 != 0`, switches items on `0x2000` + `4/8`, invokes
+  empty item hooks on `0x10/0x40/0x20`, and closes on `0x80`. `MockupEditor_DrawItemInfo` `0x1d3c00` sets renderer
+  state `+0x1d4` (0x13), copies colour `+0x2c` to `0x337fe8`, steps blink counter `0x33f010` (`0..=40`, dimming
+  selected alpha ×`0.4` when `>= 31`), and draws kind 3 sprites (`SpriteSet_GetRect` + `Sprite_DrawRectScaled`,
+  defaulting scale to `(1, 1)` when `sx == -1` or `sy == -1`) or kind 1/2 aligned shadowed text.
+  `MockupEditor_DrawItems` `0x1d4de8` adds four demo items when `mode == 0`.
+- **`SnowProgram_Destruct` 0x21e738** (`copies::snow_program_destruct`): calls `Mem_Delete(*(u32*)p)` (`0x114f80`),
+  then `Mem_Delete(p)` when `how` has bit 0.
+- Checked bit-for-bit in `tests/game_tail.rs` (2,600 cases across all 26 functions); `game` is now at 0
+  `not started`.

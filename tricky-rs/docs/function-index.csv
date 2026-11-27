@@ -2933,31 +2933,31 @@ address,size,name,system,status
 0x1d3af8,8,cSaveOverlay::vf3_1d3af8,save,checked
 0x1d3b00,8,cMCOverlayManager::vf2_1d3b00,save,checked
 0x1d3b08,64,cMCOverlayManager::__tf,runtime,host
-0x1d3b88,8,MockupEditorEntry_Construct,game,not started
-0x1d3b90,28,MockupEditorEntry_Destruct,game,not started
-0x1d3bb0,80,MockupItem_Init,game,not started
-0x1d3c00,576,MockupEditor_DrawItemInfo,game,not started
-0x1d3e40,240,MockupItem_Increase,game,not started
-0x1d3f30,240,MockupItem_Decrease,game,not started
-0x1d41c0,8,MockupItem_SetAxis,game,not started
-0x1d41c8,8,MockupItem_StubA,game,not started
-0x1d41d0,8,MockupItem_StubB,game,not started
-0x1d41d8,124,MockupEditor_Init,game,not started
-0x1d4258,148,MockupEditor_Delete,game,not started
-0x1d42f0,72,MockupEditor_Reset,game,not started
-0x1d4338,216,MockupEditor_Draw,game,not started
-0x1d4410,296,MockupEditor_AddSprite,game,not started
-0x1d4538,296,MockupEditor_AddLocText,game,not started
-0x1d4660,304,MockupEditor_AddItem,game,not started
-0x1d4790,44,MockupEditor_NextItem,game,not started
-0x1d47c0,44,MockupEditor_PrevItem,game,not started
-0x1d47f0,1260,MockupEditor_Update,game,not started
-0x1d4ce0,12,MockupEditor_SetTarget,game,not started
-0x1d4cf0,12,MockupEditor_Open,game,not started
-0x1d4d00,8,MockupEditor_Close,game,not started
-0x1d4d08,108,MockupEditor_ForEachA,game,not started
-0x1d4d78,108,MockupEditor_ForEachB,game,not started
-0x1d4de8,408,MockupEditor_DrawItems,game,not started
+0x1d3b88,8,MockupEditorEntry_Construct,game,checked
+0x1d3b90,28,MockupEditorEntry_Destruct,game,checked
+0x1d3bb0,80,MockupItem_Init,game,checked
+0x1d3c00,576,MockupEditor_DrawItemInfo,game,checked
+0x1d3e40,240,MockupItem_Increase,game,checked
+0x1d3f30,240,MockupItem_Decrease,game,checked
+0x1d41c0,8,MockupItem_SetAxis,game,checked
+0x1d41c8,8,MockupItem_StubA,game,checked
+0x1d41d0,8,MockupItem_StubB,game,checked
+0x1d41d8,124,MockupEditor_Init,game,checked
+0x1d4258,148,MockupEditor_Delete,game,checked
+0x1d42f0,72,MockupEditor_Reset,game,checked
+0x1d4338,216,MockupEditor_Draw,game,checked
+0x1d4410,296,MockupEditor_AddSprite,game,checked
+0x1d4538,296,MockupEditor_AddLocText,game,checked
+0x1d4660,304,MockupEditor_AddItem,game,checked
+0x1d4790,44,MockupEditor_NextItem,game,checked
+0x1d47c0,44,MockupEditor_PrevItem,game,checked
+0x1d47f0,1260,MockupEditor_Update,game,checked
+0x1d4ce0,12,MockupEditor_SetTarget,game,checked
+0x1d4cf0,12,MockupEditor_Open,game,checked
+0x1d4d00,8,MockupEditor_Close,game,checked
+0x1d4d08,108,MockupEditor_ForEachA,game,checked
+0x1d4d78,108,MockupEditor_ForEachB,game,checked
+0x1d4de8,408,MockupEditor_DrawItems,game,checked
 0x1d50b0,208,ParticleSys_InitEmitter,render,checked
 0x1d5180,360,ParticleSys_RandomizeFactors,render,ported
 0x1d52e8,20,ParticleSys_SetSizeRange,render,checked
@@ -3711,7 +3711,7 @@ address,size,name,system,status
 0x21e690,28,Audio_GetMusicFxThunk,audio,not started
 0x21e6c0,28,cBXAudio::vf3_21e6c0,audio,ported
 0x21e6e8,80,cBXAudio::__tf,runtime,host
-0x21e738,80,SnowProgram_Destruct,game,not started
+0x21e738,80,SnowProgram_Destruct,game,checked
 0x21e788,88,OwnedBuf_Delete1,render,not started
 0x21e7e0,60,BankInstance_SetPitchBend,audio,checked
 0x21e8a0,56,cController::cController,audio,not started
