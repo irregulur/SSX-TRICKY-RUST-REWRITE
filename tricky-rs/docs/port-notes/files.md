@@ -299,6 +299,46 @@ block has +0xc the count and from +0x10 the strings' offsets; strings are 16-bit
   `kOvCombo` 0xe41, `kOVInvalidCard` 0x16e, ...). Use it to read which text a `Loc_GetString` call asks for.
 - `LETTER.LOC`: the English text with a few strings changed (a variant, unused).
 
+### EA's text library (row E5f; `tricky_game::wstr`, checked: `tests/wstr.rs`)
+
+Proven (16-bit strings, `lib-text`):
+
+- `WStr_Len` 0x2c52f8, `WStr_NCmp` 0x2c5438 (the difference of the first differing characters within n, stopping
+  at the first string's end; n ≤ 0 gives 0), `WStr_Cmp` 0x2c5418 (n = 0x7fffffff), `WStr_Find` 0x2c5380 (the
+  first index, −1; always −1 in an empty string, 0 for an empty needle otherwise), `WStr_NCopy` 0x2c54b8 /
+  `WStr_CopyAll` 0x2c5498 (a 0 always written), `WStr_FromAscii` 0x2c5510, `WStr_FormatArgs` 0x2c5578 (`%1` and
+  `%2` replaced by two strings, any other `%` kept; `WStr_FormatThunk` 0x2c5558 passes 0 for the second).
+- The wide `printf`, `WStr_VFormat` 0x2c48e8(dst, fmt, args in 8-byte slots) and `WStr_Sprintf` 0x2c4e90 (spills
+  a2..t3 as the slots). Flags `-` 0x10, `+` 1, ` ` 4, `#` 2, `0` 8; width and precision from `*` (an int slot) or
+  digits that start with 1-9. A precision written `.0…` is none: the 0 becomes the conversion and is printed as
+  it is (`%.0f` prints `0f`, taking no argument). Unknown conversions print themselves (`%%` → `%`); a `%` at the
+  end prints a 0 character and reads on past the format's end.
+- Every number goes through a double: `__floatsidf`, then `__fixdfsi` (signed) or `__fixunsdfsi` (unsigned, 0 for
+  anything negative): so `%u` `%x` `%o` `%p` print 0 for 0x80000000 and up. Only `%f` (flag 0x40) prints a
+  fraction: `%e` `%E` `%g` `%G` print the integer part like `%d` (−0.5 prints `-0`). The precision only reaches
+  `%f` (default 6). `%p` / `%P` are 8 wide, zero-padded, whatever the width. `%c` takes 16 bits, `%C` 8, `%s` a
+  16-bit string, `%S` an 8-bit one, `(null)` for 0; `%n` stores the count so far.
+- `Fmt_WriteNumber` 0x2c45e0 builds the number backwards in a 127-character stack buffer: with `0` (and not `-`)
+  zeros up to the width first, so the sign comes on top (`%05d` of −42 is `-00042`); the sign (`-` below 0; with
+  `+`: `+` above 0 and a space at 0; with ` ` alone a space at 0 and above), `0` / `0x` with `#` in base 8 / 16;
+  then padding to the width (zeros with `0`, else spaces), or spaces after the copy with `-`. Lengths are
+  `WStr_Len` of the buffer, so a 0 character in it ends the number.
+- `Fmt_WriteFixed` 0x2c4508(p, x, prec) writes decpt + prec + 1 characters backwards from `fcvt`'s digits
+  ('0' past their end), the point at prec. So there is no leading 0 (0.5 → `.500000`); below 0.1 the point is
+  never written and the first character is the byte before `fcvt`'s buffer (inferred: the top byte of the newlib
+  heap chunk's size word, 0), which hides the whole number (0.05 prints nothing, or the width's padding). When
+  decpt + prec < −1 (0.005 at 0 places, under 1e-7 at 6) the loop never ends; the port panics there.
+- `fcvt` 0x2fa330 → `fcvtbuf` 0x303658 (not newlib's usual): between −1 and 1 exclusive `_dtoa_r` mode 2 with
+  prec *significant* digits, else mode 3 with prec digits after the point; trailing zeros dropped; then zeros
+  added until the string is prec long. Rounding to nearest, ties to even (Rust's exact formatting gives the same
+  digits on every case tried). Its buffer grows with `_realloc_r` when prec ≥ its length.
+- Checked in the runner: 20,000 helper calls and 100,000 random formats (every flag, `*` widths −6..39 and
+  precisions 0..7, every conversion and 3 unknown ones, a `%` at the end, null strings, `%n`; a third through
+  `WStr_Sprintf`), 2.57 million characters written; the C library's heap answered by a bump allocator with
+  newlib-like chunk headers. 37 mutants: 31 killed, 6 equivalent (`WStr_NCmp` stopping at either string's end,
+  `fcvt`'s zero stripping and padding beyond the digits read, the `n != −1` guard past the panic, the second
+  padding's zeros after the first filled the width, a width starting with 0 that the flag takes first).
+
 ## Trick book, `TRICKDEF.DAT` (row E5d)
 
 Proven (`tricky-data/src/trickdef.rs`): `TrickDef_Load` 0x154580 reads `data/tutorial/trickdef.dat` whole

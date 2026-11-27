@@ -57,6 +57,7 @@ pub mod animmode;
 pub mod animpose;
 pub mod animseq;
 pub mod snowfall;
+pub mod wstr;
 pub mod fe_character;
 pub mod fog;
 pub mod fe_title;

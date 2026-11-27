@@ -6192,23 +6192,23 @@ address,size,name,system,status
 0x2c34d8,104,BTree_EmitSymbol,lib-compress,checked
 0x2c3540,492,BTree_Decode,lib-compress,checked
 0x2c3730,3396,Huff_Decode,lib-compress,checked
-0x2c4478,96,Fmt_WriteDigits,lib-text,not started
-0x2c44d8,44,Fmt_WriteAbsDigits,lib-text,not started
-0x2c4508,216,Fmt_WriteFixed,lib-text,not started
-0x2c45e0,772,Fmt_WriteNumber,lib-text,not started
-0x2c48e8,716,WStr_VFormat,lib-text,ported
-0x2c4e90,68,WStr_Sprintf,lib-text,not started
+0x2c4478,96,Fmt_WriteDigits,lib-text,checked
+0x2c44d8,44,Fmt_WriteAbsDigits,lib-text,checked
+0x2c4508,216,Fmt_WriteFixed,lib-text,checked
+0x2c45e0,772,Fmt_WriteNumber,lib-text,checked
+0x2c48e8,716,WStr_VFormat,lib-text,checked
+0x2c4e90,68,WStr_Sprintf,lib-text,checked
 0x2c50b0,172,Loc_MapId,lib-text,ported
 0x2c5160,404,Loc_GetString,lib-text,ported
-0x2c52f8,52,WStr_Len,lib-text,not started
-0x2c5380,148,WStr_Find,lib-text,not started
-0x2c5418,32,WStr_Cmp,lib-text,not started
-0x2c5438,96,WStr_NCmp,lib-text,not started
-0x2c5498,32,WStr_CopyAll,lib-text,not started
-0x2c54b8,88,WStr_NCopy,lib-text,not started
-0x2c5510,72,WStr_FromAscii,lib-text,not started
-0x2c5558,28,WStr_FormatThunk,lib-text,not started
-0x2c5578,228,WStr_FormatArgs,lib-text,not started
+0x2c52f8,52,WStr_Len,lib-text,checked
+0x2c5380,148,WStr_Find,lib-text,checked
+0x2c5418,32,WStr_Cmp,lib-text,checked
+0x2c5438,96,WStr_NCmp,lib-text,checked
+0x2c5498,32,WStr_CopyAll,lib-text,checked
+0x2c54b8,88,WStr_NCopy,lib-text,checked
+0x2c5510,72,WStr_FromAscii,lib-text,checked
+0x2c5558,28,WStr_FormatThunk,lib-text,checked
+0x2c5578,228,WStr_FormatArgs,lib-text,checked
 0x2c5660,104,AsyncFile_ListAppend,lib-file,host
 0x2c56c8,100,AsyncFile_AllocSlot,lib-file,host
 0x2c5730,44,AsyncFile_ResetSlot,lib-file,host
