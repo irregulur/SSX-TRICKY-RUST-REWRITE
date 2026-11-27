@@ -1140,3 +1140,484 @@ pub fn update_loop(update: u32, q: &mut Queue, inst: &mut LoopInstance, r: &mut 
         _ => {}
     }
 }
+
+// ---- cPS2SoundManager, cSoundSys, cSndPlayOpts & SndSys tail (row G10s, on engine memory) ----
+
+use crate::eamem;
+use crate::pf::Mem;
+
+pub const MEM_DELETE: u32 = 0x114f80;
+pub const MEM_FREE: u32 = 0x14a040;
+pub const PATHX_GET_SONG_STATE: u32 = 0x224620;
+pub const EAMEM_ALLOC: u32 = 0x2ccf70;
+pub const SND_GET_CONFIG: u32 = 0x2cfeb0;
+pub const SND_SET_CONFIG: u32 = 0x2d0080;
+pub const SND_INIT: u32 = 0x2d0260;
+pub const SND_SHUTDOWN: u32 = 0x2d0430;
+pub const SND_START_STREAM_POLL: u32 = 0x2d0548;
+pub const SND_SET_SPU_RANGE: u32 = 0x2d0a80;
+pub const SND_GET_LARGEST_SPU_FREE: u32 = 0x2d0aa0;
+pub const DTS_INSTALL_ENCODER: u32 = 0x2d6ad0;
+
+pub const G_SOUND_SYS: u32 = 0x3436f8;
+pub const NAME_SOUND_HEAP: u32 = 0x3a01d8;
+pub const NAME_PS2_SOUND_MANAGER: u32 = 0x3a01e8;
+pub const VT_PS2_SOUND_MANAGER: u32 = 0x3a01f8;
+pub const VT_SND_PLAY_OPTS: u32 = 0x3a02f8;
+pub const VT_SOUND_SYS: u32 = 0x3a0340;
+pub const SND_CONFIG_CALLBACK: u32 = 0x225fa0;
+
+/// Calls out for `cPS2SoundManager`, `cSoundSys`, `cSndPlayOpts`, and `Audio_GetSongState` on engine memory.
+pub trait SoundMgrEnv {
+    fn call(&mut self, m: &mut Mem, target: u32, args: &[u32]) -> u32;
+}
+
+/// `Audio_GetSongState` 0x225e98(this): return `PathX_GetSongState(*(this+0x36f0))`, or `-1` when null.
+pub fn audio_get_song_state(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32) -> u32 {
+    let p = m.r32(this + 0x36f0);
+    if p == 0 {
+        0xffff_ffff
+    } else {
+        env.call(m, PATHX_GET_SONG_STATE, &[p])
+    }
+}
+
+/// `cPS2SoundManager::cPS2SoundManager` 0x225fa8(this): set vtable `0x3a01f8`, zero heap/mode/lock, set SPU top and
+/// list heads to `-1`, and return `this`.
+pub fn ps2_sound_mgr_ctor(m: &mut Mem, this: u32) -> u32 {
+    m.w32(this + 0x318, 0xffff_ffff);
+    m.w32(this, VT_PS2_SOUND_MANAGER);
+    m.w32(this + 4, 0);
+    m.w32(this + 8, 0);
+    m.w32(this + 0x30c, 0xffff_ffff);
+    m.w32(this + 0x310, 0xffff_ffff);
+    m.w32(this + 0x31c, 0);
+    this
+}
+
+/// `cPS2SoundManager::vf7_225fd8` 0x225fd8(this, flags): destructor — restore vtable `0x3a01f8`, `Mem_Free(*(this+4))`
+/// when non-null, and `Mem_Delete(this)` when `flags & 1 != 0`.
+pub fn ps2_sound_mgr_dtor(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32, flags: u32) {
+    m.w32(this, VT_PS2_SOUND_MANAGER);
+    let heap = m.r32(this + 4);
+    if heap != 0 {
+        env.call(m, MEM_FREE, &[heap]);
+    }
+    if (flags & 1) != 0 {
+        env.call(m, MEM_DELETE, &[this]);
+    }
+}
+
+/// `cPS2SoundManager::vf0_226040` 0x226040(this, mode, sp): allocate `0x32000` bytes (`"mSoundHeap"`), start stream
+/// polling, configure output via virtual `+0x14`, call `SND_Init(heap, 0x32000, 0x21)`, initialize all 32 SPU
+/// allocation records at `+0xc`, and set `+0x30c` to `base + SND_GetLargestSpuFree(&base)`.
+pub fn ps2_sound_mgr_init(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32, mode: u32, sp: u32) {
+    let heap = env.call(m, EAMEM_ALLOC, &[NAME_SOUND_HEAP, 0x32000, 0]);
+    if heap != 0 {
+        eamem::set(m, heap, 0xdead_c0ed, 0x32000);
+    }
+    m.w32(this + 4, heap);
+    env.call(m, SND_START_STREAM_POLL, &[]);
+    let vt = m.r32(this);
+    let adj = m.r16(vt + 0x10) as i16 as i32 as u32;
+    let f = m.r32(vt + 0x14);
+    env.call(m, f, &[this.wrapping_add(adj), mode]);
+    let heap_now = m.r32(this + 4);
+    env.call(m, SND_INIT, &[heap_now, 0x32000, 0x21]);
+    m.w32(this + 0x318, 0xffff_ffff);
+    m.w32(this + 0x310, 31);
+    for i in (0..32i32).rev() {
+        let rec = this.wrapping_add(0xc + (i as u32) * 0x18);
+        m.w32(rec, i as u32);
+        m.w32(rec + 4, 0xffff_ffff);
+        m.w32(rec + 8, 0xffff_ffff);
+        m.w32(rec + 0xc, 0);
+        m.w32(rec + 0x10, 0);
+        m.w32(rec + 0x14, (i - 1) as u32);
+    }
+    m.w32(this + 0x31c, 0);
+    m.w32(sp, 0);
+    let largest = env.call(m, SND_GET_LARGEST_SPU_FREE, &[sp]);
+    let base = m.r32(sp);
+    m.w32(this + 0x30c, base.wrapping_add(largest));
+}
+
+/// `cPS2SoundManager::vf1_226168` 0x226168(this, mode, cfg_buf): fetch `SND_GetConfig`, apply mode-specific voice
+/// and mixer layout (stereo/mono `0`/`1`, surround `2`, DTS `3` via `Dts_InstallEncoder`), call `SND_SetConfig`,
+/// and return `2` (or `1` early without calling `SND_SetConfig` when switching between incompatible PCM/DTS modes).
+pub fn ps2_sound_mgr_set_mode(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32, mode: u32, cfg_buf: u32) -> u32 {
+    env.call(m, SND_GET_CONFIG, &[cfg_buf]);
+    m.w32(cfg_buf + 0xf8, SND_CONFIG_CALLBACK);
+    m.w16(cfg_buf + 0x26, 0x8ca0);
+    m.w16(cfg_buf + 0x28, 0x5dc0);
+    m.w8(cfg_buf + 0x36, 0x32);
+    m.w8(cfg_buf + 0x33, 0);
+    m.w8(cfg_buf + 0x35, 0x32);
+    match mode as i32 {
+        2 => {
+            if m.r32(this + 8) == 2 {
+                return 1;
+            }
+            m.w32(this + 8, 1);
+            m.w8(cfg_buf + 0x2a, 0x10);
+            m.w8(cfg_buf + 0x2b, 8);
+            m.w8(cfg_buf + 0x2c, 0x30);
+            m.w8(cfg_buf + 0x3d, 1);
+            m.w8(cfg_buf + 0x3b, 2);
+            m.w8(cfg_buf + 0x3f, 6);
+            m.w16(cfg_buf + 0x40, 0x48);
+            m.w16(cfg_buf + 0x42, 0x140);
+            m.w16(cfg_buf + 0x44, 0x44);
+            m.w16(cfg_buf + 0x46, 0x28);
+            m.w16(cfg_buf + 0x48, 0x120);
+            m.w16(cfg_buf + 0x4a, 0x24);
+        }
+        0 | 1 => {
+            if m.r32(this + 8) == 2 {
+                return 1;
+            }
+            m.w8(cfg_buf + 0x2a, 0x10);
+            m.w32(this + 8, 1);
+            m.w8(cfg_buf + 0x2b, 8);
+            m.w8(cfg_buf + 0x2c, 0x30);
+            m.w8(cfg_buf + 0x3d, 1);
+            m.w8(cfg_buf + 0x3b, 2);
+            m.w8(cfg_buf + 0x3f, 3);
+            m.w16(cfg_buf + 0x40, 0x28);
+            m.w16(cfg_buf + 0x42, 0x120);
+            m.w16(cfg_buf + 0x44, 0x24);
+        }
+        3 => {
+            if m.r32(this + 8) == 1 {
+                return 1;
+            }
+            m.w8(cfg_buf + 0x2a, 0x10);
+            m.w8(cfg_buf + 0x2b, 8);
+            m.w8(cfg_buf + 0x2c, 0x18);
+            m.w8(cfg_buf + 0x3b, 4);
+            m.w8(cfg_buf + 0x3f, 3);
+            m.w16(cfg_buf + 0x40, 0x28);
+            m.w16(cfg_buf + 0x42, 0x120);
+            m.w16(cfg_buf + 0x44, 0x24);
+            m.w8(cfg_buf + 0x3d, 2);
+            env.call(m, DTS_INSTALL_ENCODER, &[]);
+            m.w32(this + 8, 2);
+        }
+        _ => {}
+    }
+    env.call(m, SND_SET_CONFIG, &[cfg_buf]);
+    2
+}
+
+/// `cPS2SoundManager::vf2_226320` 0x226320(this): reset SPU range `(-1, -1)`, call `SND_Shutdown`, free and clear
+/// `*(this+4)`.
+pub fn ps2_sound_mgr_shutdown(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32) {
+    env.call(m, SND_SET_SPU_RANGE, &[0xffff_ffff, 0xffff_ffff]);
+    env.call(m, SND_SHUTDOWN, &[]);
+    let heap = m.r32(this + 4);
+    if heap != 0 {
+        env.call(m, MEM_FREE, &[heap]);
+    }
+    m.w32(this + 4, 0);
+}
+
+/// `Audio_CreateSoundManager` 0x226370(): allocate `0x320` bytes (`"PS2SoundManager"`), fill with `0xdeadc0de`,
+/// construct via `cPS2SoundManager::cPS2SoundManager`, and return the pointer.
+pub fn audio_create_sound_manager(m: &mut Mem, env: &mut dyn SoundMgrEnv) -> u32 {
+    let p = env.call(m, EAMEM_ALLOC, &[NAME_PS2_SOUND_MANAGER, 0x320, 0]);
+    if p != 0 {
+        eamem::set(m, p, 0xdead_c0de, 0x320);
+    }
+    ps2_sound_mgr_ctor(m, p)
+}
+
+/// `SpuAlloc_PopRecord` 0x2266a8(this): pop one SPU record from the free-record stack at `+0x310` (returning `0` when
+/// empty), clear its `+0x14` next link to `-1`, and return its address.
+pub fn spu_alloc_pop_record(m: &mut Mem, this: u32) -> u32 {
+    let idx = m.r32(this + 0x310) as i32;
+    if idx < 0 {
+        return 0;
+    }
+    let rec = this.wrapping_add(0xc + (idx as u32) * 0x18);
+    let next = m.r32(rec + 0x14);
+    m.w32(this + 0x310, next);
+    m.w32(rec + 0x14, 0xffff_ffff);
+    rec
+}
+
+fn spu_alloc_reclaim_record(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32, rec: u32) {
+    let hi = m.r32(rec + 8);
+    let locked = m.r32(this + 0x31c);
+    m.w32(this + 0x30c, hi);
+    m.w32(rec + 8, 0xffff_ffff);
+    m.w32(rec + 4, 0xffff_ffff);
+    m.w32(rec + 0xc, 0);
+    let id = m.r32(rec);
+    let old_pool = m.r32(this + 0x310);
+    m.w32(rec + 0x10, 0);
+    m.w32(rec + 0x14, old_pool);
+    m.w32(this + 0x310, id);
+    if locked == 0 {
+        let top = m.r32(this + 0x30c);
+        env.call(m, SND_SET_SPU_RANGE, &[0xffff_ffff, top]);
+    }
+}
+
+/// `cPS2SoundManager::vf3_2263c8` 0x2263c8(this, size, sp): allocate `size` bytes from SPU RAM — reusing an exact or
+/// larger free block from `+0x318` (splitting from the high end; preserving the original's un-updated head on exact
+/// first-block reuse), or carving downward from `+0x30c` if unlocked and `SND_GetLargestSpuFree` fits. Returns record
+/// index, `-1` (out of space), or `-2` (locked).
+pub fn ps2_sound_mgr_alloc_spu(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32, size: u32, sp: u32) -> u32 {
+    let mut idx = m.r32(this + 0x318) as i32;
+    let mut prev = 0u32;
+    while idx >= 0 {
+        let rec = this.wrapping_add(0xc + (idx as u32) * 0x18);
+        let rec_sz = m.r32(rec + 0xc) as i32;
+        if rec_sz == size as i32 {
+            m.w32(rec + 0x10, 2);
+            if prev != 0 {
+                let next = m.r32(rec + 0x14);
+                m.w32(prev + 0x14, next);
+            }
+            m.w32(rec + 0x14, 0xffff_ffff);
+            return m.r32(rec);
+        }
+        if (size as i32) < rec_sz {
+            let new_rec = spu_alloc_pop_record(m, this);
+            let hi = m.r32(rec + 8);
+            let mid = hi.wrapping_sub(size);
+            m.w32(new_rec + 0xc, size);
+            m.w32(new_rec + 0x14, 0xffff_ffff);
+            m.w32(new_rec + 8, hi);
+            m.w32(new_rec + 4, mid);
+            m.w32(rec + 8, mid);
+            m.w32(new_rec + 0x10, 2);
+            m.w32(rec + 0xc, (rec_sz as u32).wrapping_sub(size));
+            return m.r32(new_rec);
+        }
+        prev = rec;
+        idx = m.r32(rec + 0x14) as i32;
+    }
+    m.w32(sp, 0);
+    let largest = env.call(m, SND_GET_LARGEST_SPU_FREE, &[sp]);
+    if (largest as i32) < (size as i32) {
+        return 0xffff_ffff;
+    }
+    if m.r32(this + 0x31c) != 0 {
+        return 0xffff_fffe;
+    }
+    let new_rec = spu_alloc_pop_record(m, this);
+    let top = m.r32(this + 0x30c);
+    let bot = top.wrapping_sub(size);
+    m.w32(new_rec + 0xc, size);
+    m.w32(new_rec + 0x14, 0xffff_ffff);
+    m.w32(new_rec + 8, top);
+    m.w32(new_rec + 4, bot);
+    m.w32(new_rec + 0x10, 2);
+    let new_top = m.r32(this + 0x30c).wrapping_sub(size);
+    m.w32(this + 0x30c, new_top);
+    env.call(m, SND_SET_SPU_RANGE, &[0xffff_ffff, new_top]);
+    m.r32(new_rec)
+}
+
+/// `cPS2SoundManager::vf4_226520` 0x226520(this, handle): free SPU record `handle`, reclaiming contiguous frontier
+/// blocks at `+0x30c` back into the pool stack (`+0x310`) or inserting into the `+4`-sorted free list at `+0x318`.
+pub fn ps2_sound_mgr_free_spu(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32, handle: u32) {
+    let rec = this.wrapping_add(0xc + handle.wrapping_mul(0x18));
+    m.w32(rec + 0x10, 1);
+    let bot = m.r32(rec + 4);
+    if bot == m.r32(this + 0x30c) {
+        spu_alloc_reclaim_record(m, env, this, rec);
+        loop {
+            let head = m.r32(this + 0x318) as i32;
+            if head < 0 {
+                break;
+            }
+            let cur = this.wrapping_add(0xc + (head as u32) * 0x18);
+            if m.r32(cur + 4) != m.r32(this + 0x30c) {
+                break;
+            }
+            let next = m.r32(cur + 0x14);
+            m.w32(this + 0x318, next);
+            spu_alloc_reclaim_record(m, env, this, cur);
+        }
+    } else {
+        let head = m.r32(this + 0x318) as i32;
+        if head < 0 {
+            let id = m.r32(rec);
+            m.w32(rec + 0x14, head as u32);
+            m.w32(this + 0x318, id);
+        } else {
+            let rec_id = m.r32(rec);
+            let mut prev = 0u32;
+            let mut cur_idx = head;
+            loop {
+                let cur = this.wrapping_add(0xc + (cur_idx as u32) * 0x18);
+                if (bot as i32) < (m.r32(cur + 4) as i32) {
+                    if prev != 0 {
+                        let next = m.r32(prev + 0x14);
+                        m.w32(rec + 0x14, next);
+                        m.w32(prev + 0x14, rec_id);
+                    } else {
+                        m.w32(rec + 0x14, head as u32);
+                        m.w32(this + 0x318, rec_id);
+                    }
+                    break;
+                }
+                let next_idx = m.r32(cur + 0x14) as i32;
+                if next_idx < 0 {
+                    m.w32(cur + 0x14, rec_id);
+                    m.w32(rec + 0x14, 0xffff_ffff);
+                    break;
+                }
+                prev = cur;
+                cur_idx = next_idx;
+            }
+        }
+    }
+}
+
+/// `cPS2SoundManager::vf5_226650` 0x226650(this, handle): set lock flag `+0x31c = 1` and restrict SPU range to record
+/// `handle`'s `[+4, +8]`.
+pub fn ps2_sound_mgr_lock_spu(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32, handle: u32) {
+    m.w32(this + 0x31c, 1);
+    let rec = this.wrapping_add(0xc + handle.wrapping_mul(0x18));
+    let lo = m.r32(rec + 4);
+    let hi = m.r32(rec + 8);
+    env.call(m, SND_SET_SPU_RANGE, &[lo, hi]);
+}
+
+/// `cPS2SoundManager::vf6_226678` 0x226678(this): restore SPU range `(-1, *(this+0x30c))` and clear lock flag `+0x31c`.
+pub fn ps2_sound_mgr_unlock_spu(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32) {
+    let top = m.r32(this + 0x30c);
+    env.call(m, SND_SET_SPU_RANGE, &[0xffff_ffff, top]);
+    m.w32(this + 0x31c, 0);
+}
+
+/// `cSoundSys::cSoundSys` 0x227960(this, mode): set vtable `0x3a0340`, store `this` in `gSoundSys` (`0x3436f8`),
+/// create the `cPS2SoundManager` into `+0`, invoke its virtual `+0xc` with `mode`, and return `this`.
+pub fn sound_sys_ctor(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32, mode: u32) -> u32 {
+    m.w32(this + 4, VT_SOUND_SYS);
+    m.w32(G_SOUND_SYS, this);
+    let mgr = audio_create_sound_manager(m, env);
+    m.w32(this, mgr);
+    let vt = m.r32(mgr);
+    let adj = m.r16(vt + 8) as i16 as i32 as u32;
+    let f = m.r32(vt + 0xc);
+    env.call(m, f, &[mgr.wrapping_add(adj), mode]);
+    this
+}
+
+/// `cSoundSys::~cSoundSys` 0x2279c8(this, flags): restore vtable `0x3a0340`, invoke `mgr`'s shutdown virtual `+0x1c`,
+/// `Mem_Delete(mgr)`, clear `gSoundSys` (`0x3436f8`), and `Mem_Delete(this)` when `flags & 1 != 0`.
+pub fn sound_sys_dtor(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32, flags: u32) {
+    m.w32(this + 4, VT_SOUND_SYS);
+    let mgr = m.r32(this);
+    let vt = m.r32(mgr);
+    let adj = m.r16(vt + 0x18) as i16 as i32 as u32;
+    let f = m.r32(vt + 0x1c);
+    env.call(m, f, &[mgr.wrapping_add(adj)]);
+    let mgr2 = m.r32(this);
+    env.call(m, MEM_DELETE, &[mgr2]);
+    m.w32(G_SOUND_SYS, 0);
+    if (flags & 1) != 0 {
+        env.call(m, MEM_DELETE, &[this]);
+    }
+}
+
+/// `cSoundSys::vf1_227a48` 0x227a48(this, mode): forward to `*(this+0)`'s virtual `+0x14` with `mode`.
+pub fn sound_sys_vf1(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32, mode: u32) -> u32 {
+    let mgr = m.r32(this);
+    let vt = m.r32(mgr);
+    let adj = m.r16(vt + 0x10) as i16 as i32 as u32;
+    let f = m.r32(vt + 0x14);
+    env.call(m, f, &[mgr.wrapping_add(adj), mode])
+}
+
+/// `cSndPlayOpts::~cSndPlayOpts` 0x226cc0(this, flags): restore vtable `0x3a02f8`, `Mem_Free` each non-null queue
+/// array pointer at `+0x24, +0x38, +0x3c, +0x40, +0x64..=+0x7c`, and tail-call `cSoundSys::~cSoundSys`.
+pub fn snd_play_opts_dtor(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32, flags: u32) {
+    m.w32(this + 4, VT_SND_PLAY_OPTS);
+    for off in [0x24, 0x38, 0x3c, 0x40, 0x64, 0x68, 0x6c, 0x70, 0x74, 0x78, 0x7c] {
+        let p = m.r32(this + off);
+        if p != 0 {
+            env.call(m, MEM_FREE, &[p]);
+        }
+    }
+    sound_sys_dtor(m, env, this, flags);
+}
+
+/// `SndSys_SetEntryCallback` 0x226e58(this, cb): store 8-byte member-function callback `cb` into
+/// `this + 0x44 + *(this+0x20) * 8`.
+pub fn snd_sys_set_entry_callback(m: &mut Mem, this: u32, cb: u64) {
+    let idx = m.r32(this + 0x20);
+    let dst = this.wrapping_add(idx << 3).wrapping_add(0x44);
+    m.w32(dst, cb as u32);
+    m.w32(dst + 4, (cb >> 32) as u32);
+}
+
+fn snd_sys_init_entry_slot(m: &mut Mem, this: u32) {
+    let idx = m.r32(this + 0x20);
+    let rec = m.r32(this + 0x24).wrapping_add(idx.wrapping_mul(0x18));
+    for k in (0..24u32).step_by(4) {
+        let w = m.r32(this + 8 + k);
+        m.w32(rec + k, w);
+    }
+    m.w32(this + 0x28 + (idx << 2), 0);
+    let a38 = m.r32(this + 0x38);
+    m.w32(a38.wrapping_add(idx << 2), 0);
+    let vol0 = m.r8(m.r32(this + 0x24).wrapping_add(idx.wrapping_mul(0x18))) as i8 as i32 as u32;
+    let a3c = m.r32(this + 0x3c);
+    m.w32(a3c.wrapping_add(idx << 2), vol0);
+    let a40 = m.r32(this + 0x40);
+    m.w32(a40.wrapping_add(idx << 2), 0);
+    let cb = this.wrapping_add(idx << 3).wrapping_add(0x44);
+    m.w32(cb, 0);
+    m.w32(cb + 4, 0);
+    let a68 = m.r32(this + 0x68);
+    m.w32(a68.wrapping_add(idx << 2), 0);
+    let a74 = m.r32(this + 0x74).wrapping_add(idx << 4);
+    m.w32(a74 + 4, 0);
+    let a6c = m.r32(this + 0x6c);
+    m.w32(a6c.wrapping_add(idx << 2), 0);
+    m.w32(a74, 0x64);
+    let a64 = m.r32(this + 0x64);
+    m.w32(a64.wrapping_add(idx << 2), 0);
+    let a70 = m.r32(this + 0x70);
+    m.w32(a70.wrapping_add(idx << 2), 0);
+    m.w32(a74 + 8, 0x5a);
+    m.w32(a74 + 0xc, 0x32);
+    let a78 = m.r32(this + 0x78);
+    m.w32(a78.wrapping_add(idx << 2), 0);
+    let a7c = m.r32(this + 0x7c);
+    m.w32(a7c.wrapping_add(idx << 2), 1);
+}
+
+/// `SndSys_PushEntryCopy2` 0x227350(this): increment stack index `*(this+0x20)` and initialize the new slot from the
+/// default 24-byte header at `+8` with default 3D attenuation `(100, 0, 90, 50)` and flags.
+pub fn snd_sys_push_entry_copy2(m: &mut Mem, this: u32) {
+    let next = m.r32(this + 0x20).wrapping_add(1);
+    m.w32(this + 0x20, next);
+    snd_sys_init_entry_slot(m, this);
+}
+
+/// `SndSys_ResetEntry` 0x227508(this): reset the current stack slot `*(this+0x20)` from the default 24-byte header at
+/// `+8` with default 3D attenuation `(100, 0, 90, 50)` and flags.
+pub fn snd_sys_reset_entry(m: &mut Mem, this: u32) {
+    snd_sys_init_entry_slot(m, this);
+}
+
+/// `SndPlayOpts_InitCurrent` 0x227708(this): run `SndPlayOpts_Init` (`0x2d4a60`) on the current 24-byte play record at
+/// `*(this+0x24) + *(this+0x20) * 0x18`.
+pub fn snd_play_opts_init_current(m: &mut Mem, this: u32) {
+    let idx = m.r32(this + 0x20);
+    let rec = m.r32(this + 0x24).wrapping_add(idx.wrapping_mul(0x18));
+    let mut buf = [0u8; 24];
+    for (k, b) in buf.iter_mut().enumerate() {
+        *b = m.r8(rec + k as u32);
+    }
+    play_opts_init(&mut buf);
+    for (k, &b) in buf.iter().enumerate() {
+        m.w8(rec + k as u32, b);
+    }
+}

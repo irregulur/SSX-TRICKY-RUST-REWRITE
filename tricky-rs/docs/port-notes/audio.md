@@ -2026,3 +2026,26 @@ Proven (`SLUS_203.26` disassembly + runner):
   `[0x67..=0x93]`, `[0x9f..=0xb2]`, and `[0xb7..=0xb9]`.
 - Checked bit-for-bit across ~3,100 cases in `tests/worldtrigger_tail.rs` (reducing `audio` `not started` from 80
   to 63).
+
+## `cPS2SoundManager`, `cSoundSys`, `cSndPlayOpts` & `SndSys` tail (row G10s, `sndqueue.rs`, checked: `tests/soundmgr_tail.rs`)
+
+Proven (`SLUS_203.26` disassembly + runner):
+
+- **`Audio_GetSongState` (`0x225e98`)**: forwards `*(this+0x36f0)` to `PathX_GetSongState` (`0x224620`), or returns
+  `-1` when null.
+- **`cPS2SoundManager` (`0x225fa8..0x226678`), `Audio_CreateSoundManager` (`0x226370`), `SpuAlloc_PopRecord`
+  (`0x2266a8`)**: allocates `0x320` bytes (`"PS2SoundManager"`, `0xdeadc0de`-filled) with vtable `0x3a01f8`; `vf0`
+  allocates `0x32000` bytes (`"mSoundHeap"`, `0xdeadc0ed`-filled), starts stream polling, calls `vf1` (`SND_GetConfig`
+  / `SND_SetConfig` with mode `0`/`1` stereo, `2` surround, `3` DTS via `Dts_InstallEncoder`, returning `1` on
+  incompatible PCM↔DTS switch else `2`), calls `SND_Init(heap, 0x32000, 0x21)`, and initializes 32 `0x18`-byte SPU
+  records at `+0xc`. `vf3` allocates from the `+0x318` free list (splitting from the high end; preserving the
+  original's un-updated head on exact first-block reuse) or carves downward from `+0x30c` if unlocked (`+0x31c == 0`)
+  and `SND_GetLargestSpuFree` fits; `vf4` reclaims frontier blocks at `+0x30c` into the `+0x310` pool stack or inserts
+  sorted by `+4` into `+0x318`; `vf5`/`vf6` lock/unlock the SPU range via `SND_SetSpuRange`.
+- **`cSoundSys` (`0x227960..0x227a48`), `cSndPlayOpts::~cSndPlayOpts` (`0x226cc0`), `SndSys_SetEntryCallback`
+  (`0x226e58`), `SndSys_PushEntryCopy2` (`0x227350`), `SndSys_ResetEntry` (`0x227508`), `SndPlayOpts_InitCurrent`
+  (`0x227708`)**: `cSoundSys` sets `gSoundSys` (`0x3436f8`) and owns the `cPS2SoundManager` at `+0`; `cSndPlayOpts`
+  frees all 11 queue arrays before delegating to `cSoundSys::~cSoundSys`; `PushEntryCopy2` / `ResetEntry` copy the
+  24-byte header at `+8`, sign-extend byte 0 into `+0x3c[idx]`, zero the 8-byte callback at `+0x44+idx*8`, and set
+  default 3D attenuation `(100, 0, 90, 50)` and flags.
+- Checked bit-for-bit across `tests/soundmgr_tail.rs` (reducing `audio` `not started` from 63 to 43).

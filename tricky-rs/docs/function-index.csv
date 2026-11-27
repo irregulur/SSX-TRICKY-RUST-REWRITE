@@ -3885,32 +3885,32 @@ address,size,name,system,status
 0x225ca8,56,Music_StopTricky,audio,checked
 0x225ce0,60,Music_CountEnabledSongs,audio,checked
 0x225d80,124,StaticInit_Music,audio,checked
-0x225e98,48,Audio_GetSongState,audio,not started
+0x225e98,48,Audio_GetSongState,audio,checked
 0x225ed0,80,cMusicSys::__tf,runtime,host
-0x225fa8,48,cPS2SoundManager::cPS2SoundManager,audio,not started
-0x225fd8,100,cPS2SoundManager::vf7_225fd8,audio,not started
-0x226040,296,cPS2SoundManager::vf0_226040,audio,not started
-0x226168,440,cPS2SoundManager::vf1_226168,audio,not started
-0x226320,76,cPS2SoundManager::vf2_226320,audio,not started
-0x226370,84,Audio_CreateSoundManager,audio,not started
-0x2263c8,340,cPS2SoundManager::vf3_2263c8,audio,not started
-0x226520,296,cPS2SoundManager::vf4_226520,audio,not started
-0x226650,36,cPS2SoundManager::vf5_226650,audio,not started
-0x226678,48,cPS2SoundManager::vf6_226678,audio,not started
-0x2266a8,60,SpuAlloc_PopRecord,audio,not started
+0x225fa8,48,cPS2SoundManager::cPS2SoundManager,audio,checked
+0x225fd8,100,cPS2SoundManager::vf7_225fd8,audio,checked
+0x226040,296,cPS2SoundManager::vf0_226040,audio,checked
+0x226168,440,cPS2SoundManager::vf1_226168,audio,checked
+0x226320,76,cPS2SoundManager::vf2_226320,audio,checked
+0x226370,84,Audio_CreateSoundManager,audio,checked
+0x2263c8,340,cPS2SoundManager::vf3_2263c8,audio,checked
+0x226520,296,cPS2SoundManager::vf4_226520,audio,checked
+0x226650,36,cPS2SoundManager::vf5_226650,audio,checked
+0x226678,48,cPS2SoundManager::vf6_226678,audio,checked
+0x2266a8,60,SpuAlloc_PopRecord,audio,checked
 0x226738,80,cPS2SoundManager::__tf,runtime,host
 0x226788,64,cSoundManager::__tf,runtime,host
 0x226848,1144,cSndPlayOpts::cSndPlayOpts,audio,ported
-0x226cc0,280,cSndPlayOpts::~cSndPlayOpts,audio,not started
+0x226cc0,280,cSndPlayOpts::~cSndPlayOpts,audio,checked
 0x226dd8,80,SndSys_SetPendingVolume,audio,checked
-0x226e58,44,SndSys_SetEntryCallback,audio,not started
-0x227350,440,SndSys_PushEntryCopy2,audio,not started
-0x227508,428,SndSys_ResetEntry,audio,not started
-0x227708,24,SndPlayOpts_InitCurrent,audio,not started
+0x226e58,44,SndSys_SetEntryCallback,audio,checked
+0x227350,440,SndSys_PushEntryCopy2,audio,checked
+0x227508,428,SndSys_ResetEntry,audio,checked
+0x227708,24,SndPlayOpts_InitCurrent,audio,checked
 0x2278d0,80,cSndPlayOpts::__tf,runtime,host
-0x227960,100,cSoundSys::cSoundSys,audio,not started
-0x2279c8,128,cSoundSys::~cSoundSys,audio,not started
-0x227a48,44,cSoundSys::vf1_227a48,audio,not started
+0x227960,100,cSoundSys::cSoundSys,audio,checked
+0x2279c8,128,cSoundSys::~cSoundSys,audio,checked
+0x227a48,44,cSoundSys::vf1_227a48,audio,checked
 0x227a80,64,cSoundSys::__tf,runtime,host
 0x227b00,56,SpeechSys_LibPlayCallback,audio,checked
 0x227b38,228,SpeechBank_Load,audio,checked
