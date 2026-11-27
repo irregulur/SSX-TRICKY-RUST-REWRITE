@@ -1155,3 +1155,29 @@ Proven (`SLUS_203.26` callers of `Loc_GetString` 0x2c5160 + `DATA/LANG/AMERICAN.
     (`trickdata::OUTFIT_NAMES`), not `AMERICAN.LOC` entries.
   - Trick Book: `0xe1a` `"Trick Book"`, `0xe64` `"Chapter %d"`, `0x0c9e` `"COMPLETED"` (0x246b50), `0x022a`
     `"Trick Book Completed - 1 new board"` (0x1b5a90).
+
+## The sprite sets' loaders (row G8z; `tricky_game::spriteload`, checked: `tests/spriteload.rs`)
+
+Proven (from the disassembly; Ghidra was not running):
+
+- Seven loaders take (set, file number, wait) over the (path, flags) table at 0x33f3b8. At once: `File_Load`
+  (the flags from the table; `HUD_LoadIconPack` 0x1f9970 asks 0x10 instead), bound, `EAMem_Free`. With wait:
+  `AsyncFile_Load`, the handle at set+4, the binder's kind at set+0: 0 `HUD_LoadIconPack`, 1
+  `OverlayMan_LoadTextures` 0x1f99f8, 2 `LoadScreen_LoadIcons` 0x1f9a80, 3 `SpriteSet_LoadFromTable` 0x1f9b08, 4
+  `TrickBook_LoadTextures` 0x1f9b90, 5 `RiderProfile_LoadTextures` 0x1f9c18, 6 `LoadScreen_LoadTexturePack`
+  0x1f9ca0. `SpriteSet_PollLoad` 0x1f9d28: 1 with nothing pending, 0 until `AsyncFile_IsDone` answers exactly 1,
+  then `AsyncFile_Finish`, the kind's binder (a kind past 6: none), free, handle cleared, 1.
+- The binders: `HUD_LoadIconShapes` 0x1f8c98 (7 shapes "gene" .. "dvd1" → textures at +0x15e8.., renderer +0x150;
+  records 0..103 from them), `HUD_LoadLoadingIcons` 0x1f93c8 ("loa1", "loa2", "lcon"; records 0..27),
+  `SpriteSet_BindHudGameTex` 0x1f9080 (row E1b2g7d3b4g), `SpriteSet_RegisterNamedShapes` 0x1f9550 ("tb00".."tb29"
+  loaded with renderer +0x160 into records 0..4, in turn, of the run at set+0x1610: the last tb shape found for a
+  record wins), `SpriteSet_RegisterFirstShape` 0x1f9608 (the file's first shape into +0xeb0's texture),
+  `SpriteSet_RegisterRiderProfileShapes` 0x1f9660 ("rpb1".."rpb4" → 124..127) and
+  `SpriteSet_RegisterLoadScreenShapes` 0x1f9798 (19 pairs "dved".."ddem" → 104..122): each shape found is loaded
+  into record 124's texture, then 125's, ... (the next record only after a find), and the pair's record takes
+  that texture. A missing shape leaves its field or record as it was.
+- `SpriteSet_SetShape` 0x1f9ee8: 0x1c bytes copied into record k. `HUD_CreateDummyTextures` 0x1f9f38: a 0x4000
+  buffer ("dummy", flags 0x10), eleven empty 128 × 128 textures (renderer +0x158 with 4, 1 and two stack words:
+  the buffer, 0) into the run's records 0..9 and +0xeb0, the buffer `Mem_Free`d when there.
+- Checked in the runner: 1,500 shape files, 18,000 steps (5,990 binds, 16,095 renderer calls from the binders),
+  memory, answers and the calls out equal; 19 mutants, all killed.

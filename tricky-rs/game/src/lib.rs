@@ -179,6 +179,7 @@ pub mod speech;
 pub mod score;
 pub mod script;
 pub mod sphtree;
+pub mod spriteload;
 pub mod spin;
 pub mod states;
 pub mod stats;
