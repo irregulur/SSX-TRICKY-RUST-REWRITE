@@ -1502,3 +1502,88 @@ pub fn set_help(m: &mut Mem, this: u32, v: u32) {
 pub fn identity(this: u32) -> u32 {
     this
 }
+
+/// `MemCardUI_SetMessage` 0x1d2fe8(this, buf, 0x100)
+pub const MEMCARD_SET_MESSAGE: u32 = 0x1d2fe8;
+
+/// Call a virtual method on `cSelectNextEventOverlay` through its vtable at `this + 0x428`
+fn sne_vcall(m: &mut Mem, env: &mut dyn TextBoxEnv, this: u32, off: u32, args: &[u32]) {
+    let vt = m.r32(this + 0x428);
+    let me = this.wrapping_add(m.r16(vt + off) as i16 as u32);
+    let mut a = vec![me];
+    a.extend_from_slice(args);
+    call(m, env, m.r32(vt + off + 4), &a);
+}
+
+/// `cSelectNextEventOverlay` virtuals showing a localized string + OK (`0x155`) prompt via `+0x70/+0x74`:
+/// `vf18_1d2320` (`0x1bf`), `vf24_1d24f8` (`0x173`), `vf40_1d2be8` (`0x158`)
+pub fn sne_prompt_loc(m: &mut Mem, env: &mut dyn TextBoxEnv, this: u32, str_id: u32) {
+    let vt = m.r32(this + 0x428);
+    let me = this.wrapping_add(m.r16(vt + 0x70) as i16 as u32);
+    let s1 = loc(m, env, str_id);
+    let s2 = loc(m, env, 0x155);
+    call(m, env, m.r32(vt + 0x74), &[me, s1, s2, 0, 1]);
+}
+
+/// `cSelectNextEventOverlay` virtuals formatting a memory-card message (`0x1d2fe8`, 0x100 bytes at `sp - 0x230`) +
+/// OK (`0x155`) via `+0x70/+0x74`: `vf19_1d23b0`, `vf20_1d2428`, `vf25_1d2588`, `vf36_1d2a28`, `vf41_1d2c78`
+pub fn sne_prompt_msg_ok(m: &mut Mem, env: &mut dyn TextBoxEnv, this: u32, sp: u32) {
+    let buf = sp.wrapping_sub(0x230);
+    call(m, env, MEMCARD_SET_MESSAGE, &[this, buf, 0x100]);
+    let vt = m.r32(this + 0x428);
+    let me = this.wrapping_add(m.r16(vt + 0x70) as i16 as u32);
+    let s2 = loc(m, env, 0x155);
+    call(m, env, m.r32(vt + 0x74), &[me, buf, s2, 0, 1]);
+}
+
+/// `cSelectNextEventOverlay` virtuals formatting a memory-card message (`0x1d2fe8`, 0x100 bytes at `sp - 0x220`),
+/// showing it via `+0x80/+0x84`, and optionally firing `+0xd8/+0xdc`:
+/// - `with_post = true`: `vf22_1d24a0`, `vf35_1d29d0`, `vf38_1d2b38`, `vf39_1d2b90`
+/// - `with_post = false`: `vf27_1d2600`, `vf28_1d2648`, `vf29_1d2690`
+pub fn sne_notice_msg(m: &mut Mem, env: &mut dyn TextBoxEnv, this: u32, sp: u32, with_post: bool) {
+    let buf = sp.wrapping_sub(0x220);
+    call(m, env, MEMCARD_SET_MESSAGE, &[this, buf, 0x100]);
+    sne_vcall(m, env, this, 0x80, &[buf]);
+    if with_post {
+        sne_vcall(m, env, this, 0xd8, &[]);
+    }
+}
+
+/// `cSelectNextEventOverlay` virtuals formatting a memory-card message (`0x1d2fe8`, 0x100 bytes at `sp - 0x250`) +
+/// two localized option strings via `+0x70/+0x74`:
+/// `vf30_1d26d8` / `vf37_1d2aa0` (`0x1d6`, `0x188`, `1`), `vf31_1d2770` / `vf32_1d2808` / `vf33_1d28a0`
+/// (`0x1ba`, `0x154`, `1`), `vf34_1d2938` (`0x162`, `0x154`, `0`)
+pub fn sne_prompt_msg_two(
+    m: &mut Mem,
+    env: &mut dyn TextBoxEnv,
+    this: u32,
+    sp: u32,
+    str1: u32,
+    str2: u32,
+    swapped: u32,
+) {
+    let buf = sp.wrapping_sub(0x250);
+    call(m, env, MEMCARD_SET_MESSAGE, &[this, buf, 0x100]);
+    let vt = m.r32(this + 0x428);
+    let me = this.wrapping_add(m.r16(vt + 0x70) as i16 as u32);
+    let s1 = loc(m, env, str1);
+    let s2 = loc(m, env, str2);
+    call(m, env, m.r32(vt + 0x74), &[me, buf, s1, s2, swapped]);
+}
+
+/// `cSelectNextEventOverlay::Update` 0x1d2cf0(this): fetches string `0x1a2` and passes it to virtual `+0x80/+0x84`
+pub fn sne_update(m: &mut Mem, env: &mut dyn TextBoxEnv, this: u32) {
+    let vt = m.r32(this + 0x428);
+    let me = this.wrapping_add(m.r16(vt + 0x80) as i16 as u32);
+    let s = loc(m, env, 0x1a2);
+    call(m, env, m.r32(vt + 0x84), &[me, s]);
+}
+
+/// `cSelectNextEventOverlay` no-op virtuals: `vf46_1d3a60`, `vf45_1d3a68`, `vf44_1d3a70`, `vf43_1d3a78`,
+/// `vf42_1d3a80`, `vf21_1d3a98`, `vf11_1d3ab8`, `vf8_1d3ad0`, `vf7_1d3ad8`, `vf6_1d3ae0`, `vf5_1d3ae8`
+pub fn sne_noop() {}
+
+/// `cSelectNextEventOverlay` zero-returning virtuals: `vf10_1d3ac0`, `vf9_1d3ac8`, `vf4_1d3af0`
+pub fn sne_zero() -> u32 {
+    0
+}

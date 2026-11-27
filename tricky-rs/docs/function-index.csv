@@ -2414,7 +2414,7 @@ address,size,name,system,status
 0x1a6860,152,HUD_SetViewLayout,hud,checked
 0x1a68f8,160,HUD_WobbleOffset,hud,checked
 0x1a6998,284,StaticInit_HUD,hud,checked
-0x1a6b20,20,cHUDOverlay::~cHUDOverlay,frontend,not started
+0x1a6b20,20,cHUDOverlay::~cHUDOverlay,frontend,checked
 0x1a6b38,80,cHUDOverlay::__tf,runtime,host
 0x1a6ba0,236,HUD_FormatTime,hud,checked
 0x1a6c90,168,HUD_FormatTimeSigned,hud,checked
@@ -2880,28 +2880,28 @@ address,size,name,system,status
 0x1d2230,72,cMCOverlayManager::vf51_1d2230,save,ported
 0x1d2278,76,cMCOverlayManager::vf50_1d2278,save,ported
 0x1d22c8,88,cMCOverlayManager::vf17_1d22c8,save,checked
-0x1d2320,140,cSelectNextEventOverlay::vf18_1d2320,frontend,not started
-0x1d23b0,116,cSelectNextEventOverlay::vf19_1d23b0,frontend,not started
-0x1d2428,116,cSelectNextEventOverlay::vf20_1d2428,frontend,not started
-0x1d24a0,88,cSelectNextEventOverlay::vf22_1d24a0,frontend,not started
-0x1d24f8,140,cSelectNextEventOverlay::vf24_1d24f8,frontend,not started
-0x1d2588,116,cSelectNextEventOverlay::vf25_1d2588,frontend,not started
-0x1d2600,68,cSelectNextEventOverlay::vf27_1d2600,frontend,not started
-0x1d2648,68,cSelectNextEventOverlay::vf28_1d2648,frontend,not started
-0x1d2690,68,cSelectNextEventOverlay::vf29_1d2690,frontend,not started
-0x1d26d8,152,cSelectNextEventOverlay::vf30_1d26d8,frontend,not started
-0x1d2770,152,cSelectNextEventOverlay::vf31_1d2770,frontend,not started
-0x1d2808,152,cSelectNextEventOverlay::vf32_1d2808,frontend,not started
-0x1d28a0,152,cSelectNextEventOverlay::vf33_1d28a0,frontend,not started
-0x1d2938,152,cSelectNextEventOverlay::vf34_1d2938,frontend,not started
-0x1d29d0,88,cSelectNextEventOverlay::vf35_1d29d0,frontend,not started
-0x1d2a28,116,cSelectNextEventOverlay::vf36_1d2a28,frontend,not started
-0x1d2aa0,152,cSelectNextEventOverlay::vf37_1d2aa0,frontend,not started
-0x1d2b38,88,cSelectNextEventOverlay::vf38_1d2b38,frontend,not started
-0x1d2b90,88,cSelectNextEventOverlay::vf39_1d2b90,frontend,not started
-0x1d2be8,140,cSelectNextEventOverlay::vf40_1d2be8,frontend,not started
-0x1d2c78,116,cSelectNextEventOverlay::vf41_1d2c78,frontend,not started
-0x1d2cf0,92,cSelectNextEventOverlay::Update,frontend,not started
+0x1d2320,140,cSelectNextEventOverlay::vf18_1d2320,frontend,checked
+0x1d23b0,116,cSelectNextEventOverlay::vf19_1d23b0,frontend,checked
+0x1d2428,116,cSelectNextEventOverlay::vf20_1d2428,frontend,checked
+0x1d24a0,88,cSelectNextEventOverlay::vf22_1d24a0,frontend,checked
+0x1d24f8,140,cSelectNextEventOverlay::vf24_1d24f8,frontend,checked
+0x1d2588,116,cSelectNextEventOverlay::vf25_1d2588,frontend,checked
+0x1d2600,68,cSelectNextEventOverlay::vf27_1d2600,frontend,checked
+0x1d2648,68,cSelectNextEventOverlay::vf28_1d2648,frontend,checked
+0x1d2690,68,cSelectNextEventOverlay::vf29_1d2690,frontend,checked
+0x1d26d8,152,cSelectNextEventOverlay::vf30_1d26d8,frontend,checked
+0x1d2770,152,cSelectNextEventOverlay::vf31_1d2770,frontend,checked
+0x1d2808,152,cSelectNextEventOverlay::vf32_1d2808,frontend,checked
+0x1d28a0,152,cSelectNextEventOverlay::vf33_1d28a0,frontend,checked
+0x1d2938,152,cSelectNextEventOverlay::vf34_1d2938,frontend,checked
+0x1d29d0,88,cSelectNextEventOverlay::vf35_1d29d0,frontend,checked
+0x1d2a28,116,cSelectNextEventOverlay::vf36_1d2a28,frontend,checked
+0x1d2aa0,152,cSelectNextEventOverlay::vf37_1d2aa0,frontend,checked
+0x1d2b38,88,cSelectNextEventOverlay::vf38_1d2b38,frontend,checked
+0x1d2b90,88,cSelectNextEventOverlay::vf39_1d2b90,frontend,checked
+0x1d2be8,140,cSelectNextEventOverlay::vf40_1d2be8,frontend,checked
+0x1d2c78,116,cSelectNextEventOverlay::vf41_1d2c78,frontend,checked
+0x1d2cf0,92,cSelectNextEventOverlay::Update,frontend,checked
 0x1d2d50,512,MCSlot_GetLabel,save,ported
 0x1d2f60,56,Save_GetGameCode,save,ported
 0x1d2fa0,32,MemCard_WriteTagREP,save,ported
@@ -2911,25 +2911,25 @@ address,size,name,system,status
 0x1d3a48,8,cMCOverlayManager::vf53_1d3a48,save,checked
 0x1d3a50,8,cMCOverlayManager::vf52_1d3a50,save,checked
 0x1d3a58,8,cMCOverlayManager::vf49_1d3a58,save,checked
-0x1d3a60,8,cSelectNextEventOverlay::vf46_1d3a60,frontend,not started
-0x1d3a68,8,cSelectNextEventOverlay::vf45_1d3a68,frontend,not started
-0x1d3a70,8,cSelectNextEventOverlay::vf44_1d3a70,frontend,not started
-0x1d3a78,8,cSelectNextEventOverlay::vf43_1d3a78,frontend,not started
-0x1d3a80,8,cSelectNextEventOverlay::vf42_1d3a80,frontend,not started
+0x1d3a60,8,cSelectNextEventOverlay::vf46_1d3a60,frontend,checked
+0x1d3a68,8,cSelectNextEventOverlay::vf45_1d3a68,frontend,checked
+0x1d3a70,8,cSelectNextEventOverlay::vf44_1d3a70,frontend,checked
+0x1d3a78,8,cSelectNextEventOverlay::vf43_1d3a78,frontend,checked
+0x1d3a80,8,cSelectNextEventOverlay::vf42_1d3a80,frontend,checked
 0x1d3a88,8,cMCOverlayManager::vf26_1d3a88,save,checked
 0x1d3a90,8,cMCOverlayManager::vf23_1d3a90,save,checked
-0x1d3a98,8,cSelectNextEventOverlay::vf21_1d3a98,frontend,not started
+0x1d3a98,8,cSelectNextEventOverlay::vf21_1d3a98,frontend,checked
 0x1d3aa0,8,cMCOverlayManager::vf16_1d3aa0,save,checked
 0x1d3aa8,8,cMCOverlayManager::vf15_1d3aa8,save,checked
 0x1d3ab0,8,cMCOverlayManager::vf13_1d3ab0,save,checked
-0x1d3ab8,8,cSelectNextEventOverlay::vf11_1d3ab8,frontend,not started
-0x1d3ac0,8,cSelectNextEventOverlay::vf10_1d3ac0,frontend,not started
-0x1d3ac8,8,cSelectNextEventOverlay::vf9_1d3ac8,frontend,not started
-0x1d3ad0,8,cSelectNextEventOverlay::vf8_1d3ad0,frontend,not started
-0x1d3ad8,8,cSelectNextEventOverlay::vf7_1d3ad8,frontend,not started
-0x1d3ae0,8,cSelectNextEventOverlay::vf6_1d3ae0,frontend,not started
-0x1d3ae8,8,cSelectNextEventOverlay::vf5_1d3ae8,frontend,not started
-0x1d3af0,8,cSelectNextEventOverlay::vf4_1d3af0,frontend,not started
+0x1d3ab8,8,cSelectNextEventOverlay::vf11_1d3ab8,frontend,checked
+0x1d3ac0,8,cSelectNextEventOverlay::vf10_1d3ac0,frontend,checked
+0x1d3ac8,8,cSelectNextEventOverlay::vf9_1d3ac8,frontend,checked
+0x1d3ad0,8,cSelectNextEventOverlay::vf8_1d3ad0,frontend,checked
+0x1d3ad8,8,cSelectNextEventOverlay::vf7_1d3ad8,frontend,checked
+0x1d3ae0,8,cSelectNextEventOverlay::vf6_1d3ae0,frontend,checked
+0x1d3ae8,8,cSelectNextEventOverlay::vf5_1d3ae8,frontend,checked
+0x1d3af0,8,cSelectNextEventOverlay::vf4_1d3af0,frontend,checked
 0x1d3af8,8,cSaveOverlay::vf3_1d3af8,save,checked
 0x1d3b00,8,cMCOverlayManager::vf2_1d3b00,save,checked
 0x1d3b08,64,cMCOverlayManager::__tf,runtime,host
@@ -3235,14 +3235,14 @@ address,size,name,system,status
 0x1ee720,1760,HUD_DrawStartSelectPrompt,hud,checked
 0x1eee00,2060,ReplayControl_DrawKey,replay,checked
 0x1ef610,320,ReplayOverlay_Init,frontend,checked
-0x1ef750,156,RaceMenuOverlay_UpdateSave,frontend,not started
+0x1ef750,156,RaceMenuOverlay_UpdateSave,frontend,checked
 0x1ef7f0,292,RaceMenuOverlay_BeginSaveReplay,frontend,checked
 0x1ef918,116,RaceMenuOverlay_EndSaveReplay,frontend,checked
 0x1ef990,1056,RaceMenuOverlay_SetState,frontend,ported
 0x1efdb0,132,RaceMenuOverlay_HandleInput,frontend,ported
-0x1efe38,184,RaceMenuOverlay_Draw,frontend,not started
+0x1efe38,184,RaceMenuOverlay_Draw,frontend,checked
 0x1efef0,468,RaceMenuOverlay_UpdateReplayMenu,frontend,checked
-0x1f00c8,288,RaceMenuOverlay_UpdateConfirm,frontend,not started
+0x1f00c8,288,RaceMenuOverlay_UpdateConfirm,frontend,checked
 0x1f01e8,284,RaceMenuOverlay_DrawReplayMenu,frontend,checked
 0x1f0308,248,cReplayOverlay::vf3_1f0308,frontend,checked
 0x1f0400,100,cReplayOverlay::vf4_1f0400,frontend,checked
@@ -3254,7 +3254,7 @@ address,size,name,system,status
 0x1f0808,80,cReplayControlOverlay::__tf,runtime,host
 0x1f08d0,1412,Streak_Draw,frontend,checked
 0x1f0e58,8,ScreenAnimTrack_Construct,frontend,checked
-0x1f0e60,28,ScreenAnimTrack_Delete,frontend,not started
+0x1f0e60,28,ScreenAnimTrack_Delete,frontend,checked
 0x1f0e80,200,ScreenAnim_Step,game,checked
 0x1f0f48,372,ScreenAnimTrack_Eval,frontend,checked
 0x1f10c0,100,ScreenAnim_Init,game,checked
@@ -5907,7 +5907,7 @@ address,size,name,system,status
 0x2b6838,68,cFE3DWList::~cFE3DWList,frontend,checked
 0x2b68e0,72,cFE3DWList::cFE3DWList,frontend,checked
 0x2b6928,80,cFE3DWList::__tf,runtime,host
-0x2b6978,52,ListFE3DOffsetOp_Apply6,frontend,not started
+0x2b6978,52,ListFE3DOffsetOp_Apply6,frontend,checked
 0x2b69b0,80,cListFE3DOffsetOp::__tf,runtime,host
 0x2b6a30,64,cListOperator::__tf,runtime,host
 0x2b6a70,44,Vec4_ScaleCopy31,common,checked

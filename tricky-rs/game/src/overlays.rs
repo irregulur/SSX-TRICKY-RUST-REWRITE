@@ -899,6 +899,13 @@ pub fn menu_sound(m: &mut Mem, env: &mut dyn OverlayManEnv, func: u32) {
     env.call(m, func, &[audio]);
 }
 
+/// `ScreenAnimTrack_Delete` 0x1f0e60(track, how): calls `Mem_Delete(track)` (`0x114f80`) when `how` has bit 0
+pub fn screen_anim_track_delete(m: &mut Mem, env: &mut dyn OverlayManEnv, track: u32, how: u32) {
+    if how & 1 != 0 {
+        env.call(m, 0x114f80, &[track]);
+    }
+}
+
 /// `PauseMenu_PollRepeatButton` 0x1a8688 (the pad, or -1): the held button, repeated. Pad -1 takes a player pad
 /// with a button held: the one holding the overlay's last button (+0x20), else the last found (the game notes each
 /// in a branch's delay slot). The button counts as pressed when it is new, then every 12 frames, then every other

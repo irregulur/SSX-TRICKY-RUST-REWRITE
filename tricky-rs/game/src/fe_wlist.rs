@@ -654,3 +654,10 @@ pub fn list_ctor(m: &mut Mem, e: &mut dyn FeEnv, l: u32) -> u32 {
     m.w32(l + 0xc, LIST_VTABLE);
     l
 }
+
+/// `ListFE3DOffsetOp_Apply6` 0x2b6978(op, item): calls `item`'s virtual `+0x70/+0x74` (vtable at `item + 0xc`) with
+/// `op + 0x10`, and returns 0
+pub fn list_offset_op_apply6(m: &mut Mem, e: &mut dyn FeEnv, op: u32, item: u32) -> u32 {
+    vcall(m, e, item, 0x70, &[op.wrapping_add(0x10)]);
+    0
+}

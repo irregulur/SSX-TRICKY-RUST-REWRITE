@@ -496,3 +496,103 @@ pub fn draw_solid_rect(m: &mut Mem, env: &mut dyn TextBoxEnv, colour: u32, r: [F
     call(m, env, SET_COLOUR, &[DRAW_COLOUR, colour]);
     env.call(m, FILLED_RECT, &[DRAW_COLOUR], &r);
 }
+
+pub const HUD_OVERLAY_VT: u32 = 0x38da80;
+pub const SCREEN_OVERLAY_DTOR: u32 = 0x1c01e8;
+pub const MEMCARD_OP_UPDATE: u32 = 0x1ceee0;
+pub const MEMCARD_OP_IS_DONE: u32 = 0x1d21a0;
+pub const RACE_MENU_SET_STATE: u32 = 0x1ef990;
+pub const RACE_MENU_UPDATE_REPLAY: u32 = 0x1efef0;
+pub const RACE_MENU_DRAW_REPLAY: u32 = 0x1f01e8;
+pub const MCOVERLAY_DRAW: u32 = 0x1cf628;
+pub const BACKDROP_DRAW_FRAME: u32 = 0x1a9bb8;
+pub const DIALOG_DRAW: u32 = 0x1aa268;
+pub const INPUT_GET_DEVICE: u32 = 0x17a830;
+pub const DIALOG_POLL_BUTTONS: u32 = 0x1aac08;
+
+/// `cHUDOverlay::~cHUDOverlay` 0x1a6b20(this, how): restores `HUD_OVERLAY_VT` (`0x38da80`) at `this + 0x28` and
+/// tail-calls `cScreenOverlay::~cScreenOverlay(this, how)` (`0x1c01e8`)
+pub fn hud_overlay_destruct(m: &mut Mem, env: &mut dyn TextBoxEnv, this: u32, how: u32) {
+    m.w32(this + 0x28, HUD_OVERLAY_VT);
+    call(m, env, SCREEN_OVERLAY_DTOR, &[this, how]);
+}
+
+/// `RaceMenuOverlay_UpdateConfirm` 0x1f00c8(this): finds the pad index whose `Input_GetDevice` (`0x17a830`) matches
+/// `*PAD_STATE` (`0x3381e0`), polls `Dialog_PollButtons(*(this+0x42c), pad_idx)` (`0x1aac08`), and transitions to
+/// state 5 on return 1 or state 2 on return 2 via `RaceMenuOverlay_SetState` (`0x1ef990`)
+pub fn race_menu_update_confirm(m: &mut Mem, env: &mut dyn TextBoxEnv, this: u32) {
+    let mut pad_idx = 0u32;
+    let n = m.r32(m.r32(m.r32(APP) + 0x24) + 0x14) as i32;
+    if n > 0 {
+        let mut i = 0u32;
+        loop {
+            let inp = m.r32(m.r32(APP) + 0x24);
+            let dev = call(m, env, INPUT_GET_DEVICE, &[inp, i]);
+            if dev == m.r32(PAD_STATE) {
+                pad_idx = i;
+                break;
+            }
+            i += 1;
+            let n2 = m.r32(m.r32(m.r32(APP) + 0x24) + 0x14) as i32;
+            if (i as i32) >= n2 {
+                break;
+            }
+        }
+    }
+    let res = call(m, env, DIALOG_POLL_BUTTONS, &[m.r32(this + 0x42c), pad_idx]);
+    match res {
+        1 => {
+            call(m, env, RACE_MENU_SET_STATE, &[this, 5]);
+        }
+        2 => {
+            call(m, env, RACE_MENU_SET_STATE, &[this, 2]);
+        }
+        _ => {}
+    }
+}
+
+/// `RaceMenuOverlay_UpdateSave` 0x1ef750(this): dispatches on `*(this + 0x438)` via jump table `0x394060`:
+/// 0 updates the memory-card op (`0x1ceee0`) and sets state 2 when `MemCardOp_IsDone` (`0x1d21a0`) is non-zero;
+/// 2 tail-calls `RaceMenuOverlay_UpdateReplayMenu` (`0x1efef0`); 4 tail-calls [`race_menu_update_confirm`];
+/// all other states do nothing
+pub fn race_menu_update_save(m: &mut Mem, env: &mut dyn TextBoxEnv, this: u32) {
+    match m.r32(this + 0x438) {
+        0 => {
+            call(m, env, MEMCARD_OP_UPDATE, &[this]);
+            if call(m, env, MEMCARD_OP_IS_DONE, &[this]) != 0 {
+                call(m, env, RACE_MENU_SET_STATE, &[this, 2]);
+            }
+        }
+        2 => {
+            call(m, env, RACE_MENU_UPDATE_REPLAY, &[this]);
+        }
+        4 => race_menu_update_confirm(m, env, this),
+        _ => {}
+    }
+}
+
+/// `RaceMenuOverlay_Draw` 0x1efe38(this): dispatches on `*(this + 0x438)` via jump table `0x3940a0`:
+/// 0 tail-calls `MCOverlay_Draw` (`0x1cf628`); 2 tail-calls `RaceMenuOverlay_DrawReplayMenu` (`0x1f01e8`);
+/// 4 queries renderer `+0x1d8/+0x1dc`, calls `Backdrop_DrawFrame(*(this+0x42c), depth - 1; 220.0)` (`0x1a9bb8`),
+/// and tail-calls `Dialog_Draw(*(this+0x42c))` (`0x1aa268`); all other states do nothing
+pub fn race_menu_draw(m: &mut Mem, env: &mut dyn TextBoxEnv, this: u32) {
+    match m.r32(this + 0x438) {
+        0 => {
+            call(m, env, MCOVERLAY_DRAW, &[this]);
+        }
+        2 => {
+            call(m, env, RACE_MENU_DRAW_REPLAY, &[this]);
+        }
+        4 => {
+            let rend = m.r32(m.r32(APP) + 0x724);
+            let vt = m.r32(rend + 0x10);
+            let me = rend.wrapping_add(m.r16(vt + 0x1d8) as i16 as u32);
+            let depth = call(m, env, m.r32(vt + 0x1dc), &[me]);
+            let dlg = m.r32(this + 0x42c);
+            env.call(m, BACKDROP_DRAW_FRAME, &[dlg, depth.wrapping_sub(1)], &[F(220.0)]);
+            let dlg = m.r32(this + 0x42c);
+            call(m, env, DIALOG_DRAW, &[dlg]);
+        }
+        _ => {}
+    }
+}
