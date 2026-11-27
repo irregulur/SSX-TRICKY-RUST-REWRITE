@@ -274,7 +274,7 @@ address,size,name,system,status
 0x11afe8,48,Boarder_StartLessonWait,boarder,ported
 0x11b018,476,Boarder_AddMeter,boarder,checked
 0x11b1f8,336,Boarder_DrainMeter,boarder,checked
-0x11b348,4860,cBoarderHandler::cBoarderHandler,boarder,not started
+0x11b348,4860,cBoarderHandler::cBoarderHandler,boarder,checked
 0x11c648,100,Boarder_ChangeMotionState,boarder,ported
 0x11c6b0,96,Boarder_ExitMotionState,boarder,ported
 0x11c710,96,Boarder_EnterMotionState,boarder,ported
@@ -330,7 +330,7 @@ address,size,name,system,status
 0x11f608,8,Boarder_SetState,boarder,ported
 0x11f610,8,Boarder_SetMotion,boarder,ported
 0x11f628,324,cBoarderHandler::__tf,runtime,host
-0x11f770,4648,cBoarderHandler::~cBoarderHandler,boarder,not started
+0x11f770,4648,cBoarderHandler::~cBoarderHandler,boarder,checked
 0x120998,84,cWipeOutRecoverControl::__tf,runtime,host
 0x1209f0,224,cWipeOutRecoverControl::~cWipeOutRecoverControl,boarder,checked
 0x120ad0,84,cWipeOutControl::__tf,runtime,host
@@ -522,20 +522,20 @@ address,size,name,system,status
 0x132648,2912,Fx_BoardTrack,boarder,checked
 0x1331a8,532,Fx_BoardTrack_Draw,boarder,checked
 0x1333c0,1092,Fx_BoardTrack_DrawStrip,boarder,ported
-0x133808,132,PlayerMarker_Construct,boarder,not started
-0x133890,172,PlayerMarker_Reset,boarder,not started
-0x133940,736,PlayerMarker_Update,boarder,not started
+0x133808,132,PlayerMarker_Construct,boarder,checked
+0x133890,172,PlayerMarker_Reset,boarder,checked
+0x133940,736,PlayerMarker_Update,boarder,checked
 0x133c20,1636,PlayerMarker_Draw,boarder,checked
-0x134288,328,AttitudeIcon_Construct,boarder,not started
-0x1343d0,1120,AttitudeIcon_Update,boarder,not started
+0x134288,328,AttitudeIcon_Construct,boarder,checked
+0x1343d0,1120,AttitudeIcon_Update,boarder,checked
 0x134830,2192,AttitudeIcon_Draw,boarder,checked
 0x1350c0,176,Boarder_UpdateEffects,boarder,checked
 0x135170,140,BoarderRender_DrawEffects,render,checked
 0x135200,84,BoarderRender_ResetEffects,render,not started
 0x135258,12,BoarderRender_EmitBrakeSpray,render,ported
 0x135268,12,BoarderRender_SpawnLandingPuffs,render,not started
-0x135278,848,cBoarderRender::cBoarderRender,boarder,not started
-0x1355c8,304,cBoarderRender::~cBoarderRender,boarder,not started
+0x135278,848,cBoarderRender::cBoarderRender,boarder,checked
+0x1355c8,304,cBoarderRender::~cBoarderRender,boarder,checked
 0x1356f8,1984,cBoarderRender::vf7_1356f8,boarder,ported
 0x135eb8,652,BoarderRender_UpdateLighting,render,ported
 0x136148,548,BoarderRender_RecordStreaks,render,not started
@@ -1053,7 +1053,7 @@ address,size,name,system,status
 0x150be8,304,Rumble_Add,boarder,checked
 0x150d18,284,Rumble_Update,boarder,checked
 0x150e38,580,Race_CreateBoarders,race,checked
-0x151080,460,cPlayer::~cPlayer,boarder,not started
+0x151080,460,cPlayer::~cPlayer,boarder,checked
 0x151250,5408,cPlayer::GetControls,boarder,checked
 0x152770,2496,Pad_SetupVibration,input,ported
 0x153130,236,Boarder_UpdateSlopeTimeScale,boarder,ported
@@ -1556,14 +1556,14 @@ address,size,name,system,status
 0x178078,64,Mat4_TransformVec4,common,ported
 0x1780b8,44,Vec4_ScaleCopy21,common,checked
 0x1781c0,124,cCamControl::cCamControl,boarder,ported
-0x178240,100,cCamControl::~cCamControl,boarder,not started
+0x178240,100,cCamControl::~cCamControl,boarder,checked
 0x1782a8,40,Game_RegisterCamera,camera,checked
 0x1782d0,60,Camera_LoadCmlOnce,camera,checked
 0x178310,12,Camera_GetCommonCmlName,camera,ported
 0x178320,12,Camera_GetScriptsCmlName,camera,ported
 0x178330,184,Camera_GetCourseCmlName,camera,ported
 0x1783e8,228,Camera_LoadCmlFiles,camera,ported
-0x1784d0,240,cCamControl::vf1_1784d0,boarder,not started
+0x1784d0,240,cCamControl::vf1_1784d0,boarder,checked
 0x1785c0,188,Camera_SetReplayMode,camera,checked
 0x178680,60,Camera_NextPreset,camera,checked
 0x1786c0,12,Camera_GetPreset,camera,checked
@@ -1571,7 +1571,7 @@ address,size,name,system,status
 0x178968,188,Camera_GetChaseParams,camera,checked
 0x178a28,448,Camera_SetChaseParams,camera,checked
 0x178be8,472,Camera_AdjustChase,camera,checked
-0x178dc0,8,cCamControl::vf2_178dc0,boarder,not started
+0x178dc0,8,cCamControl::vf2_178dc0,boarder,checked
 0x178dc8,116,Camera_StaticDtor,camera,checked
 0x178f50,80,cCamControl::__tf,runtime,host
 0x178fa0,80,CamAnimation::__tf,runtime,host

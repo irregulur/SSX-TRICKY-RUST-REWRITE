@@ -943,6 +943,8 @@ pub const RACE_GET_RIDER: u32 = 0x1814a8;
 pub const BOARDER_FIND_NEAREST_LINE: u32 = 0x119d30;
 pub const REPLAY_ADD_INPUT_STREAM: u32 = 0x191ca0;
 pub const REPLAY_ADD_PIN: u32 = 0x191a18;
+pub const REPLAY_REMOVE_INPUT_STREAM: u32 = 0x191d30;
+pub const REPLAY_REMOVE_PIN: u32 = 0x191ac0;
 pub const RIVALS_INIT_PAIRS: u32 = 0x167ea0;
 pub const PRERACE_SEL_CLEAR: u32 = 0x1686a8;
 pub const PRERACE_SEL_CHOOSE: u32 = 0x168720;
@@ -1014,6 +1016,53 @@ pub fn player_construct(m: &mut Mem, e: &mut dyn FeEnv, o: u32, in_charge: u32, 
     };
     m.w32(b_final.wrapping_add(0x41c), 1);
     o
+}
+
+/// `cPlayer::~cPlayer` 0x151080(o, how; sp on entry): restores `PLAYER_VT` at `+0x834` and `PLAYER_VBASE_VT` at `*o`
+/// (or its 10-entry adjusted 0xb0-byte stack copy at `sp - 0x120` when `how == 0`), removes replay input stream
+/// (`0x191d30`) if `+0x878 != 0` and replay pin (`0x191ac0`) if `+0x87c != 0`, deletes `*(o+0x874)`, destroys
+/// `cBoarderHandler` (`0x11f770`, `0`), destroys `cBoarder` (`0x116990`, `0`) on `how & 2`, and deletes `o` on
+/// `how & 1`
+pub fn player_destruct(m: &mut Mem, e: &mut dyn FeEnv, o: u32, how: u32, sp: u32) {
+    m.w32(o.wrapping_add(0x834), PLAYER_VT);
+    let b = m.r32(o);
+    m.w32(b, PLAYER_VBASE_VT);
+    let (destroy_base, delete_self) = if how == 0 {
+        let copy = sp.wrapping_sub(0x120);
+        for k in 0..0xb0 / 4 {
+            let w = m.r32(PLAYER_VBASE_VT + 4 * k);
+            m.w32(copy + 4 * k, w);
+        }
+        let delta = o.wrapping_sub(b.wrapping_sub(0x880)) as u16;
+        for off in PLAYER_VBASE_ADJ {
+            let adj = m.r16(PLAYER_VBASE_VT + off).wrapping_add(delta);
+            m.w16(copy + off, adj);
+        }
+        m.w32(b, copy);
+        (false, false)
+    } else {
+        (how & 2 != 0, how & 1 != 0)
+    };
+    let inp = m.r32(o.wrapping_add(0x878));
+    if inp != 0 {
+        let rep = m.r32(m.r32(m.r32(GAPP) + 0x730) + 0x40);
+        e.call(m, REPLAY_REMOVE_INPUT_STREAM, &[rep, inp]);
+    }
+    let pin = m.r32(o.wrapping_add(0x87c));
+    if pin != 0 {
+        let rep = m.r32(m.r32(m.r32(GAPP) + 0x730) + 0x40);
+        e.call(m, REPLAY_REMOVE_PIN, &[rep, pin]);
+    }
+    let extra = m.r32(o.wrapping_add(0x874));
+    e.call(m, DELETE, &[extra]);
+    e.call(m, BOARDER_HANDLER_DTOR, &[o, 0]);
+    if destroy_base {
+        let b = m.r32(o);
+        e.call(m, BOARDER_DTOR, &[b, 0]);
+    }
+    if delete_self {
+        e.call(m, DELETE, &[o]);
+    }
 }
 
 /// `Circuit_Destruct` 0x16a978(o, how): calls `Mem_Delete(o)` (`0x114f80`) when `how` has bit 0

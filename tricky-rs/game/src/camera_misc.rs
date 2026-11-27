@@ -330,3 +330,57 @@ pub fn anim_frame_mul_matrix(m: &mut Mem, f: u32, mat: u32) {
         }
     }
 }
+
+pub const CAM_CONTROL_VT: u32 = 0x383958;
+pub const BX_OBJ_NODE_DTOR: u32 = 0x17cfe0;
+pub const MENU_IS_ACTIVE: u32 = 0x1895c8;
+pub const OVERLAY_IS_ANY_ACTIVE: u32 = 0x1a77f8;
+pub const BX_CAMERA_UPDATE: u32 = 0x177078;
+pub const GAPP: u32 = 0x337c58;
+pub const G_MENU_MANAGER: u32 = 0x337e08;
+pub const CML_HANDLES: [u32; 3] = [0x336688, 0x336690, 0x336698];
+pub const CAM_USE_STATIC: u32 = 0x337774;
+pub const CAM_LIST_COUNT: u32 = 0x337780;
+pub const CAM_LIST_PTRS: u32 = 0x337788;
+
+/// `cCamControl::~cCamControl` 0x178240(o, how): restores `CAM_CONTROL_VT` at `o + 8`, frees the 3 CML handles
+/// (`0x336688`, `0x336690`, `0x336698`) via [`cml_free`], and tail-calls `cBxObjNode::~cBxObjNode(o, how)` (`0x17cfe0`)
+pub fn cam_control_destruct(m: &mut Mem, e: &mut dyn CamMiscEnv, o: u32, how: u32) {
+    m.w32(o + 8, CAM_CONTROL_VT);
+    for h in CML_HANDLES {
+        cml_free(m, e, h);
+    }
+    e.call(m, BX_OBJ_NODE_DTOR, &[o, how]);
+}
+
+/// `cCamControl::vf1_1784d0` 0x1784d0(): loads pending CML files ([`load_cml_once`]), returns if the front-end menu
+/// (`cMenuManager::IsActive` 0x1895c8 on `gMenuManager`) or any overlay (`OverlayMan_IsAnyActive` 0x1a77f8 on
+/// `gApp+0x730 -> +0x38`) is active, updates either `gStaticCamera` (`cBxCamera::vf1` 0x177078 when `*0x337774 != 0`)
+/// or each camera in `*0x337788[0..*0x337780]` via its `+0xeb8` vtable slot `+0x10/+0x14`, and clears `CML_PENDING`
+pub fn cam_control_update(m: &mut Mem, e: &mut dyn CamMiscEnv) {
+    load_cml_once(m, e);
+    if e.call(m, MENU_IS_ACTIVE, &[G_MENU_MANAGER]) != 0 {
+        return;
+    }
+    let overlay = m.r32(m.r32(m.r32(GAPP) + 0x730) + 0x38);
+    if e.call(m, OVERLAY_IS_ANY_ACTIVE, &[overlay]) != 0 {
+        return;
+    }
+    if m.r32(CAM_USE_STATIC) != 0 {
+        e.call(m, BX_CAMERA_UPDATE, &[STATIC_CAMERA]);
+    } else {
+        let mut i = 0u32;
+        while (i as i32) < (m.r32(CAM_LIST_COUNT) as i32) {
+            let cam = m.r32(CAM_LIST_PTRS + 4 * i);
+            let vt = m.r32(cam + 0xeb8);
+            let me = cam.wrapping_add(m.r16(vt + 0x10) as i16 as i32 as u32);
+            let f = m.r32(vt + 0x14);
+            e.call(m, f, &[me]);
+            i += 1;
+        }
+    }
+    m.w32(CML_PENDING, 0);
+}
+
+/// `cCamControl::vf2_178dc0` 0x178dc0(): no-op
+pub fn cam_control_vf2() {}

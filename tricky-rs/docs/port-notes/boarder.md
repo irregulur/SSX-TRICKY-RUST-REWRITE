@@ -2037,3 +2037,42 @@ Proven (`SLUS_203.26` disassembly + runner):
   `0x2609b0` wraps `Course_GetSplineSegment` `0x254b20`.
 - Checked bit-for-bit in `tests/boarder_fx_spline_tail.rs` (400 FX/AirPredict/BdrLoad cases + 1,500 Spline/RailNode
   cases); only 13 `not started` `boarder` functions remain.
+
+## Remaining `boarder` tail: markers, attitude icons, `cBoarderRender`, `cPlayer::~cPlayer`, `cCamControl`, and `cBoarderHandler` (row G1z; `marker.rs`, `attitude.rs`, `riderdraw.rs`, `aiobj.rs`, `camera_misc.rs`, `boarder_life.rs`, checked: `tests/boarder_tail.rs`)
+
+Proven (`SLUS_203.26` disassembly + runner):
+
+- **`PlayerMarker_Construct` 0x133808 / `PlayerMarker_Reset` 0x133890 / `PlayerMarker_Update` 0x133940** (`marker.rs`):
+  `Reset` initializes 8 quad slots at `+0x40` to `(0, 0, 0, 1)`, `+0xc8 + 0x30*k = 1.0`, the 5 geometry floats at
+  `+0x240..+0x250` (`20000`, `-130.90843`, `132.5429`, `50.5`, `300.13037`), and zeroes the `+0x254` ease record;
+  `Construct` runs `EaseRecord_Init(m + 0x254; 0.0)` (`0x1230e0`) and `Reset`. `Update` places the 4 strip control
+  points above bone 4 (`mats + 0x130`), computes strip UVs from `+0x240/+0x248/+0x250`, tints the 8 vertices red
+  (`0x80, 0, 0`) for player 0 or gold (`0x80, 0x6e, 0`) otherwise, eases `+0x254` between `20` and `40` at rate
+  `45.192516`, and writes the truncated integer alpha to the middle 4 vertices (`0` on the outer 4).
+- **`AttitudeIcon_Construct` 0x134288 / `AttitudeIcon_Update` 0x1343d0** (`attitude.rs`): `Construct` writes the 4
+  attitude colour points at `+0x00..+0x3f`, sets slot count `+0x40 = 1`, and initializes both `0x80`-byte slots.
+  `Update` clears both shown flags (`+0x98`, `+0x118`), gates on career mode `2 | 4`, replay inactive (or state `0` /
+  `>= 10`), race state `4`, and `rider+0x41c != 1`, resolves 1 or 2 players via `Career_FindRiderOfPlayer` `0x166598`,
+  maps signed attitude bytes piecewise over `< 60`, `< 80.98926`, `>= 80.98926`, steps squash/move/settle timers,
+  tracks rival kind (`+0x9c/+0xbc/+0xc0`) and hit-flash (`+0xa8`), and sets `+0x60 = bone4 + 95.90865 * rider_up`.
+- **`cBoarderRender::cBoarderRender` 0x135278 / `~cBoarderRender` 0x1355c8** (`riderdraw.rs`): constructs/destroys
+  virtual base `cBoarder` at `+0x480` (with `+0x08/+0x40`-adjusted `0xb0`-byte stack vtable copies at `sp - 0x160` /
+  `sp - 0xf0` when `in_charge == 0` / `how == 0`), copies `[0, *0x3bc220, *0x3bc224, *0x3bc228]` to `+0x3c8..+0x3d4`,
+  and allocates/fills `0xdeadc0de`/initializes (or destroys/deletes) the `0xc360`-byte FX bundle (`+0x3e0`), shadow
+  (`+8`), player marker (`+0x3e4`), and attitude icon (`+0x3e8`).
+- **`cPlayer::~cPlayer` 0x151080** (`aiobj.rs`): mirrors `cPlayer::cPlayer` `0x150e38`, restoring `0x36f218` at
+  `+0x834` and `0x36f168` at `*o` (or its 10-entry adjusted `0xb0`-byte stack copy at `sp - 0x120` when `how == 0`),
+  removing replay input stream (`0x191d30`) and pin (`0x191ac0`), deleting `*(o+0x874)`, and tearing down
+  `cBoarderHandler`, `cBoarder` (`how & 2`), and `o` (`how & 1`).
+- **`cCamControl::~cCamControl` 0x178240 / `vf1_1784d0` 0x1784d0 / `vf2_178dc0` 0x178dc0** (`camera_misc.rs`):
+  destructor restores `0x383958` at `+8`, frees the 3 CML handles (`0x336688/0x336690/0x336698`), and tail-calls
+  `cBxObjNode::~cBxObjNode` `0x17cfe0`; `vf1` runs `Camera_LoadCmlOnce`, bails if menu (`0x1895c8`) or overlay
+  (`0x1a77f8`) is active, updates either `gStaticCamera` (`0x177078` when `*0x337774 != 0`) or each camera in
+  `0x337788[0..*0x337780]` via `+0xeb8` vtable `+0x10/+0x14`, and clears `0x33777c`; `vf2` is a no-op.
+- **`cBoarderHandler::cBoarderHandler` 0x11b348 / `~cBoarderHandler` 0x11f770** (`boarder_life.rs`): manages the 29
+  virtual-base pointers (`o + 0x860`), `cBoarder` (`0x116828`/`0x116990`), `cBoarderRender` (`0x135278`/`0x1355c8`),
+  all 28 embedded motion/control subobjects (`HANDLER_STATES` in forward/reverse order, with `cWipeOutMotion` calling
+  `RigidBody_Construct` `0x1537d0` on `o + 0x560`), `cBxSortObjNode` (`0x17d0e0`/`0x17dd00` at `o + 0x82c`, type
+  `0x3ef`), `0x366250`/`0x3661f0` vtables (and stack copies at `sp - 0x220` / `sp - 0x210` / `sp - 0x2c0`),
+  `b + 0x5ae0 = o`, `b + 0x784 = o + 0x82c`, and broadphase box setup (`0x123098`, `0x14fa70`).
+- Checked bit-for-bit across 5,850 cases in `tests/boarder_tail.rs`, bringing `boarder` to **0 `not started`**.

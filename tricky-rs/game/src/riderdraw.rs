@@ -294,3 +294,136 @@ pub fn draw(m: &mut Mem, env: &mut dyn RiderDrawEnv, br: u32, scratch: u32) {
     env.call(m, SHADOW_DRAW, &[shadow]);
     vcall(m, env, r, 0x1e0, &[3]);
 }
+
+pub const BOARDER_RENDER_VT: u32 = 0x369b20;
+pub const BOARDER_CTOR: u32 = 0x116828;
+pub const BOARDER_DTOR: u32 = 0x116990;
+pub const MEM_DELETE: u32 = 0x114f80;
+pub const EAMEM_ALLOC: u32 = 0x2ccf70;
+pub const EAMEM_SET: u32 = 0x2cc808;
+pub const FX_BOARD_PUFF_INIT: u32 = 0x12ec08;
+pub const FX_BOARD_TRAIL_INIT: u32 = 0x12fe48;
+pub const FX_SURFACE_SPRAY_INIT: u32 = 0x131110;
+pub const FX_BOARD_TRACK_INIT: u32 = 0x1324c8;
+pub const FX_BRAKE_SPRAY_INIT: u32 = 0x12df58;
+pub const FX_SPEED_DUST_INIT: u32 = 0x12f420;
+pub const BOARDER_SHADOW_INIT: u32 = 0x1c8c38;
+pub const PLAYER_MARKER_CTOR: u32 = 0x133808;
+pub const ATTITUDE_ICON_CTOR: u32 = 0x134288;
+pub const DESTRUCT_EFFECTS: u32 = 0x136f88;
+pub const TAG_BOARD_SPRAY: u32 = 0x369ab0;
+pub const TAG_BOARDER_SHADOW: u32 = 0x369ac0;
+pub const TAG_PLAYER_INDICATOR: u32 = 0x369ad0;
+pub const TAG_VISUAL_ANGER: u32 = 0x369ae0;
+/// 0x3bc220: three static floats copied into `br+0x3cc..+0x3d4` on construction
+pub const RENDER_INIT_FLOATS: u32 = 0x3bc220;
+
+fn copy_adjusted_vbase_vt(m: &mut Mem, br: u32, b: u32, copy: u32) {
+    for k in 0..0xb0 / 4 {
+        let w = m.r32(BOARDER_RENDER_VT + 4 * k);
+        m.w32(copy + 4 * k, w);
+    }
+    let delta = br.wrapping_sub(b.wrapping_sub(0x480)) as u16;
+    for off in [0x08u32, 0x40] {
+        let adj = m.r16(BOARDER_RENDER_VT + off).wrapping_add(delta);
+        m.w16(copy + off, adj);
+    }
+    m.w32(b, copy);
+}
+
+/// `cBoarderRender::cBoarderRender` 0x135278(br, in_charge; sp on entry): constructs virtual base `cBoarder` at
+/// `br + 0x480` when `in_charge != 0`, installs `BOARDER_RENDER_VT` (or its `+0x08/+0x40`-adjusted 0xb0-byte stack
+/// copy at `sp - 0x160` when `in_charge == 0`), zeroes the ease record (`+0x0c..+0x14`) and streak counters
+/// (`+0x1e0/+0x1e4`, `+0x3c0/+0x3c4`), copies `[0, *0x3bc220, *0x3bc224, *0x3bc228]` into `+0x3c8..+0x3d4`,
+/// allocates/fills `0xdeadc0de`/initializes the `0xc360`-byte FX bundle (`+0x3e0`), `0x180`-byte shadow (`+8`),
+/// `0x260`-byte player marker (`+0x3e4`), and `0x150`-byte attitude icon (`+0x3e8`), zeroes `+0x0c..+0x14` and
+/// `+0x3ec`, and returns `br`
+pub fn construct(m: &mut Mem, env: &mut dyn crate::fe3dstate::FeEnv, br: u32, in_charge: u32, sp: u32) -> u32 {
+    if in_charge != 0 {
+        let vb = br.wrapping_add(0x480);
+        m.w32(br, vb);
+        env.call(m, BOARDER_CTOR, &[vb]);
+    }
+    let b = m.r32(br);
+    m.w32(b, BOARDER_RENDER_VT);
+    if in_charge == 0 {
+        copy_adjusted_vbase_vt(m, br, b, sp.wrapping_sub(0x160));
+    }
+    // EaseRecord_Init(br + 0xc; 0.0)
+    m.w32(br + 0x0c, 0);
+    m.w32(br + 0x10, 0);
+    m.w32(br + 0x14, 0);
+    m.w32(br + 0x1e0, 0);
+    m.w32(br + 0x1e4, 0);
+    m.w32(br + 0x3c0, 0);
+    m.w32(br + 0x3c4, 0);
+    let f0 = m.r32(RENDER_INIT_FLOATS);
+    let f1 = m.r32(RENDER_INIT_FLOATS + 4);
+    let f2 = m.r32(RENDER_INIT_FLOATS + 8);
+    m.w32(br + 0x3c8, 0);
+    m.w32(br + 0x3cc, f0);
+    m.w32(br + 0x3d0, f1);
+    m.w32(br + 0x3d4, f2);
+    let fx = env.call(m, EAMEM_ALLOC, &[TAG_BOARD_SPRAY, 0xc360, 0]);
+    if fx != 0 {
+        env.call(m, EAMEM_SET, &[fx, 0xdead_c0de, 0xc360]);
+    }
+    env.call(m, FX_BOARD_PUFF_INIT, &[fx]);
+    env.call(m, FX_BOARD_TRAIL_INIT, &[fx.wrapping_add(0x1c20)]);
+    env.call(m, FX_SURFACE_SPRAY_INIT, &[fx.wrapping_add(0x4b60)]);
+    env.call(m, FX_BOARD_TRACK_INIT, &[fx.wrapping_add(0x8020)]);
+    env.call(m, FX_BRAKE_SPRAY_INIT, &[fx.wrapping_add(0x99b0)]);
+    env.call(m, FX_SPEED_DUST_INIT, &[fx.wrapping_add(0xb600)]);
+    m.w32(br + 0x3e0, fx);
+    let sh = env.call(m, EAMEM_ALLOC, &[TAG_BOARDER_SHADOW, 0x180, 0]);
+    if sh != 0 {
+        env.call(m, EAMEM_SET, &[sh, 0xdead_c0de, 0x180]);
+    }
+    let sh = env.call(m, BOARDER_SHADOW_INIT, &[sh]);
+    m.w32(br + 8, sh);
+    let pm = env.call(m, EAMEM_ALLOC, &[TAG_PLAYER_INDICATOR, 0x260, 0]);
+    if pm != 0 {
+        env.call(m, EAMEM_SET, &[pm, 0xdead_c0de, 0x260]);
+    }
+    let pm = env.call(m, PLAYER_MARKER_CTOR, &[pm]);
+    m.w32(br + 0x3e4, pm);
+    let ai = env.call(m, EAMEM_ALLOC, &[TAG_VISUAL_ANGER, 0x150, 0]);
+    if ai != 0 {
+        env.call(m, EAMEM_SET, &[ai, 0xdead_c0de, 0x150]);
+    }
+    let ai = env.call(m, ATTITUDE_ICON_CTOR, &[ai]);
+    m.w32(br + 0x3e8, ai);
+    m.w32(br + 0x14, 0);
+    m.w32(br + 0x0c, 0);
+    m.w32(br + 0x10, 0);
+    m.w32(br + 0x3ec, 0);
+    br
+}
+
+/// `cBoarderRender::~cBoarderRender` 0x1355c8(br, how; sp on entry): restores `BOARDER_RENDER_VT` (or its adjusted
+/// 0xb0-byte stack copy at `sp - 0xf0` when `how == 0`), destroys the FX bundle (`0x136f88`, `3`) if non-null,
+/// deletes shadow (`+8`), player marker (`+0x3e4`), and attitude icon (`+0x3e8`), resets `+0x3ec = 0` and
+/// `+0x3f0/+0x3f4 = -1`, destroys virtual base `cBoarder` on `how & 2`, and deletes `br` on `how & 1`
+pub fn destruct(m: &mut Mem, env: &mut dyn crate::fe3dstate::FeEnv, br: u32, how: u32, sp: u32) {
+    let b = m.r32(br);
+    m.w32(b, BOARDER_RENDER_VT);
+    if how == 0 {
+        copy_adjusted_vbase_vt(m, br, b, sp.wrapping_sub(0xf0));
+    }
+    let fx = m.r32(br + 0x3e0);
+    if fx != 0 {
+        env.call(m, DESTRUCT_EFFECTS, &[fx, 3]);
+    }
+    env.call(m, MEM_DELETE, &[m.r32(br + 8)]);
+    env.call(m, MEM_DELETE, &[m.r32(br + 0x3e4)]);
+    env.call(m, MEM_DELETE, &[m.r32(br + 0x3e8)]);
+    m.w32(br + 0x3ec, 0);
+    m.w32(br + 0x3f4, 0xffff_ffff);
+    m.w32(br + 0x3f0, 0xffff_ffff);
+    if how & 2 != 0 {
+        env.call(m, BOARDER_DTOR, &[m.r32(br), 0]);
+    }
+    if how & 1 != 0 {
+        env.call(m, MEM_DELETE, &[br]);
+    }
+}

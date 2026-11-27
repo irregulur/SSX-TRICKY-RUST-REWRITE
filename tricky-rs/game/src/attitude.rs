@@ -185,3 +185,176 @@ pub fn draw(m: &mut Mem, env: &mut dyn RiderDrawEnv, icon: u32) {
     vcall(m, env, r, 0x240, &[slot + 0x60, slot + 0x70, slot + 0x78, slot + 0x80, slot + 0x88]);
     vcall(m, env, r, 0x1a8, &[]);
 }
+
+/// `AttitudeIcon_Construct` 0x134288(icon): writes the 4 attitude palette vectors at `+0x00..+0x3f`, sets the slot
+/// count `+0x40 = 1`, initializes both 0x80-byte slots at `+0x50..+0xb8`, and returns `icon`
+pub fn construct(m: &mut Mem, icon: u32) -> u32 {
+    let f1 = F(1.0);
+    let f2 = f(0x3eaa_a2d7);
+    let f0 = f(0x3ffe_b852);
+    let z = F(0.0);
+    let pts: [V; 4] = [
+        [f2, f1, f1, f1],
+        [f2, f0, f0, z],
+        [f2, f0, f1, z],
+        [f2, f0, z, z],
+    ];
+    for (i, v) in pts.into_iter().enumerate() {
+        for j in 0..4u32 {
+            wf(m, icon + 0x10 * i as u32 + 4 * j, v[j as usize]);
+        }
+    }
+    m.w32(icon + 0x40, 1);
+    for i in 0..2u32 {
+        let s = icon + 0x80 * i;
+        m.w32(s + 0x50, 0);
+        m.w32(s + 0x98, 0);
+        for j in 0..4u32 {
+            wf(m, s + 0x88 + 4 * j, f1);
+        }
+        m.w32(s + 0x78, 0);
+        wf(m, s + 0x7c, f1);
+        wf(m, s + 0x80, f1);
+        m.w32(s + 0x84, 0);
+        m.w8(s + 0xa8, 0);
+        m.w32(s + 0xac, 0);
+        m.w32(s + 0xb0, 0);
+        m.w32(s + 0x9c, 3);
+        m.w32(s + 0xa0, 0);
+        m.w32(s + 0xa4, 0);
+        m.w32(s + 0xb4, 1);
+        m.w32(s + 0xb8, 0);
+    }
+    icon
+}
+
+/// `AttitudeIcon_Update` 0x1343d0(icon, rider): clears both slots' shown flags (`+0x98`, `+0x118`), bails unless
+/// career mode (`CAREER+0x2afc`) is 2 or 4, replay is inactive (or state `0` / `>= 10`), race state (`ai+0x1c`) is 4,
+/// and `rider+0x41c != 1`; looks up 1 or 2 player rider indices via `Career_FindRiderOfPlayer`, maps each player's
+/// attitude byte (`rider+0x50 + 32*ridx`) piecewise to `0..3`, advances squash (`+0xa0/+0xa4`), move (`+0xac/+0xb0`),
+/// and settle (`+0xb4/+0xb8`) animations, updates fixed/rival state (`+0xbc/+0xc0/+0x9c`) and hit-flash (`+0xa8`),
+/// and places each slot at `bone4 + 95.90865 * rider_up` (`+0x60`)
+pub fn update(m: &mut Mem, env: &mut dyn RiderDrawEnv, icon: u32, rider: u32) {
+    m.w32(icon + 0x98, 0);
+    m.w32(icon + 0x118, 0);
+    let mode = m.r32(CAREER + 0x2afc);
+    if mode != 4 && mode != 2 {
+        return;
+    }
+    let app = m.r32(APP);
+    let game = m.r32(app + 0x730);
+    let replay = m.r32(game + 0x40);
+    if replay != 0 {
+        let st = m.r32(replay + 0x20);
+        if st != 0 && (st as i32) < 10 {
+            return;
+        }
+    }
+    let game = m.r32(m.r32(APP) + 0x730);
+    let ai = m.r32(game + 0x1c);
+    if m.r32(ai + 0x1c) != 4 {
+        return;
+    }
+    if m.r32(rider + 0x41c) == 1 {
+        return;
+    }
+    let mut riders = [0u32; 2];
+    if (m.r32(game + 0x298) as i32) >= 2 && (m.r32(ai + 0x7c) as i32) >= 2 {
+        m.w32(icon + 0x40, 2);
+        riders[0] = env.call(m, FIND_RIDER_OF_PLAYER, &[CAREER, 0]);
+        riders[1] = env.call(m, FIND_RIDER_OF_PLAYER, &[CAREER, 1]);
+    } else {
+        m.w32(icon + 0x40, 1);
+        riders[0] = env.call(m, FIND_RIDER_OF_PLAYER, &[CAREER, 0]);
+    }
+    let one = F(1.0);
+    let mut idx = 0u32;
+    while (idx as i32) < (m.r32(icon + 0x40) as i32) {
+        let slot = icon + (idx << 7);
+        m.w32(slot + 0x98, 1);
+        let ridx = riders[idx as usize];
+        let att_base = rider.wrapping_add(0x10).wrapping_add(ridx << 5);
+        let raw = F((m.r8(att_base + 0x40) as i8) as f32);
+        let sixty = F(60.0);
+        let mid = f(0x42a1_fa80);
+        let u = if raw < sixty {
+            div(raw, sixty)
+        } else if raw < mid {
+            div(raw - sixty, f(0x41a7_ea00)) + one
+        } else {
+            div(raw - mid, F(40.0)) + F(2.0)
+        };
+        wf(m, slot + 0x50, u);
+        if m.r32(slot + 0xa0) != 0 {
+            let mut t = rf(m, slot + 0xa4);
+            if one <= t {
+                m.w32(slot + 0xa4, 0);
+                m.w32(slot + 0xa0, 0);
+                t = rf(m, slot + 0xa4);
+            }
+            let next = t + f(0x3c86_3cb3);
+            wf(m, slot + 0xa4, if one < next { one } else { next });
+        } else if m.r32(slot + 0xac) != 0 {
+            let mut t = rf(m, slot + 0xb0);
+            if one <= t {
+                m.w32(slot + 0xb0, 0);
+                m.w32(slot + 0xac, 0);
+                t = rf(m, slot + 0xb0);
+            }
+            let next = t + f(0x3c88_6a7f);
+            wf(m, slot + 0xb0, if one < next { one } else { next });
+        }
+        let step = f(0x3d87_8a5d);
+        if m.r32(slot + 0xb4) != 0 {
+            let s = rf(m, slot + 0xb8) + step;
+            if one <= s {
+                m.w32(slot + 0xb4, 0);
+                wf(m, slot + 0xb8, one - (s - one));
+            } else {
+                wf(m, slot + 0xb8, s);
+            }
+        } else {
+            let s = rf(m, slot + 0xb8) - step;
+            if s <= F(0.0) {
+                m.w32(slot + 0xb4, 1);
+                wf(m, slot + 0xb8, F(-s.0));
+            } else {
+                wf(m, slot + 0xb8, s);
+            }
+        }
+        m.w32(slot + 0xbc, 0);
+        if m.r32(rider + 0x118) != 0 && m.r32(rider + 0x120) == ridx {
+            let kind = m.r32(rider + 0x124);
+            m.w32(slot + 0xbc, 1);
+            m.w32(slot + 0xc0, kind);
+            if kind != m.r32(slot + 0x9c) {
+                m.w32(slot + 0x9c, kind);
+                m.w32(slot + 0xa0, 1);
+                m.w32(slot + 0xa4, 0);
+                if m.r32(slot + 0xac) != 0 {
+                    m.w32(slot + 0xb0, 0);
+                    m.w32(slot + 0xac, 0);
+                }
+            }
+        }
+        if m.r32(slot + 0xa0) == 0 {
+            let prev = m.r8(slot + 0xa8) as i8;
+            let cur = m.r8(att_base + 0x43) as i8;
+            if prev < cur {
+                m.w32(slot + 0xb0, 0);
+                m.w32(slot + 0xac, 1);
+            }
+        }
+        let cur_b = m.r8(att_base + 0x43);
+        m.w8(slot + 0xa8, cur_b);
+        let skel = m.r32(rider + 0x4494);
+        let mats = if skel == 0 { 0 } else { m.r32(skel + 4) };
+        let up = rq(m, rider + 0x4ac0);
+        let head = rq(m, mats.wrapping_add(0x130));
+        let pos = add(head, scale(up, f(0x42bf_d13b)));
+        for j in 0..4u32 {
+            wf(m, slot + 0x60 + 4 * j, pos[j as usize]);
+        }
+        idx += 1;
+    }
+}
