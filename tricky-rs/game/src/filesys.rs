@@ -52,7 +52,8 @@ pub const HOST_PREFIX_PTR: u32 = 0x3bba58;
 pub const ROOT_DEVICE: u32 = 0x3bba60;
 /// The devices there are (gp − 0x7e8c): bit 1 the host
 pub const DEVICES: u32 = 0x3bba64;
-/// Whether there is a disc (`CdFs_Mount` is called) and the size of a disc entry (0x349d48, 0x349d44)
+/// The disc's media mode (`sceCdMmode`; 0: no disc, `CdFs_Mount` is not called) and the size of a disc entry's
+/// name (0x349d48, 0x349d44)
 pub const HAS_DISC: u32 = 0x349d48;
 pub const DISC_ENTRY: u32 = 0x349d44;
 /// "File Sys", "bigfile buf", "/"
@@ -1129,5 +1130,255 @@ pub fn dev_get_size(m: &mut Mem, e: &mut dyn FsEnv, handle: u32) -> u32 {
         1 => cdfs_get_file_info(m, h, 0, 0),
         2 => e.call(m, SCE_LSEEK, &[h, 0, 2]),
         _ => 0,
+    }
+}
+
+// ---- The disc's reads (row E2x) ----
+//
+// The state at 0x349d50 (`CD`): +0 flags (bit 0 the read goes through the one-sector buffer, bit 1 reading, bit 2
+// failed: with bit 1, `CdFs_PollRecover` restarts the drive), +0xc the semaphore the
+// drive's callback signals, +0x10 tries left, +0x14 the sector in the buffer, +0x18 the callback when a read is
+// done (`FileSys_CompleteCurrent`), +0x20 the read mode (`sceCdRMode`), +0x24 the read (+0 bytes this time, +4
+// bytes after it, +8 the offset in the buffered sector, +0xc the sector, +0x10 sectors this time, +0x14 where to),
+// +0x3c the disc's table (as `DISC_TABLE`), +0x40 the one-sector buffer.
+
+pub const CD: u32 = 0x349d50;
+const CD_READ: u32 = CD + 0x24;
+/// `CdFs_ReadSector`'s own sector buffer
+pub const CD_SECTOR: u32 = 0x349dc0;
+/// The drive's callback buffer (`sceCdInitEeCB`)
+pub const CD_CB_BUF: u32 = 0x34a5c0;
+
+pub const SCE_CD_INIT: u32 = 0x2e9188;
+pub const SCE_CD_MMODE: u32 = 0x2e9660;
+pub const SCE_CD_DISK_READY: u32 = 0x2e9468;
+pub const SCE_CD_READ: u32 = 0x2e9728;
+pub const SCE_CD_SYNC: u32 = 0x2e8f08;
+pub const SCE_CD_GET_ERROR: u32 = 0x2e9ce0;
+pub const SCE_CD_CALLBACK: u32 = 0x2e8380;
+pub const SCE_CD_INIT_EE_CB: u32 = 0x2e8538;
+pub const FLUSH_CACHE: u32 = 0x306a60;
+pub const SIGNAL_SEMA: u32 = 0x306800;
+pub const I_SIGNAL_SEMA: u32 = 0x306810;
+pub const WAIT_SEMA: u32 = 0x306820;
+pub const CDFS_CD_CALLBACK: u32 = 0x2c9498;
+
+/// The read's done callback: `FileSys_CompleteCurrent` is ours
+fn cd_done(m: &mut Mem, e: &mut dyn FsEnv) {
+    let cb = m.r32(CD + 0x18);
+    if cb != 0 {
+        m.w32(CD, m.r32(CD) & !2);
+        if cb == COMPLETE_CURRENT {
+            complete_current(m, e, 1);
+        } else {
+            e.call(m, cb, &[1]);
+        }
+    }
+}
+
+/// The next part of a read: an unaligned start, a short end or a destination not on 64 bytes go one sector at a time
+/// through the buffer, else whole sectors straight to the destination
+fn cd_plan(m: &mut Mem, left: u32, dest: u32) {
+    if (left as i32) < 0x800 {
+        m.w32(CD_READ + 0x10, 1);
+        m.w32(CD, m.r32(CD) | 1);
+        m.w32(CD_READ, left);
+    } else if dest & 0x3f != 0 {
+        m.w32(CD_READ + 0x10, 1);
+        m.w32(CD, m.r32(CD) | 1);
+        m.w32(CD_READ, 0x800);
+    } else {
+        m.w32(CD, m.r32(CD) & !1);
+        let n = left & !0x7ff;
+        m.w32(CD_READ + 0x10, (n as i32 >> 11) as u32);
+        m.w32(CD_READ, n);
+    }
+}
+
+/// `CdFs_StartRead` 0x2c9e20(entry number, where to, offset, size): the read set up (cut at the file's end) and
+/// started; a first part already in the buffer is copied at once (and the callback called if that was all). The
+/// bytes to read.
+pub fn cdfs_start_read(m: &mut Mem, e: &mut dyn FsEnv, index: u32, dest: u32, pos: u32, n: u32) -> u32 {
+    let entry = disc_entry(m, index);
+    let p = pos as i32;
+    let first = if p > -1 { p } else { p.wrapping_add(0x7ff) };
+    let aligned = (first >> 11) << 11;
+    m.w32(CD_READ + 0x14, dest);
+    let left = m.r32(entry + 8).wrapping_sub(pos);
+    let off = p.wrapping_sub(aligned) as u32;
+    let size = if (left as i32) < n as i32 { left } else { n };
+    m.w32(CD_READ + 8, off);
+    if off != 0 {
+        m.w32(CD_READ + 0x10, 1);
+        m.w32(CD, m.r32(CD) | 1);
+        let chunk = if (off.wrapping_add(size) as i32) < 0x801 { size } else { 0x800u32.wrapping_sub(off) };
+        m.w32(CD_READ, chunk);
+    } else {
+        cd_plan(m, size, dest);
+    }
+    let chunk = m.r32(CD_READ);
+    m.w32(CD_READ + 4, size.wrapping_sub(chunk));
+    let sector = m.r32(entry + 4).wrapping_add((first >> 11) as u32);
+    m.w32(CD_READ + 0xc, sector);
+    if sector == m.r32(CD + 0x14) && (chunk as i32) < 0x801 {
+        let (to, from) = (m.r32(CD_READ + 0x14), m.r32(CD + 0x40).wrapping_add(m.r32(CD_READ + 8)));
+        eamem::copy(m, to, from, chunk);
+        let left = m.r32(CD_READ + 4);
+        if left as i32 <= 0 {
+            cd_done(m, e);
+            return size;
+        }
+        let to = m.r32(CD_READ + 0x14).wrapping_add(m.r32(CD_READ));
+        m.w32(CD_READ + 0xc, m.r32(CD_READ + 0xc).wrapping_add(1));
+        m.w32(CD_READ + 8, 0);
+        m.w32(CD_READ + 0x14, to);
+        cd_plan(m, left, to);
+        m.w32(CD_READ + 4, m.r32(CD_READ + 4).wrapping_sub(m.r32(CD_READ)));
+    }
+    m.w32(CD + 0x10, 3);
+    cdstream_issue_read(m, e);
+    size
+}
+
+/// `CdStream_IssueRead` 0x2c94c0: `sceCdRead` of this part (into the buffer or the destination), up to 3 tries;
+/// reading (bit 1), or failed (bits 1 and 2)
+pub fn cdstream_issue_read(m: &mut Mem, e: &mut dyn FsEnv) {
+    let buf = if m.r32(CD) & 1 != 0 { m.r32(CD + 0x40) } else { m.r32(CD_READ + 0x14) };
+    for _ in 0..3 {
+        let (sector, count) = (m.r32(CD_READ + 0xc), m.r32(CD_READ + 0x10));
+        if e.call(m, SCE_CD_READ, &[sector, count, buf, CD + 0x20]) != 0 {
+            m.w32(CD, m.r32(CD) | 2);
+            return;
+        }
+    }
+    m.w32(CD, m.r32(CD) | 6);
+}
+
+/// `CdStream_Thread` 0x2c9580, one wake (the thread waits on the semaphore at `CD` + 0xc, then does this, for
+/// ever): an error while reading is tried again (3 tries, then failed); a part read through the buffer is copied
+/// out (the buffer then holds its sector); then the next part, or the callback.
+pub fn cdstream_thread_wake(m: &mut Mem, e: &mut dyn FsEnv) {
+    let sema = m.r32(CD + 0xc);
+    e.call(m, WAIT_SEMA, &[sema]);
+    let err = e.call(m, SCE_CD_GET_ERROR, &[]);
+    let flags = m.r32(CD);
+    if err != 0 {
+        if flags & 2 != 0 {
+            let tries = m.r32(CD + 0x10).wrapping_sub(1);
+            m.w32(CD + 0x10, tries);
+            if tries as i32 > 0 {
+                cdstream_issue_read(m, e);
+            } else {
+                m.w32(CD, flags | 4);
+            }
+        }
+        return;
+    }
+    if flags & 1 != 0 {
+        m.w32(CD, flags & !1);
+        m.w32(CD + 0x14, m.r32(CD_READ + 0xc));
+        let (to, from, n) = (m.r32(CD_READ + 0x14), m.r32(CD + 0x40).wrapping_add(m.r32(CD_READ + 8)), m.r32(CD_READ));
+        eamem::copy(m, to, from, n);
+    }
+    let left = m.r32(CD_READ + 4);
+    if left as i32 > 0 {
+        let to = m.r32(CD_READ + 0x14).wrapping_add(m.r32(CD_READ));
+        m.w32(CD_READ + 8, 0);
+        m.w32(CD_READ + 0x14, to);
+        m.w32(CD_READ + 0xc, m.r32(CD_READ + 0xc).wrapping_add(m.r32(CD_READ + 0x10)));
+        cd_plan(m, left, to);
+        m.w32(CD_READ + 4, m.r32(CD_READ + 4).wrapping_sub(m.r32(CD_READ)));
+        cdstream_issue_read(m, e);
+    } else {
+        cd_done(m, e);
+    }
+}
+
+/// `CdFs_CdCallback` 0x2c9498(reason): a read's end (1) wakes the thread (`iSignalSema`)
+pub fn cdfs_cd_callback(m: &mut Mem, e: &mut dyn FsEnv, reason: u32) {
+    if reason == 1 {
+        let sema = m.r32(CD + 0xc);
+        e.call(m, I_SIGNAL_SEMA, &[sema]);
+    }
+}
+
+/// `CdFs_PollRecover` 0x2c9930 (polled): a failed read (bits 1 and 2) cleared and the drive restarted; 0
+pub fn cdfs_poll_recover(m: &mut Mem, e: &mut dyn FsEnv) -> u32 {
+    let f = m.r32(CD);
+    if f & 6 == 6 {
+        m.w32(CD, f & !6);
+        cdfs_recover_read(m, e);
+    }
+    0
+}
+
+/// `CdFs_RecoverRead` 0x2c9710: until the drive answers with no error: restart it, read sector 0x10, then the
+/// rest of the read one sector at a time (synchronously); then the drive's callback is set again and the thread
+/// woken. (The game waits between tries by counting, longer each time: not ported, it does nothing else.) 0
+pub fn cdfs_recover_read(m: &mut Mem, e: &mut dyn FsEnv) -> u32 {
+    loop {
+        e.call(m, FLUSH_CACHE, &[0]);
+        e.call(m, SCE_CD_CALLBACK, &[0]);
+        e.call(m, SCE_CD_INIT, &[5]);
+        e.call(m, SCE_CD_INIT, &[0]);
+        e.call(m, SCE_CD_DISK_READY, &[0]);
+        let buf = m.r32(CD + 0x40);
+        if e.call(m, SCE_CD_READ, &[0x10, 1, buf, CD + 0x20]) != 0 {
+            e.call(m, SCE_CD_SYNC, &[0]);
+            let err = e.call(m, SCE_CD_GET_ERROR, &[]);
+            e.call(m, FLUSH_CACHE, &[0]);
+            if err == 0 && m.r32(CD + 0x34) != 0 {
+                loop {
+                    e.call(m, SCE_CD_DISK_READY, &[0]);
+                    let buf = if m.r32(CD) & 1 == 0 { m.r32(CD + 0x38) } else { m.r32(CD + 0x40) };
+                    let sector = m.r32(CD + 0x30);
+                    e.call(m, SCE_CD_READ, &[sector, 1, buf, CD + 0x20]);
+                    while e.call(m, SCE_CD_SYNC, &[1]) != 0 {}
+                    if e.call(m, SCE_CD_GET_ERROR, &[]) != 0 {
+                        break;
+                    }
+                    m.w32(CD + 0x30, m.r32(CD + 0x30).wrapping_add(1));
+                    let count = m.r32(CD + 0x34).wrapping_sub(1);
+                    m.w32(CD + 0x38, m.r32(CD + 0x38).wrapping_add(0x800));
+                    m.w32(CD + 0x24, m.r32(CD + 0x24).wrapping_sub(0x800));
+                    m.w32(CD + 0x34, count);
+                    if count == 0 {
+                        break;
+                    }
+                }
+            }
+        }
+        if e.call(m, SCE_CD_GET_ERROR, &[]) == 0 {
+            break;
+        }
+    }
+    e.call(m, SCE_CD_INIT_EE_CB, &[0xb, CD_CB_BUF, 0x800]);
+    e.call(m, SCE_CD_CALLBACK, &[CDFS_CD_CALLBACK]);
+    let sema = m.r32(CD + 0xc);
+    e.call(m, SIGNAL_SEMA, &[sema]);
+    0
+}
+
+/// `CdFs_ReadSector` 0x2c90c8: the sector at `CD` + 0x30 read into `CD_SECTOR` (synchronously; every 10 failures
+/// the drive is restarted, for ever until it reads); the buffer
+pub fn cdfs_read_sector(m: &mut Mem, e: &mut dyn FsEnv) -> u32 {
+    let mut tries = 10;
+    loop {
+        if tries == 0 {
+            e.call(m, SCE_CD_INIT, &[5]);
+            tries = 10;
+            e.call(m, SCE_CD_INIT, &[0]);
+            let mode = m.r32(HAS_DISC);
+            e.call(m, SCE_CD_MMODE, &[mode]);
+        }
+        e.call(m, SCE_CD_DISK_READY, &[0]);
+        let sector = m.r32(CD + 0x30);
+        let r = e.call(m, SCE_CD_READ, &[sector, 1, CD_SECTOR, CD + 0x20]);
+        e.call(m, SCE_CD_SYNC, &[0]);
+        let ok = r != 0 && e.call(m, SCE_CD_GET_ERROR, &[]) == 0;
+        if ok {
+            return CD_SECTOR;
+        }
+        tries -= 1;
     }
 }

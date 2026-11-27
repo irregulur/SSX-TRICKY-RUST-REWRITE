@@ -1837,3 +1837,31 @@ Proven (from the disassembly; Ghidra was not running):
   `FsEnv`, as the game does.
 - Checked in the runner: 400 runs of 40 calls, memory (stack aside), answers and calls out equal; 34 mutants, all
   killed.
+
+## The disc's reads (row E2x; `tricky_game::filesys`, `tests/filesys_cd.rs`)
+
+Proven (from the disassembly; Ghidra was not running):
+
+- State at 0x349d50: +0 flags (bit 0 through the one-sector buffer, bit 1 reading, bit 2 failed), +0xc the
+  semaphore, +0x10 tries left (3 per part), +0x14 the sector in the buffer, +0x18 the done callback
+  (`FileSys_CompleteCurrent`), +0x20 the read mode, +0x24 the read (bytes now, bytes after, offset in the sector,
+  sector, sectors now, where to), +0x3c the disc's table, +0x40 the one-sector buffer. 0x349d48 is the media mode
+  (`sceCdMmode`; 0 means no disc: `FileSys_InitWithBuffer` skips `CdFs_Mount`).
+- `CdFs_StartRead` 0x2c9e20(entry, to, offset, size): the size is cut at the file's end (signed); a start inside a
+  sector, a part under 0x800 bytes or a destination not on 64 bytes is read one sector through the buffer, else
+  whole sectors straight in. If the first sector is the buffered one (and the part fits in it) it is copied at
+  once, and the callback called if nothing is left. Answers the size.
+- `CdStream_IssueRead` 0x2c94c0: `sceCdRead` up to 3 tries; bit 1, or bits 1 and 2 when all fail.
+- `CdStream_Thread` 0x2c9580 (ported as one wake, `cdstream_thread_wake`; the runner check ends the loop at its next
+  `WaitSema`): an error while reading retries (tries − 1; none left: failed); a buffered part is copied out (and
+  its sector remembered); then the next part (sector += sectors read) or the callback (bit 1 cleared).
+- `CdFs_CdCallback` 0x2c9498: reason 1 signals the thread. `CdFs_PollRecover` 0x2c9930: failed (bits 1 and 2) →
+  cleared, `CdFs_RecoverRead` 0x2c9710: restarts the drive, reads sector 0x10, then the rest of the read one sector
+  at a time with `sceCdSync(1)` polled, until `sceCdGetError` is 0; then the drive's callback (0x34a5c0, 0x800) set
+  again and the thread signalled. Its waits (counting loops, 0x10000 doubled per failure) are not ported: they
+  only take time.
+- `CdFs_ReadSector` 0x2c90c8: the sector at +0x30 into 0x349dc0, retried for ever, the drive restarted every 10
+  failures.
+- Host: `sceCd*`, the semaphores, `FlushCache`. Checked in the runner: 400 runs of 30 calls; 36 mutants, 34 killed,
+  2 equivalent (a part that ends the sector exactly is the same both ways; the failed bit is set with bit 1 already
+  set).
