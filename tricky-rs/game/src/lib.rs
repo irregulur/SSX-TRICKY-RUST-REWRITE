@@ -45,6 +45,7 @@ pub mod aictl;
 pub mod progress;
 pub mod ridercol;
 pub mod sfxcalc;
+pub mod shapelib;
 pub mod fe3dstate;
 pub mod animctl;
 pub mod animcurve;

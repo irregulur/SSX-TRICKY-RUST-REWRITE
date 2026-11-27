@@ -254,6 +254,39 @@ head, helm, 12 boards). That mapping is a stand-in for the GS's texture function
 Also found: a `BIGF` directory's size (+0xc) can end inside the last entry's name; the game reads on into the
 rest of its first read, so `Files::mount` keeps the whole first read as the header buffer.
 
+### The shape library on the game's bytes (row E2r; `tricky_game::shapelib`, checked: `tests/shapelib.rs`)
+
+Proven:
+
+- `Shape_GetCount` 0x2c2660 (+8), `Shape_GetEntry` 0x2c266c (file + the entry's offset; 0 for an index at or past
+  the count, compared unsigned), `Shape_GetEntryName` 0x2c2694 (the 4 characters stored as a word, no 0 after them;
+  0 past the count), `Shape_GetLongName` 0x2c2610 (from the block given along the chain to the first type-'p'
+  block, its +4; the next offset is the word's top 24 bits, signed), `Shape_FindByName` 0x2c2528 (the first shape
+  whose long name, or 4-character name cut at a 0 when it has none, `strcmp`s equal; `Shape_Find` 0x2c25f0 is a
+  plain call of it). A shape with a long name is not found by its 4-character name.
+- `Shape_PixelFormatIndex` 0x2c26d8: 4 → 1, 8 → 2, 15 / 16 / 555 / 565 / 1555 → 3, 24 / 888 → 4, 32 / 8888 → 5,
+  anything else 0.
+- `Shape_Unpack` 0x2c2318, packed half (type bit 0x80): a 0x18fb / 0x28fb stream with mip levels (+0xc top 4 bits)
+  goes to `Shape_UnpackBlocks`; any other: `Compress_UnpackedSize` + 0x10 bytes allocated under the name at
+  0x3bb918 (flags: the word at 0x3bb978), the header copied, the stream unpacked after it, a 0x1afb stream's type
+  byte set to 3; then the type byte loses 0x80 and, when the source block had a next offset, the whole first word
+  becomes just the type. A packed 0x1cfb / 0x9cfb stream has no size (0x10 bytes allocated) but `Compress_Decode`
+  still unpacks all of it, over whatever follows in the heap.
+- `Shape_UnpackBlocks` 0x2c2088: (size + 0x10) × 2 bytes. Level 0's stream is its 8-byte header and a quarter of
+  its size (colour blocks pack 4 to 1). Level k's header is the first's written over the last 8 bytes of the level
+  before, with the width / 2^k and the size / 4^k (both big-endian), its pixels unpacked after the levels before;
+  only the first 4 of the 8 bytes are put back, so the source keeps the header's size low byte, byte 5 and width
+  in place of 4 data bytes. A level whose width reaches 0 never ends (`Compress_Decode18Rows` adds 0 per row), in
+  the game as in the port. 0x28fb is not a type `Compress_Decode` takes: nothing is unpacked, sizes 0.
+- `Compress_Decode18Rows` writes every byte from the first to the last block's end: a row of blocks overruns a
+  width that is not a multiple of 4 into the next pixel rows, and the next row of blocks starts where that ends,
+  so no byte in between is left as it was.
+- Checked in the runner against our heap (`eamem`): 300 shape files (5,619 names found, cut names, repeated
+  names, indexes past the count), 1,500 first blocks of six kinds (plain, 0x60..0x62 at every size up to 40 × 40,
+  RefPack 0x10 / 0x90, colour-block 0x1a / 0x18 / 0x1c streams, 0x18fb and 0x28fb with 1..4 levels), every pixel
+  format to 0x3000; memory and answers equal after each call. 19 mutants: 18 killed, 1 equivalent (signed or
+  unsigned quarter of a size under 2^24).
+
 ## Text, `.loc` (row E5a)
 
 Proven (`tricky-data/src/loc.rs`): `Loc_LoadForRegion` 0x17c150 loads `data/lang/american.loc` (region 0) or
