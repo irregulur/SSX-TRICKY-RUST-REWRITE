@@ -2994,3 +2994,23 @@ Proven (`SLUS_203.26` disassembly + runner):
     `o + 0x18` (`0`), deletes `o` on `how & 1`.
 - Checked bit-for-bit in `tests/animation_tail.rs` (2,000 frame/static-dtor cases + 2,100 node draw/dtor cases);
   `animation` is now at 0 `not started`.
+
+## Base world nodes, controllers, counters & script context (row E9l, `controllers.rs`, checked: `tests/world_base_nodes_tail.rs`)
+
+Proven (`SLUS_203.26` disassembly + runner):
+
+- **Destructors & detachment (`0x13a8e0`, `0x13aab0`, `0x13b060`, `0x13b5f8`, `0x13bd20`, `0x17dd00`, `0x17ddc0`,
+  `0x1c7d50`, `0x1c7df0`)**: `Instance_DetachController` clears `*(inst+0xe4)` when it matches `this`;
+  `cControllerNode::~cControllerNode` (`+8 = 0x36b388`) detaches `*(this+0x28)` and chains through
+  `cBxSortObjNode` (`0x386460`) -> `cBxTypeObjNode` (`0x3864c0`) -> `cBxObjNode::~cBxObjNode` (`0x17cfe0`).
+  `cRestoreNode` (`0x36b1c8`), `cCounterNode` (`0x36b0e8`), `cScriptNode` (`0x36bc20`), `cModelsObjNode`
+  (`0x390c48`), and `cTerrainObjNode` (`0x390c98`) restore their vtables and chain accordingly.
+- **`cCounterNode::Kill` (`0x13b218`) & virtuals (`0x13b748..0x13b7d0`, `0x17dc60..0x17ded0`)**: `Kill` restores
+  `*(this+0x28)->+0xe8` flags via `restore_flags(..., 0xffff_0000)` when `*(this+0x38) >= 0` and invokes deleting
+  dtor `+8/+0xc(3)`. `vf4_17dc70` / `vf3_17dcb0` compare `other->vf5()` (`+0x30/+0x34`) against `*(this+0x20)`
+  (`==` and unsigned `>=`); `vf18_13b770` dispatches `+0x70/+0x74`; `vf10/vf6/vf5` return `+0x28/+0x24/+0x20`.
+- **`TriggerScript_SetContext` (`0x13ba30`) & `cModelsObjNode::Draw` (`0x1c78f0`)**: `SetContext` stores `+0xe8`,
+  copies or zeros 64-byte matrices at `+0x50` and `+0x90`, and flags `+0xd0`/`+0xd4`; `cModelsObjNode::Draw`
+  tail-calls `Instance_DrawVisibleCells(0x346488)` (`0x200390`).
+- Checked bit-for-bit across all 42 functions in `tests/world_base_nodes_tail.rs` (reducing `world` `not started`
+  from 138 to 96).

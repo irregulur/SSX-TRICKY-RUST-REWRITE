@@ -594,12 +594,12 @@ address,size,name,system,status
 0x13a7c8,116,cComputerState::__tf,runtime,host
 0x13a840,72,cControllerNode::cControllerNode,world,checked
 0x13a888,84,cControllerNode::cControllerNode,world,checked
-0x13a8e0,72,cControllerNode::~cControllerNode,world,not started
+0x13a8e0,72,cControllerNode::~cControllerNode,world,checked
 0x13a928,84,cRestoreNode::Kill,world,checked
 0x13a980,116,cControllerNode::Finish,world,checked
 0x13a9f8,76,Controller_RunFinishScript,world,checked
 0x13aa48,72,cControllerNode::OnMessage,world,checked
-0x13aab0,28,Instance_DetachController,world,not started
+0x13aab0,28,Instance_DetachController,world,checked
 0x13aad0,36,WorldNode_RayCast,world,ported
 0x13aaf8,244,Controller_RunContactScript,world,ported
 0x13abf0,148,Controller_ReplaceWithDead,world,ported
@@ -608,49 +608,49 @@ address,size,name,system,status
 0x13af38,128,cDeadNode::cDeadNode,world,checked
 0x13afb8,60,cDeadNode::~cDeadNode,world,ported
 0x13aff8,104,cRestoreNode::cRestoreNode,world,checked
-0x13b060,20,cRestoreNode::~cRestoreNode,world,not started
+0x13b060,20,cRestoreNode::~cRestoreNode,world,checked
 0x13b078,52,cRestoreNode::cRestoreNode,world,checked
 0x13b0b0,8,cRestoreNode::SaveSnapshot,world,checked
 0x13b0b8,108,cCounterNode::cCounterNode,world,ported
 0x13b128,80,cCounterNode::cCounterNode,world,checked
 0x13b178,156,cCounterNode::Update,world,ported
-0x13b218,96,cCounterNode::Kill,world,not started
+0x13b218,96,cCounterNode::Kill,world,checked
 0x13b278,116,cCounterNode::Finish,world,ported
 0x13b2f0,556,cCounterNode::OnMessage,world,ported
 0x13b520,84,cCounterNode::SaveSnapshot,world,checked
-0x13b5f8,20,cCounterNode::~cCounterNode,world,not started
+0x13b5f8,20,cCounterNode::~cCounterNode,world,checked
 0x13b610,92,cCounterNode::__tf,runtime,host
-0x13b670,8,cRestoreNode::OnMessage,world,not started
-0x13b678,8,cRestoreNode::Finish,world,not started
+0x13b670,8,cRestoreNode::OnMessage,world,checked
+0x13b678,8,cRestoreNode::Finish,world,checked
 0x13b680,84,cRestoreNode::__tf,runtime,host
-0x13b6d8,8,cDeadNode::OnMessage,world,not started
-0x13b6e0,8,cDeadNode::Kill,world,not started
-0x13b6e8,8,cDeadNode::Finish,world,not started
+0x13b6d8,8,cDeadNode::OnMessage,world,checked
+0x13b6e0,8,cDeadNode::Kill,world,checked
+0x13b6e8,8,cDeadNode::Finish,world,checked
 0x13b6f0,84,cDeadNode::__tf,runtime,host
-0x13b748,8,cCounterNode::vf26_13b748,world,not started
-0x13b750,8,cCounterNode::vf25_13b750,world,not started
-0x13b758,8,cCounterNode::vf24_13b758,world,not started
-0x13b760,8,cCounterNode::vf20_13b760,world,not started
-0x13b768,8,cCounterNode::vf19_13b768,world,not started
-0x13b770,40,cCounterNode::vf18_13b770,world,not started
-0x13b798,8,cCounterNode::vf17_13b798,world,not started
-0x13b7a0,8,cCounterNode::vf16_13b7a0,world,not started
-0x13b7a8,8,cCounterNode::vf10_13b7a8,world,not started
-0x13b7b0,8,cCounterNode::vf15_13b7b0,world,not started
-0x13b7b8,8,cCounterNode::vf14_13b7b8,world,not started
-0x13b7c0,8,cCounterNode::vf13_13b7c0,world,not started
-0x13b7c8,8,cCounterNode::vf12_13b7c8,world,not started
-0x13b7d0,8,cCounterNode::vf11_13b7d0,world,not started
+0x13b748,8,cCounterNode::vf26_13b748,world,checked
+0x13b750,8,cCounterNode::vf25_13b750,world,checked
+0x13b758,8,cCounterNode::vf24_13b758,world,checked
+0x13b760,8,cCounterNode::vf20_13b760,world,checked
+0x13b768,8,cCounterNode::vf19_13b768,world,checked
+0x13b770,40,cCounterNode::vf18_13b770,world,checked
+0x13b798,8,cCounterNode::vf17_13b798,world,checked
+0x13b7a0,8,cCounterNode::vf16_13b7a0,world,checked
+0x13b7a8,8,cCounterNode::vf10_13b7a8,world,checked
+0x13b7b0,8,cCounterNode::vf15_13b7b0,world,checked
+0x13b7b8,8,cCounterNode::vf14_13b7b8,world,checked
+0x13b7c0,8,cCounterNode::vf13_13b7c0,world,checked
+0x13b7c8,8,cCounterNode::vf12_13b7c8,world,checked
+0x13b7d0,8,cCounterNode::vf11_13b7d0,world,checked
 0x13b7d8,84,cControllerNode::__tf,runtime,host
 0x13b830,80,cCounterNodeState::__tf,runtime,host
 0x13b880,64,cReplayRecordHeader::__tf,runtime,host
 0x13b8c0,180,cScriptNode::cScriptNode,world,ported
 0x13b978,180,cScriptNode::cScriptNode,world,ported
-0x13ba30,164,TriggerScript_SetContext,world,not started
+0x13ba30,164,TriggerScript_SetContext,world,checked
 0x13bad8,176,World_RunScript,world,ported
 0x13bbc0,180,World_DeleteScriptObject,world,ported
 0x13bc78,168,cScriptNode::cScriptNode,world,ported
-0x13bd20,20,cScriptNode::~cScriptNode,world,not started
+0x13bd20,20,cScriptNode::~cScriptNode,world,checked
 0x13bd38,8,cScriptNode::Update,world,ported
 0x13bd40,312,Instance_OnPlayerContact,world,ported
 0x13be78,340,TriggerScript_Run,world,checked
@@ -1719,29 +1719,29 @@ address,size,name,system,status
 0x17da50,140,BxList_DeleteAll,world,checked
 0x17dae0,32,BxList_SetSorted,world,checked
 0x17db00,264,BxList_CullToCount,world,checked
-0x17dc60,8,cCounterNode::vf6_17dc60,world,not started
-0x17dc68,8,cCounterNode::vf5_17dc68,world,not started
-0x17dc70,64,cCounterNode::vf4_17dc70,world,not started
-0x17dcb0,64,cCounterNode::vf3_17dcb0,world,not started
-0x17dcf0,8,cCounterNode::vf2_17dcf0,world,not started
-0x17dcf8,8,cRestoreNode::vf1_17dcf8,world,not started
-0x17dd00,20,cBxSortObjNode::~cBxSortObjNode,world,not started
+0x17dc60,8,cCounterNode::vf6_17dc60,world,checked
+0x17dc68,8,cCounterNode::vf5_17dc68,world,checked
+0x17dc70,64,cCounterNode::vf4_17dc70,world,checked
+0x17dcb0,64,cCounterNode::vf3_17dcb0,world,checked
+0x17dcf0,8,cCounterNode::vf2_17dcf0,world,checked
+0x17dcf8,8,cRestoreNode::vf1_17dcf8,world,checked
+0x17dd00,20,cBxSortObjNode::~cBxSortObjNode,world,checked
 0x17dd18,92,cBxSortObjNode::__tf,runtime,host
-0x17dd98,8,cScriptNode::vf10_17dd98,world,not started
+0x17dd98,8,cScriptNode::vf10_17dd98,world,checked
 0x17dda0,12,cCounterNode::vf9_17dda0,world,ported
-0x17ddb0,8,cBxTypeObjNode::Draw,world,not started
-0x17ddb8,8,cBxTypeObjNode::Update,world,not started
-0x17ddc0,20,cBxTypeObjNode::~cBxTypeObjNode,world,not started
+0x17ddb0,8,cBxTypeObjNode::Draw,world,checked
+0x17ddb8,8,cBxTypeObjNode::Update,world,checked
+0x17ddc0,20,cBxTypeObjNode::~cBxTypeObjNode,world,checked
 0x17ddf8,92,cBxTypeObjNode::__tf,runtime,host
 0x17de58,120,BxList_DestroySlot,world,checked
-0x17ded0,8,cCounterNode::vf8_17ded0,world,not started
+0x17ded0,8,cCounterNode::vf8_17ded0,world,checked
 0x17ded8,8,cLessonMan::vf7_17ded8,tutorial,checked
 0x17dee0,8,cAI::vf6_17dee0,ai,checked
 0x17dee8,8,cAI::vf5_17dee8,ai,checked
 0x17def0,8,cAI::vf4_17def0,ai,checked
 0x17def8,8,cAI::vf3_17def8,ai,checked
 0x17df00,8,cAI::vf2_17df00,ai,checked
-0x17df08,8,cBxObjNode::Update,world,not started
+0x17df08,8,cBxObjNode::Update,world,checked
 0x17df30,64,cBxObjNode::__tf,runtime,host
 0x17dff0,80,cBxTypeObjNodeState::__tf,runtime,host
 0x17e040,116,cBxSortObjNodeState::__tf,runtime,host
@@ -2720,14 +2720,14 @@ address,size,name,system,status
 0x1c7290,88,Game_DrawLists,game,checked
 0x1c72e8,1320,Game_DrawFrame,game,ported
 0x1c7810,220,cTerrainObjNode::Draw,world,checked
-0x1c78f0,12,cModelsObjNode::Draw,world,not started
+0x1c78f0,12,cModelsObjNode::Draw,world,checked
 0x1c7900,204,cSkyBoxObjNode::cSkyBoxObjNode,world,checked
 0x1c79d0,20,cSkyBoxObjNode::~cSkyBoxObjNode,world,checked
 0x1c79e8,620,cSkyBoxObjNode::Draw,world,checked
 0x1c7d00,80,cSkyBoxObjNode::__tf,runtime,host
-0x1c7d50,20,cModelsObjNode::~cModelsObjNode,world,not started
+0x1c7d50,20,cModelsObjNode::~cModelsObjNode,world,checked
 0x1c7da0,80,cModelsObjNode::__tf,runtime,host
-0x1c7df0,20,cTerrainObjNode::~cTerrainObjNode,world,not started
+0x1c7df0,20,cTerrainObjNode::~cTerrainObjNode,world,checked
 0x1c7e40,80,cTerrainObjNode::__tf,runtime,host
 0x1c7e90,3384,BoarderShadow_Update,render,checked
 0x1c8bc8,112,BoarderShadow_Draw,render,checked

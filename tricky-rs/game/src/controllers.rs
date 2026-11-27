@@ -561,3 +561,199 @@ impl Roller {
         self.asleep = 1;
     }
 }
+
+// ---- Base world node / controller / counter / script virtuals & dtors (row E9l, on engine memory) ----
+
+use crate::eamem;
+use crate::pf::Mem;
+
+pub const BX_OBJ_NODE_DTOR: u32 = 0x17cfe0;
+pub const INSTANCE_DRAW_VISIBLE_CELLS: u32 = 0x200390;
+pub const G_WORLD_GRID: u32 = 0x346488;
+
+pub const VT_COUNTER_NODE: u32 = 0x36b0e8;
+pub const VT_RESTORE_NODE: u32 = 0x36b1c8;
+pub const VT_CONTROLLER_NODE: u32 = 0x36b388;
+pub const VT_SCRIPT_NODE: u32 = 0x36bc20;
+pub const VT_BX_SORT_OBJ_NODE: u32 = 0x386460;
+pub const VT_BX_TYPE_OBJ_NODE: u32 = 0x3864c0;
+pub const VT_MODELS_OBJ_NODE: u32 = 0x390c48;
+pub const VT_TERRAIN_OBJ_NODE: u32 = 0x390c98;
+
+/// Calls out for world node virtuals and destructors on engine memory.
+pub trait NodeEnv {
+    fn call(&mut self, m: &mut Mem, target: u32, args: &[u32]) -> u32;
+}
+
+/// `Instance_DetachController` 0x13aab0(this, inst): if `inst != 0 && *(inst+0xe4) == this`, clear `*(inst+0xe4)`.
+pub fn instance_detach_controller(m: &mut Mem, this: u32, inst: u32) {
+    if inst != 0 && m.r32(inst + 0xe4) == this {
+        m.w32(inst + 0xe4, 0);
+    }
+}
+
+/// `cBxTypeObjNode::~cBxTypeObjNode` 0x17ddc0(this, flags): restore vtable `0x3864c0` and tail-call
+/// `cBxObjNode::~cBxObjNode`.
+pub fn bx_type_obj_node_dtor(m: &mut Mem, env: &mut dyn NodeEnv, this: u32, flags: u32) {
+    m.w32(this + 8, VT_BX_TYPE_OBJ_NODE);
+    env.call(m, BX_OBJ_NODE_DTOR, &[this, flags]);
+}
+
+/// `cBxSortObjNode::~cBxSortObjNode` 0x17dd00(this, flags): restore vtable `0x386460` and tail-call
+/// `cBxTypeObjNode::~cBxTypeObjNode`.
+pub fn bx_sort_obj_node_dtor(m: &mut Mem, env: &mut dyn NodeEnv, this: u32, flags: u32) {
+    m.w32(this + 8, VT_BX_SORT_OBJ_NODE);
+    bx_type_obj_node_dtor(m, env, this, flags);
+}
+
+/// `cControllerNode::~cControllerNode` 0x13a8e0(this, flags): restore vtable `0x36b388`, detach from `*(this+0x28)`,
+/// and tail-call `cBxSortObjNode::~cBxSortObjNode`.
+pub fn controller_node_dtor(m: &mut Mem, env: &mut dyn NodeEnv, this: u32, flags: u32) {
+    m.w32(this + 8, VT_CONTROLLER_NODE);
+    let inst = m.r32(this + 0x28);
+    instance_detach_controller(m, this, inst);
+    bx_sort_obj_node_dtor(m, env, this, flags);
+}
+
+/// `cRestoreNode::~cRestoreNode` 0x13b060(this, flags): restore vtable `0x36b1c8` and tail-call
+/// `cControllerNode::~cControllerNode`.
+pub fn restore_node_dtor(m: &mut Mem, env: &mut dyn NodeEnv, this: u32, flags: u32) {
+    m.w32(this + 8, VT_RESTORE_NODE);
+    controller_node_dtor(m, env, this, flags);
+}
+
+/// `cCounterNode::~cCounterNode` 0x13b5f8(this, flags): restore vtable `0x36b0e8` and tail-call
+/// `cControllerNode::~cControllerNode`.
+pub fn counter_node_dtor(m: &mut Mem, env: &mut dyn NodeEnv, this: u32, flags: u32) {
+    m.w32(this + 8, VT_COUNTER_NODE);
+    controller_node_dtor(m, env, this, flags);
+}
+
+/// `cCounterNode::Kill` 0x13b218(this): when `*(this+0x38) >= 0`, restore `*(this+0x28)->+0xe8` flags via
+/// `restore_flags(..., 0xffff_0000)` and invoke deleting destructor virtual `+8/+0xc(3)`.
+pub fn counter_node_kill(m: &mut Mem, env: &mut dyn NodeEnv, this: u32) {
+    if (m.r32(this + 0x38) as i32) < 0 {
+        return;
+    }
+    let inst = m.r32(this + 0x28);
+    let fl = restore_flags(m.r32(inst + 0xe8), 0xffff_0000);
+    m.w32(inst + 0xe8, fl);
+    if this != 0 {
+        let vt = m.r32(this + 8);
+        let adj = m.r16(vt + 8) as i16 as i32 as u32;
+        let f = m.r32(vt + 0xc);
+        env.call(m, f, &[this.wrapping_add(adj), 3]);
+    }
+}
+
+/// `cScriptNode::~cScriptNode` 0x13bd20(this, flags): restore vtable `0x36bc20` and tail-call
+/// `cBxSortObjNode::~cBxSortObjNode`.
+pub fn script_node_dtor(m: &mut Mem, env: &mut dyn NodeEnv, this: u32, flags: u32) {
+    m.w32(this + 8, VT_SCRIPT_NODE);
+    bx_sort_obj_node_dtor(m, env, this, flags);
+}
+
+/// `TriggerScript_SetContext` 0x13ba30(this, a1, mat1, mat2): set `+0xe8 = a1`, clear `+0xd0`/`+0xd4`, copy or
+/// zero 64-byte matrices at `+0x50` and `+0x90`, and set `+0xd0`/`+0xd4 = 1` when each source pointer is non-null.
+pub fn trigger_script_set_context(m: &mut Mem, this: u32, a1: u32, mat1: u32, mat2: u32) {
+    m.w32(this + 0xe8, a1);
+    m.w32(this + 0xd0, 0);
+    m.w32(this + 0xd4, 0);
+    if mat1 != 0 {
+        eamem::copy(m, this + 0x50, mat1, 0x40);
+        m.w32(this + 0xd0, 1);
+    } else {
+        eamem::set(m, this + 0x50, 0, 0x40);
+    }
+    if mat2 != 0 {
+        eamem::copy(m, this + 0x90, mat2, 0x40);
+        m.w32(this + 0xd4, 1);
+    } else {
+        eamem::set(m, this + 0x90, 0, 0x40);
+    }
+}
+
+/// `cCounterNode::vf18_13b770` 0x13b770(this): forward to virtual `+0x70/+0x74` on `*(this+8)`.
+pub fn counter_node_vf18(m: &mut Mem, env: &mut dyn NodeEnv, this: u32) -> u32 {
+    let vt = m.r32(this + 8);
+    let adj = m.r16(vt + 0x70) as i16 as i32 as u32;
+    let f = m.r32(vt + 0x74);
+    env.call(m, f, &[this.wrapping_add(adj)])
+}
+
+/// `cCounterNode::vf10_13b7a8` 0x13b7a8(this): return `*(this+0x28)`.
+pub fn counter_node_vf10(m: &Mem, this: u32) -> u32 {
+    m.r32(this + 0x28)
+}
+
+/// `cCounterNode::vf6_17dc60` 0x17dc60(this): return `*(this+0x24)`.
+pub fn counter_node_vf6(m: &Mem, this: u32) -> u32 {
+    m.r32(this + 0x24)
+}
+
+/// `cCounterNode::vf5_17dc68` 0x17dc68(this): return `*(this+0x20)`.
+pub fn counter_node_vf5(m: &Mem, this: u32) -> u32 {
+    m.r32(this + 0x20)
+}
+
+/// `cCounterNode::vf4_17dc70` 0x17dc70(this, other): return 1 if `other->vf5() == *(this+0x20)` (via `other`'s
+/// vtable `+0x30/+0x34`), else 0.
+pub fn counter_node_vf4(m: &mut Mem, env: &mut dyn NodeEnv, this: u32, other: u32) -> u32 {
+    let vt = m.r32(other + 8);
+    let adj = m.r16(vt + 0x30) as i16 as i32 as u32;
+    let f = m.r32(vt + 0x34);
+    let v = env.call(m, f, &[other.wrapping_add(adj)]);
+    u32::from(v == m.r32(this + 0x20))
+}
+
+/// `cCounterNode::vf3_17dcb0` 0x17dcb0(this, other): return 1 if `other->vf5() >= *(this+0x20)` (unsigned), else 0.
+pub fn counter_node_vf3(m: &mut Mem, env: &mut dyn NodeEnv, this: u32, other: u32) -> u32 {
+    let vt = m.r32(other + 8);
+    let adj = m.r16(vt + 0x30) as i16 as i32 as u32;
+    let f = m.r32(vt + 0x34);
+    let v = env.call(m, f, &[other.wrapping_add(adj)]);
+    u32::from(v >= m.r32(this + 0x20))
+}
+
+/// `cModelsObjNode::Draw` 0x1c78f0(): tail-call `Instance_DrawVisibleCells(0x346488)`.
+pub fn models_obj_node_draw(m: &mut Mem, env: &mut dyn NodeEnv) -> u32 {
+    env.call(m, INSTANCE_DRAW_VISIBLE_CELLS, &[G_WORLD_GRID])
+}
+
+/// `cModelsObjNode::~cModelsObjNode` 0x1c7d50(this, flags): restore vtable `0x390c48` and tail-call
+/// `cBxObjNode::~cBxObjNode`.
+pub fn models_obj_node_dtor(m: &mut Mem, env: &mut dyn NodeEnv, this: u32, flags: u32) {
+    m.w32(this + 8, VT_MODELS_OBJ_NODE);
+    env.call(m, BX_OBJ_NODE_DTOR, &[this, flags]);
+}
+
+/// `cTerrainObjNode::~cTerrainObjNode` 0x1c7df0(this, flags): restore vtable `0x390c98` and tail-call
+/// `cBxObjNode::~cBxObjNode`.
+pub fn terrain_obj_node_dtor(m: &mut Mem, env: &mut dyn NodeEnv, this: u32, flags: u32) {
+    m.w32(this + 8, VT_TERRAIN_OBJ_NODE);
+    env.call(m, BX_OBJ_NODE_DTOR, &[this, flags]);
+}
+
+/// Empty no-op virtual stubs:
+/// `cRestoreNode::OnMessage` 0x13b670, `cRestoreNode::Finish` 0x13b678,
+/// `cDeadNode::OnMessage` 0x13b6d8, `cDeadNode::Kill` 0x13b6e0, `cDeadNode::Finish` 0x13b6e8,
+/// `cCounterNode::vf25_13b750` 0x13b750, `cCounterNode::vf24_13b758` 0x13b758,
+/// `cCounterNode::vf20_13b760` 0x13b760, `cCounterNode::vf19_13b768` 0x13b768,
+/// `cCounterNode::vf17_13b798` 0x13b798, `cCounterNode::vf16_13b7a0` 0x13b7a0,
+/// `cCounterNode::vf13_13b7c0` 0x13b7c0, `cCounterNode::vf12_13b7c8` 0x13b7c8,
+/// `cCounterNode::vf2_17dcf0` 0x17dcf0, `cRestoreNode::vf1_17dcf8` 0x17dcf8,
+/// `cBxTypeObjNode::Draw` 0x17ddb0, `cBxTypeObjNode::Update` 0x17ddb8,
+/// `cCounterNode::vf8_17ded0` 0x17ded0, `cBxObjNode::Update` 0x17df08.
+pub fn node_noop() {}
+
+/// Zero-returning virtual stubs:
+/// `cCounterNode::vf26_13b748` 0x13b748, `cCounterNode::vf15_13b7b0` 0x13b7b0,
+/// `cCounterNode::vf11_13b7d0` 0x13b7d0, `cScriptNode::vf10_17dd98` 0x17dd98.
+pub fn node_ret_zero() -> u32 {
+    0
+}
+
+/// One-returning virtual stub: `cCounterNode::vf14_13b7b8` 0x13b7b8.
+pub fn node_ret_one() -> u32 {
+    1
+}
