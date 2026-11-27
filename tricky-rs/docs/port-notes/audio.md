@@ -1969,3 +1969,33 @@ Proven (`SLUS_203.26`):
   loads `speech_groups` (`general` + per-character) from `worldsounds.json` and uses `fxrand::world_chant_pick` on
   `rand::rand_fx`; finished one-shot emitters stay silent until the listener leaves their sphere (matching
   `WorldEmitter_Update` 0x22bf60: `BankMonitor_Find == 0` returns without clearing `e+0x30`, no repeat timer).
+
+## Stream & speech system tail (`cSpeechSys`, `Stream_*`, `StreamSys_*`, `SpeechLib_RegisterEventBank0`; row G10q, `speechsys.rs`, `speechlib.rs`, checked: `tests/stream_speech_tail.rs`)
+
+Proven (`SLUS_203.26` disassembly + runner):
+
+- **`cSpeechSys::~cSpeechSys` 0x2287d8 / `SpeechSys_SetFollowStream` 0x228b88** (`speechsys.rs`): destructor restores
+  vtable `0x3a0470` at `+4`, frees `*(this+0x3718)` via `Mem_Free` `0x14a040` if non-null, clears `gSpeechSys`
+  `0x343700`, and tail-calls `cMusicSys::~cMusicSys` `0x224c90`; `SetFollowStream` forwards non-null slot entries
+  to `0x2286d8`.
+- **14 `Stream_*` methods (`0x228fb0..0x2297f0`)** (`speechsys.rs`): `Stream_Init` `0x228fb0` captures base volume
+  byte (`+8`) and scale pointer (`+0xc`) from the top queue entry, scales/clamps the queued volume & record byte when
+  scaled, allocates `SndStream_CalcMemSize(8, 300) + extra` via `MemPool_Alloc` (flag bit 30) or `EAMem_Alloc`
+  (mask `0x03ff_ffff`), fills with `0` (bit 31) or `0xdeadc0ed`, and opens via `SndStream_Open` `0x2d2888`;
+  `Stream_Open` `0x2292e8` opens BIG archives (`File_OpenBig`) into `+0x70`; `Stream_UpdateVolume` `0x2293e0` stops
+  streams with `+0x7c >= 121` or updates scaled volume `0..=127` under `SND_Lock`/`SND_Unlock`; `Stream_GetStatus`
+  `0x229490`, `Stream_GetPlayInfo` `0x2294d8`, `Stream_GetPlayedMs` `0x229530`, `Stream_IsQueued` `0x2295f8`,
+  `Stream_ClearPrebuffer` `0x229658`, `Stream_GetHandle` `0x229680`, `Stream_ClearRequestPrebuffer` `0x2296b0`,
+  `Stream_Resume` `0x229710` (pitch `0`), `Stream_Pause` `0x229740` (pitch `0x1000`), `Stream_PlayFile` `0x229770`,
+  and `Stream_OpenInBig` `0x2297f0` (`BIG_Find` + `SndStream_QueueFile`).
+- **11 `StreamSys_*` + `SndHandle_IsPlaying` + `SndEvent_ClearStreamPrebuffer` (`0x229890..0x22a2d0`)**
+  (`speechsys.rs`): `StreamSys_Init` `0x229890` (`MidiSys_Init`, vtable `0x3a0598`, zeroed `4*count` pointer array
+  at `+0xa50` filled `0xdeadc0ed` before zeroing), `StreamSys_CreateStream` `0x2299f8` (`0x80`-byte object filled
+  `0` or `0xdeadc0de` + `Stream_Init`), `StreamSys_StopAll` `0x229d98` (actually iterates `Stream_UpdateVolume`),
+  `StreamSys_ResumeAll` `0x229e00`, `StreamSys_PauseAll` `0x229e68`, `StreamSys_PlayFile` `0x229ed0`, `StreamSys_Play`
+  `0x229f18`, `StreamSys_IsSlotQueued` `0x22a088`, `SndHandle_IsPlaying` `0x22a120` (`state == 2 && rc >= 0`),
+  `StreamSys_ClearRequestPrebuffer` `0x22a1e0`, `StreamSys_SetVolume` `0x22a228`, `StreamSys_GetStream` `0x22a2b8`,
+  and `SndEvent_ClearStreamPrebuffer` `0x22a2d0`.
+- **`SpeechLib_RegisterEventBank0` 0x2bada0** (`speechlib.rs`): calls `SpeechLib_RegisterEventBank(bank, 0)`.
+- Checked bit-for-bit across 7,520 cases in `tests/stream_speech_tail.rs` (reducing `audio` `not started` from 110
+  to 80).

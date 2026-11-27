@@ -375,6 +375,11 @@ pub fn register_event_bank(m: &mut dyn Mem, bank: u32, word: u64) -> u32 {
     if word < 8 { add_event_bank(m, bank, word as u32) } else { 0 }
 }
 
+/// `SpeechLib_RegisterEventBank0` 0x2bada0 (an event bank): [`register_event_bank`] with word 0.
+pub fn register_event_bank0(m: &mut dyn Mem, bank: u32) -> u32 {
+    register_event_bank(m, bank, 0)
+}
+
 /// `SpeechLib_PostEvent` 0x2bba80 (the event: 20 words, its id the u16 at +0, its bank's kinds at +2 / +3): the
 /// event's entry and its bank's word (the voice group) found; an entry not linked (+0xa bit 5) passes its chance
 /// (+9, signed, against a variant draw below 100 with tag 0xffff) and asks a voice for its size (+4), a linked one

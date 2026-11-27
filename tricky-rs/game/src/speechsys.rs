@@ -633,3 +633,404 @@ pub fn lib_fatal(m: &mut Mem, e: &mut dyn SysEnv) {
     m.w8(0x3495d3, 0x42);
     e.call(m, 0x2f5450, &[0]);
 }
+
+pub const MEM_FREE: u32 = 0x14a040;
+pub const MIDI_SYS_INIT: u32 = 0x222080;
+pub const MUSIC_DTOR: u32 = 0x224c90;
+pub const SLOT_SET_FOLLOW: u32 = 0x2286d8;
+pub const STREAM_SET_VOLUME: u32 = 0x229398;
+pub const STREAM_STOP_OBJ: u32 = 0x229868;
+pub const MEMPOOL_ALLOC: u32 = 0x23d3b0;
+pub const FILE_OPEN_BIG: u32 = 0x2c8668;
+pub const BIG_FIND: u32 = 0x2cc010;
+pub const SND_LOCK: u32 = 0x2d0908;
+pub const SND_UNLOCK: u32 = 0x2d0938;
+pub const SND_STREAM_OPEN: u32 = 0x2d2888;
+pub const SND_STREAM_QUEUE_FILE: u32 = 0x2d2948;
+pub const SND_STREAM_CALC_MEM_SIZE: u32 = 0x2d2ac0;
+pub const SND_STREAM_GET_STATUS: u32 = 0x2d2b08;
+pub const SND_HANDLE_GET_STATE: u32 = 0x2d2c10;
+pub const SND_STREAM_SET_PREBUFFER_MS: u32 = 0x2d2d50;
+pub const SND_STREAM_SET_VOLUME: u32 = 0x2d2e10;
+pub const SND_STREAM_SET_PITCH: u32 = 0x2d2f10;
+pub const STREAM_SYS_VT: u32 = 0x3a0598;
+pub const MEMPOOL_GLOBAL: u32 = 0x345e48;
+pub const TAG_STREAM_BUF: u32 = 0x3a0570;
+pub const TAG_STREAM_ARRAY: u32 = 0x3a0578;
+pub const TAG_STREAM_OBJ: u32 = 0x3a0588;
+
+/// `cSpeechSys::~cSpeechSys` 0x2287d8(this, flags): restores `VTABLE` (`0x3a0470`) at `+4`, frees `*(this+0x3718)`
+/// via `Mem_Free` (`0x14a040`) if non-null, clears `gSpeechSys` (`0x343700`), and tail-calls `cMusicSys::~cMusicSys`
+/// (`0x224c90`)
+pub fn speech_sys_destruct(m: &mut Mem, e: &mut dyn SysEnv, this: u32, flags: u32) {
+    m.w32(this + 4, VTABLE);
+    let p = m.r32(this + 0x3718);
+    if p != 0 {
+        e.call(m, MEM_FREE, &[p]);
+    }
+    m.w32(SYS, 0);
+    e.call(m, MUSIC_DTOR, &[this, flags]);
+}
+
+/// `SpeechSys_SetFollowStream` 0x228b88(this, slot, val): calls `0x2286d8(entry, val)` when slot `slot`'s entry
+/// (`*(this+0x3718)[slot]`) is non-null
+pub fn speech_sys_set_follow(m: &mut Mem, e: &mut dyn SysEnv, this: u32, slot: u32, val: u32) {
+    let p = m.r32(m.r32(this + 0x3718).wrapping_add(slot.wrapping_mul(4)));
+    if p != 0 {
+        e.call(m, SLOT_SET_FOLLOW, &[p, val]);
+    }
+}
+
+/// `Stream_Init` 0x228fb0(st, sys, flags, extra_bytes): initializes stream fields, captures base volume byte (`+8`)
+/// and scale pointer (`+0xc`) from `sys`'s top queue entry, scales and clamps the queued volume when the scale
+/// pointer is set, allocates `SndStream_CalcMemSize(8, 300) + extra_bytes` (via `MemPool_Alloc` when bit 30 is set
+/// else `EAMem_Alloc`, filling with `0` if bit 31 is set else `0xdeadc0ed`), opens the stream (`SndStream_Open`
+/// `0x2d2888`) into `st+4`, and returns `st`
+pub fn stream_init(m: &mut Mem, e: &mut dyn SysEnv, st: u32, sys: u32, flags: u32, extra_bytes: u32) -> u32 {
+    m.w32(st + 0x74, 0);
+    m.w32(st + 4, u32::MAX);
+    m.w32(st + 0x78, flags);
+    m.w32(st + 0x7c, 0);
+    let idx = m.r32(sys + 0x20);
+    let scale_ptr = m.r32(m.r32(sys + 0x40).wrapping_add(idx << 2));
+    let vol = m.r32(m.r32(sys + 0x3c).wrapping_add(idx << 2));
+    m.w32(st + 0x70, 0);
+    m.w8(st + 8, vol as u8);
+    m.w32(st + 0xc, scale_ptr);
+    if scale_ptr != 0 {
+        let scale = F(f32::from_bits(m.r32(scale_ptr)));
+        let t3c = m.r32(sys + 0x3c);
+        let at_vol = |m: &Mem| t3c.wrapping_add(m.r32(sys + 0x20) << 2);
+        let scaled = |m: &Mem| crate::animseq::cvt_s_w(m.r32(at_vol(m)) as i32) * scale;
+        let v = if scaled(m) < F(127.0) {
+            if scaled(m) < F(0.0) {
+                0u32
+            } else {
+                scaled(m).ee() as i32 as u32
+            }
+        } else {
+            0x7f
+        };
+        m.w32(at_vol(m), v);
+        let rec = m.r32(sys + 0x24).wrapping_add(m.r32(sys + 0x20).wrapping_mul(0x18));
+        let sv = m.r32(at_vol(m)) as i32;
+        let b = if sv < 0x7f {
+            if sv < 0 { 0u8 } else { sv as u8 }
+        } else {
+            0x7f
+        };
+        m.w8(rec, b);
+    }
+    let sz = e.call(m, SND_STREAM_CALC_MEM_SIZE, &[8, 0x12c]).wrapping_add(extra_bytes);
+    let buf = if flags & 0x4000_0000 != 0 {
+        e.call(m, MEMPOOL_ALLOC, &[MEMPOOL_GLOBAL, sz, flags, TAG_STREAM_BUF, 0, 0])
+    } else {
+        e.call(m, ALLOC, &[TAG_STREAM_BUF, sz, flags & 0x03ff_ffff])
+    };
+    if buf != 0 {
+        if (flags as i32) < 0 {
+            e.call(m, MEMSET, &[buf, 0, sz]);
+        } else {
+            e.call(m, MEMSET, &[buf, 0xdead_c0ed, sz]);
+        }
+    }
+    m.w32(st, buf);
+    let rec = m.r32(sys + 0x24).wrapping_add(m.r32(sys + 0x20).wrapping_mul(0x18));
+    let h = e.call(m, SND_STREAM_OPEN, &[rec, 8, 0x12c, buf, sz]);
+    m.w32(st + 4, h);
+    st
+}
+
+/// `Stream_Open` 0x2292e8(st, path): if `FileSys_Exists(path)` is non-zero, copies `path` into `st+0x10` and opens
+/// the BIG archive via `File_OpenBig(st+0x10, *(st+0x78))` into `st+0x70`
+pub fn stream_open(m: &mut Mem, e: &mut dyn SysEnv, st: u32, path: u32) {
+    if e.call(m, FILE_EXISTS, &[path]) != 0 {
+        e.call(m, STRCPY, &[st + 0x10, path]);
+        let big = e.call(m, FILE_OPEN_BIG, &[st + 0x10, m.r32(st + 0x78)]);
+        m.w32(st + 0x70, big);
+    }
+}
+
+/// `Stream_UpdateVolume` 0x2293e0(st): if `*(st+0x7c) >= 121`, calls `Stream_Stop(st)` (`0x229868`) and clears
+/// `+0x7c`; otherwise, if `*(st+0xc)` is non-null, multiplies signed byte `*(st+8)` by `**(st+0xc)`, clamps to
+/// `0..=127`, and applies it under `SND_Lock`/`SND_Unlock` via `SndStream_SetVolume` (`0x2d2e10`)
+pub fn stream_update_volume(m: &mut Mem, e: &mut dyn SysEnv, st: u32) {
+    if (m.r32(st + 0x7c) as i32) >= 0x79 {
+        e.call(m, STREAM_STOP_OBJ, &[st]);
+        m.w32(st + 0x7c, 0);
+        return;
+    }
+    let sp = m.r32(st + 0xc);
+    if sp == 0 {
+        return;
+    }
+    let base = (m.r8(st + 8) as i8) as f32;
+    let scale = f32::from_bits(m.r32(sp));
+    let mut vol = (F(base) * F(scale)).ee() as i32;
+    if vol >= 0x80 {
+        vol = 0x7f;
+    }
+    if vol < 0 {
+        vol = 0;
+    }
+    e.call(m, SND_LOCK, &[]);
+    let h = m.r32(st + 4);
+    e.call(m, SND_STREAM_SET_VOLUME, &[h, vol as u32]);
+    e.call(m, SND_UNLOCK, &[]);
+}
+
+/// `Stream_GetStatus` 0x229490(st, out): `SND_Lock`, `SndStream_GetStatus(*(st+4), out)`, `SND_Unlock`
+pub fn stream_get_status(m: &mut Mem, e: &mut dyn SysEnv, st: u32, out: u32) -> u32 {
+    e.call(m, SND_LOCK, &[]);
+    let h = m.r32(st + 4);
+    let rv = e.call(m, SND_STREAM_GET_STATUS, &[h, out]);
+    e.call(m, SND_UNLOCK, &[]);
+    rv
+}
+
+/// `Stream_GetPlayInfo` 0x2294d8(st, info_out, status_out; sp): calls [`stream_get_status`] into `status_out` (or
+/// `sp - 0x40` when null), then under `SND_Lock`/`SND_Unlock` calls `SndHandle_GetState(*(sbuf+4), info_out)`
+pub fn stream_get_play_info(m: &mut Mem, e: &mut dyn SysEnv, st: u32, info_out: u32, status_out: u32, sp: u32) -> u32 {
+    let sbuf = if status_out != 0 { status_out } else { sp.wrapping_sub(0x40) };
+    stream_get_status(m, e, st, sbuf);
+    e.call(m, SND_LOCK, &[]);
+    let h = m.r32(sbuf + 4);
+    let rv = e.call(m, SND_HANDLE_GET_STATE, &[h, info_out]);
+    e.call(m, SND_UNLOCK, &[]);
+    rv
+}
+
+/// `Stream_GetPlayedMs` 0x229530(st; sp): queries [`stream_get_play_info`] into `sp - 0x20`; returns `*(ibuf+4)` as
+/// float when `*(ibuf) == 2`, else `0.0`
+pub fn stream_get_played_ms(m: &mut Mem, e: &mut dyn SysEnv, st: u32, sp: u32) -> f32 {
+    let ibuf = sp.wrapping_sub(0x20);
+    stream_get_play_info(m, e, st, ibuf, 0, ibuf);
+    if m.r32(ibuf) == 2 {
+        crate::animseq::cvt_s_w(m.r32(ibuf + 4) as i32).0
+    } else {
+        0.0
+    }
+}
+
+/// `Stream_IsQueued` 0x2295f8(st; sp): queries [`stream_get_play_info`] into `sp - 0x20`; returns `1` if `*(ibuf) == 1`
+pub fn stream_is_queued(m: &mut Mem, e: &mut dyn SysEnv, st: u32, sp: u32) -> u32 {
+    let ibuf = sp.wrapping_sub(0x20);
+    stream_get_play_info(m, e, st, ibuf, 0, ibuf);
+    (m.r32(ibuf) == 1) as u32
+}
+
+/// `Stream_ClearPrebuffer` 0x229658(st; sp): gets status into `sp - 0x20` and calls `SndStream_SetPrebufferMs(*(sbuf+4), 0)`
+pub fn stream_clear_prebuffer(m: &mut Mem, e: &mut dyn SysEnv, st: u32, sp: u32) {
+    let sbuf = sp.wrapping_sub(0x20);
+    stream_get_status(m, e, st, sbuf);
+    let req = m.r32(sbuf + 4);
+    e.call(m, SND_STREAM_SET_PREBUFFER_MS, &[req, 0]);
+}
+
+/// `Stream_GetHandle` 0x229680(st; sp): gets status into `sp - 0x20`; returns `-1` if `*(sbuf) == 0`, else `*(sbuf+4)`
+pub fn stream_get_handle(m: &mut Mem, e: &mut dyn SysEnv, st: u32, sp: u32) -> u32 {
+    let sbuf = sp.wrapping_sub(0x20);
+    stream_get_status(m, e, st, sbuf);
+    if m.r32(sbuf) == 0 {
+        u32::MAX
+    } else {
+        m.r32(sbuf + 4)
+    }
+}
+
+/// `Stream_ClearRequestPrebuffer` 0x2296b0(_st, req): tail-calls `SndStream_SetPrebufferMs(req, 0)` (`0x2d2d50`)
+pub fn stream_clear_request_prebuffer(m: &mut Mem, e: &mut dyn SysEnv, req: u32) {
+    e.call(m, SND_STREAM_SET_PREBUFFER_MS, &[req, 0]);
+}
+
+/// `Stream_Resume` 0x229710(st): `SND_Lock`, `SndStream_SetPitch(*(st+4), 0)`, `SND_Unlock`
+pub fn stream_resume(m: &mut Mem, e: &mut dyn SysEnv, st: u32) {
+    e.call(m, SND_LOCK, &[]);
+    let h = m.r32(st + 4);
+    e.call(m, SND_STREAM_SET_PITCH, &[h, 0]);
+    e.call(m, SND_UNLOCK, &[]);
+}
+
+/// `Stream_Pause` 0x229740(st): `SND_Lock`, `SndStream_SetPitch(*(st+4), 0x1000)`, `SND_Unlock`
+pub fn stream_pause(m: &mut Mem, e: &mut dyn SysEnv, st: u32) {
+    e.call(m, SND_LOCK, &[]);
+    let h = m.r32(st + 4);
+    e.call(m, SND_STREAM_SET_PITCH, &[h, 0x1000]);
+    e.call(m, SND_UNLOCK, &[]);
+}
+
+/// `Stream_PlayFile` 0x229770(st, a1, name, off; sp): if `*(st+0x70)` is an open BIG, looks up `name` via
+/// `BIG_Find` (`0x2cc010`) into `sp - 0x50` and queues `st+0x10` at `off + *out`; else queues `name` at `off`
+pub fn stream_play_file(m: &mut Mem, e: &mut dyn SysEnv, st: u32, a1: u32, name: u32, off: u32, sp: u32) -> u32 {
+    let big = m.r32(st + 0x70);
+    if big != 0 {
+        let out = sp.wrapping_sub(0x50);
+        e.call(m, BIG_FIND, &[big, name, 0, out, 0]);
+        let h = m.r32(st + 4);
+        let pos = off.wrapping_add(m.r32(out));
+        e.call(m, SND_STREAM_QUEUE_FILE, &[h, a1, st + 0x10, pos])
+    } else {
+        let h = m.r32(st + 4);
+        e.call(m, SND_STREAM_QUEUE_FILE, &[h, a1, name, off])
+    }
+}
+
+/// `Stream_OpenInBig` 0x2297f0(st, a1, idx, off; sp): returns `0` if `*(st+0x70)` is null, else looks up entry `idx`
+/// via `BIG_Find(big, 0, idx, sp - 0x50, 0)` and queues `st+0x10` at `off + *out`
+pub fn stream_open_in_big(m: &mut Mem, e: &mut dyn SysEnv, st: u32, a1: u32, idx: u32, off: u32, sp: u32) -> u32 {
+    let big = m.r32(st + 0x70);
+    if big == 0 {
+        return 0;
+    }
+    let out = sp.wrapping_sub(0x50);
+    e.call(m, BIG_FIND, &[big, 0, idx, out, 0]);
+    let h = m.r32(st + 4);
+    let pos = off.wrapping_add(m.r32(out));
+    e.call(m, SND_STREAM_QUEUE_FILE, &[h, a1, st + 0x10, pos])
+}
+
+/// `StreamSys_Init` 0x229890(sys, a1, count, a3): initializes `MidiSys_Init(sys, a1, a3)`, stores `count` at
+/// `+0xa4c` and `STREAM_SYS_VT` (`0x3a0598`) at `+4`, allocates `4 * count` bytes (`EAMem_Alloc`, filled with
+/// `0xdeadc0ed` if non-null), stores the array at `+0xa50`, zeroes its `count` slots, and returns `sys`
+pub fn stream_sys_init(m: &mut Mem, e: &mut dyn SysEnv, sys: u32, a1: u32, count: u32, a3: u32) -> u32 {
+    e.call(m, MIDI_SYS_INIT, &[sys, a1, a3]);
+    m.w32(sys + 0xa4c, count);
+    m.w32(sys + 4, STREAM_SYS_VT);
+    let bytes = count << 2;
+    let arr = e.call(m, ALLOC, &[TAG_STREAM_ARRAY, bytes, 0]);
+    if arr != 0 {
+        e.call(m, MEMSET, &[arr, 0xdead_c0ed, bytes]);
+    }
+    m.w32(sys + 0xa50, arr);
+    let n = m.r32(sys + 0xa4c) as i32;
+    for i in 0..n {
+        m.w32(arr.wrapping_add((i as u32) << 2), 0);
+    }
+    sys
+}
+
+/// `StreamSys_CreateStream` 0x2299f8(sys, slot, flags, extra_bytes): allocates a `0x80`-byte stream object (via
+/// `MemPool_Alloc` when bit 30 is set else `EAMem_Alloc`, filling with `0` if bit 31 is set else `0xdeadc0de`),
+/// initializes it via [`stream_init`], and stores it in `*(sys+0xa50)[slot]`
+pub fn stream_sys_create_stream(m: &mut Mem, e: &mut dyn SysEnv, sys: u32, slot: u32, flags: u32, extra_bytes: u32) {
+    let slot_ptr = m.r32(sys + 0xa50).wrapping_add(slot << 2);
+    let p = if flags & 0x4000_0000 != 0 {
+        e.call(m, MEMPOOL_ALLOC, &[MEMPOOL_GLOBAL, 0x80, flags, TAG_STREAM_OBJ, 0, 0])
+    } else {
+        e.call(m, ALLOC, &[TAG_STREAM_OBJ, 0x80, flags & 0x03ff_ffff])
+    };
+    if p != 0 {
+        if (flags as i32) < 0 {
+            e.call(m, MEMSET, &[p, 0, 0x80]);
+        } else {
+            e.call(m, MEMSET, &[p, 0xdead_c0de, 0x80]);
+        }
+    }
+    let st = stream_init(m, e, p, sys, flags, extra_bytes);
+    m.w32(slot_ptr, st);
+}
+
+/// `StreamSys_StopAll` 0x229d98(sys): calls [`stream_update_volume`] on every non-null stream in `0..*(sys+0xa4c)`
+pub fn stream_sys_stop_all(m: &mut Mem, e: &mut dyn SysEnv, sys: u32) {
+    let mut i = 0u32;
+    while (i as i32) < m.r32(sys + 0xa4c) as i32 {
+        let s = stream(m, sys, i);
+        i += 1;
+        if s != 0 {
+            stream_update_volume(m, e, s);
+        }
+    }
+}
+
+/// `StreamSys_ResumeAll` 0x229e00(sys): calls [`stream_resume`] on every non-null stream in `0..*(sys+0xa4c)`
+pub fn stream_sys_resume_all(m: &mut Mem, e: &mut dyn SysEnv, sys: u32) {
+    let mut i = 0u32;
+    while (i as i32) < m.r32(sys + 0xa4c) as i32 {
+        let s = stream(m, sys, i);
+        i += 1;
+        if s != 0 {
+            stream_resume(m, e, s);
+        }
+    }
+}
+
+/// `StreamSys_PauseAll` 0x229e68(sys): calls [`stream_pause`] on every non-null stream in `0..*(sys+0xa4c)`
+pub fn stream_sys_pause_all(m: &mut Mem, e: &mut dyn SysEnv, sys: u32) {
+    let mut i = 0u32;
+    while (i as i32) < m.r32(sys + 0xa4c) as i32 {
+        let s = stream(m, sys, i);
+        i += 1;
+        if s != 0 {
+            stream_pause(m, e, s);
+        }
+    }
+}
+
+/// `StreamSys_PlayFile` 0x229ed0(sys, slot, a2, a3, t0; sp): calls [`stream_play_file`] on slot's stream, or `-1`
+#[allow(clippy::too_many_arguments)]
+pub fn stream_sys_play_file(m: &mut Mem, e: &mut dyn SysEnv, sys: u32, slot: u32, a2: u32, a3: u32, t0: u32, sp: u32) -> u32 {
+    let s = stream(m, sys, slot);
+    if s == 0 {
+        u32::MAX
+    } else {
+        stream_play_file(m, e, s, a2, a3, t0, sp.wrapping_sub(0x10))
+    }
+}
+
+/// `StreamSys_Play` 0x229f18(sys, slot, a2, a3, t0; sp): calls [`stream_open_in_big`] on slot's stream, or `-1`
+#[allow(clippy::too_many_arguments)]
+pub fn stream_sys_play(m: &mut Mem, e: &mut dyn SysEnv, sys: u32, slot: u32, a2: u32, a3: u32, t0: u32, sp: u32) -> u32 {
+    let s = stream(m, sys, slot);
+    if s == 0 {
+        u32::MAX
+    } else {
+        stream_open_in_big(m, e, s, a2, a3, t0, sp.wrapping_sub(0x10))
+    }
+}
+
+/// `StreamSys_IsSlotQueued` 0x22a088(sys, slot; sp): calls [`stream_is_queued`] on slot's stream, or `0`
+pub fn stream_sys_is_slot_queued(m: &mut Mem, e: &mut dyn SysEnv, sys: u32, slot: u32, sp: u32) -> u32 {
+    let s = stream(m, sys, slot);
+    if s == 0 {
+        0
+    } else {
+        stream_is_queued(m, e, s, sp.wrapping_sub(0x10))
+    }
+}
+
+/// `SndHandle_IsPlaying` 0x22a120(_sys, handle; sp): queries `SndHandle_GetState(handle, sp - 0x30)` under
+/// `SND_Lock`/`SND_Unlock`; returns `1` iff state is `2` and return value is non-negative
+pub fn snd_handle_is_playing(m: &mut Mem, e: &mut dyn SysEnv, handle: u32, sp: u32) -> u32 {
+    let ibuf = sp.wrapping_sub(0x30);
+    e.call(m, SND_LOCK, &[]);
+    let rc = e.call(m, SND_HANDLE_GET_STATE, &[handle, ibuf]) as i32;
+    e.call(m, SND_UNLOCK, &[]);
+    (m.r32(ibuf) == 2 && rc >= 0) as u32
+}
+
+/// `StreamSys_ClearRequestPrebuffer` 0x22a1e0(sys, slot, req): calls [`stream_clear_request_prebuffer`] if slot has a stream
+pub fn stream_sys_clear_request_prebuffer(m: &mut Mem, e: &mut dyn SysEnv, sys: u32, slot: u32, req: u32) {
+    if stream(m, sys, slot) != 0 {
+        stream_clear_request_prebuffer(m, e, req);
+    }
+}
+
+/// `StreamSys_SetVolume` 0x22a228(sys, slot, vol): calls `Stream_SetVolume(s, vol)` (`0x229398`) if slot has a stream
+pub fn stream_sys_set_volume(m: &mut Mem, e: &mut dyn SysEnv, sys: u32, slot: u32, vol: u32) {
+    let s = stream(m, sys, slot);
+    if s != 0 {
+        e.call(m, STREAM_SET_VOLUME, &[s, vol]);
+    }
+}
+
+/// `StreamSys_GetStream` 0x22a2b8(sys, slot): returns `*(sys+0xa50)[slot]`
+pub fn stream_sys_get_stream(m: &Mem, sys: u32, slot: u32) -> u32 {
+    stream(m, sys, slot)
+}
+
+/// `SndEvent_ClearStreamPrebuffer` 0x22a2d0(_sys, ev): calls `SndStream_SetPrebufferMs(*(ev+0x1c), 0)` and returns `1`
+pub fn snd_event_clear_stream_prebuffer(m: &mut Mem, e: &mut dyn SysEnv, ev: u32) -> u32 {
+    let req = m.r32(ev + 0x1c);
+    e.call(m, SND_STREAM_SET_PREBUFFER_MS, &[req, 0]);
+    1
+}
