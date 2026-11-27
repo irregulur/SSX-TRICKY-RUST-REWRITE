@@ -37,6 +37,7 @@ state machine and the renderer are ours. Nothing has been checked against the or
 | E1b2 | Replace the xorshift stand-ins (`race.rs`, `props.rs`, `intro.rs`) with the game's streams at the game's call sites, in the game's order | unowned | E1b1 | | Split of E1b; split into E1b2a to E1b2d |
 | E1b2g7d | The rest of the race-line hooks in the app (`race::Hooks` in `game/src/race.rs`): speech (`Speech_OnCheckpoint` 0x233ee0, place and local lines), the cheer, the event sounds (`FUN_0021c0a0`, 0xe/0x17/0x18 `Audio_QueueEventSound` 0x21d0b0), `Boarder_Finish`'s `HUD_ShowItem` 7, and the places (+0x110) from the ported `placing::update` 0x115100 in place of the STANDIN `Race::places` | any | E1b2g7b | | Gap of E1b2g7b; split into E1b2g7d1 to E1b2g7d5 |
 | E3 | Level files read by our code, as the game reads them, replacing the SSX-Library JSON project folder (`level.rs`) | unowned | E2b | | [repo] level-editing.md. Split before claiming: |
+| E12h | The trick book's functions on the career block checked in the runner (`tricky_game::career`: `TrickBook_IsTrickDone` 0x164258, `TrickBook_CountDoneInPage` 0x164178, `TrickBook_CountCompletePages` 0x164060, `TrickBook_FirstUndoneTrick` 0x1641f8, `TrickBook_PageFirstTrick` 0x164110, `TrickBook_CountToTier` 0x1640a8, and the unported `TrickBook_IsPageComplete` 0x164020 and `TrickBook_TricksPerPage` 0x164108) | unowned | E12b | irregulur/lynx (2026-11-26) | |
 | E6 | Loading and memory: what the game loads when (load screens, course switch), only as far as it changes behaviour | unowned | E1 | | [est] |
 | E7 | World: terrain tessellation as the game does it, world cells (`World_CellActivate_RunPersistant` 0x25fed0), instance queries `World_QueryInstances` 0x25b878, ray casts `World_RayCast` 0x25aff8 / `World_RayCastInstance` 0x25bf48 | unowned | E3a | | [repo] Split: E7a, E7b, E7c. `collide.rs` (triangle grid of the drawn mesh) is a stand-in for these |
 | E8 | Physics: check the ported boarder motion against the original once F4 exists: ground `cBoarder_GroundMotion_Update` 0x10a0d8, drag 0x109cb8, side friction 0x109ef8, thrust 0x109950, spring 0x109878, probe 0x128ae8, surface table `SurfaceTable_Init` 0x256188 | any | F4a | | [repo] Ported in `rider.rs`; README still says some constants at the top of `rider.rs` are guesswork: find which. Split: E8f–E8i |
@@ -1927,3 +1928,4 @@ matches the original.
 - 2026-11-26 irregulur/lynx: E5f done.
 - 2026-11-26 irregulur/lynx: added E5g.
 - 2026-11-26 irregulur/lynx: E5g done.
+- 2026-11-26 irregulur/lynx: added E12h.
