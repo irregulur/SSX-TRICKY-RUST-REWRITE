@@ -422,3 +422,159 @@ pub fn upload(m: &mut Mem, e: &mut dyn VideoEnv, v: u32) {
 pub fn is_finished(m: &Mem, v: u32, i: u32) -> u32 {
     m.r32(m.r32(v.wrapping_add(i << 2) + 0x10) + 0x110)
 }
+
+// ---- Full-motion video player (`cVideoPlayer`, row G11a4) ----
+
+pub const GFX_LOAD_IMAGE_TO_FRAME: u32 = 0x1e4e20;
+pub const SYS_RUN_POLL_TASKS: u32 = 0x2ced00;
+pub const SND_STREAM_CLOSE: u32 = 0x2d28a8;
+pub const SCE_MPEG_DELETE: u32 = 0x2ea150;
+pub const MPEG_FEED_DATA: u32 = 0x2ea158;
+pub const REGISTER_FRAME_INFO_TABLE: u32 = 0x2f86d8;
+pub const DEREGISTER_FRAME_INFO: u32 = 0x2f8730;
+pub const VT_VIDEO_PLAYER: u32 = 0x3b8de8;
+pub const EH_FRAME_VIDEO_PLAYER: u32 = 0x348678;
+pub const EH_OBJ_VIDEO_PLAYER: u32 = 0x4039c0;
+
+/// `VideoStream_FlushFrames` 0x2ba240(_this, strm): drain and release every pending packet from `strm`.
+pub fn flush_frames(m: &mut Mem, e: &mut dyn VideoEnv, strm: u32) {
+    loop {
+        let pkt = e.call(m, STRM_GET_PACKET, &[strm]);
+        if pkt == 0 {
+            break;
+        }
+        e.call(m, STRM_RELEASE_PACKET, &[strm, pkt]);
+    }
+}
+
+/// `VideoPlayer_DrawFrame` 0x2ba290(this, info, src_rgba): convert 16-pixel-wide RGBA macroblock columns from
+/// `src_rgba` into 24-bit RGB scratch (`*(this+0x20)`), upload each column centered horizontally via
+/// `Gfx_LoadImageToFrame` (`0x1e4e20`), and call `Sys_RunPollTasks(0)` per column.
+pub fn player_draw_frame(m: &mut Mem, e: &mut dyn VideoEnv, this: u32, info: u32, mut src: u32) {
+    let fw = m.r32(info) as i32;
+    let fh = m.r32(info + 4) as i32;
+    let max_w = m.r32(this + 0x18) as i32;
+    let max_h = m.r32(this + 0x1c) as i32;
+    let diff = max_w.wrapping_sub(fw);
+    let mut x_off = (diff.wrapping_add(((diff as u32) >> 31) as i32)) >> 1;
+    if x_off < 0 {
+        x_off = 0;
+    }
+    let w_min = if max_w < fw { max_w } else { fw };
+    let cols_w = w_min >> 4;
+    let cols_f = fw >> 4;
+    let ncols = if cols_w < cols_f { cols_w } else { cols_f };
+    let h = if max_h < fh { max_h } else { fh };
+    let gfx = m.r32(m.r32(GAPP) + 0x724);
+    if ncols <= 0 {
+        return;
+    }
+    let col_stride = ((fh >> 4) as u32) << 10;
+    let npix = h << 4;
+    for _ in 0..ncols {
+        let mut dst = m.r32(this + 0x20);
+        let mut s = src;
+        if npix > 0 {
+            for _ in 0..npix {
+                let r = m.r8(s);
+                let g = m.r8(s + 1);
+                let b = m.r8(s + 2);
+                m.w8(dst, r);
+                m.w8(dst + 1, g);
+                m.w8(dst + 2, b);
+                s = s.wrapping_add(4);
+                dst = dst.wrapping_add(3);
+            }
+        }
+        let buf = m.r32(this + 0x20);
+        e.call(m, GFX_LOAD_IMAGE_TO_FRAME, &[gfx, x_off as u32, 0, 0x10, h as u32, buf]);
+        src = src.wrapping_add(col_stride);
+        e.call(m, SYS_RUN_POLL_TASKS, &[0]);
+        x_off = x_off.wrapping_add(0x10);
+    }
+}
+
+/// `VideoPlayer_FeedMpeg` 0x2ba438(this, mpeg, _cb_data): wait for the next packet on `*(this+0x38)` (polling via
+/// `Sys_RunPollTasks(0)` until a packet arrives or `Strm_IsFinished`), copy its payload (`size - 8`) to `*(this+0xbc)`
+/// padded with zero words through `((size + 7) & !15) + 16`, release the packet, and feed `*(this+0xb8)` to
+/// `Mpeg_FeedData` (`0x2ea158`); on EOF write four MPEG-2 Sequence End words (`0xb701_0000`) and feed `0x10` bytes.
+pub fn player_feed_mpeg(m: &mut Mem, e: &mut dyn VideoEnv, this: u32, mpeg: u32, _cb_data: u32) -> u32 {
+    let pkt = loop {
+        let strm = m.r32(this + 0x38);
+        let p = e.call(m, STRM_GET_PACKET, &[strm]);
+        if p != 0 {
+            break p;
+        }
+        let strm2 = m.r32(this + 0x38);
+        if e.call(m, STRM_IS_FINISHED, &[strm2]) != 0 {
+            break 0;
+        }
+        e.call(m, SYS_RUN_POLL_TASKS, &[0]);
+    };
+    let feed_len = if pkt != 0 {
+        let pkt_sz = m.r32(pkt + 4) as i32;
+        let dst = m.r32(this + 0xbc);
+        let aligned = pkt_sz.wrapping_add(7) & !0xf;
+        let mut off = pkt_sz.wrapping_sub(8);
+        eamem::copy(m, dst, pkt.wrapping_add(8), off as u32);
+        let pad_end = aligned.wrapping_add(0x10);
+        if off < pad_end {
+            let dst2 = m.r32(this + 0xbc);
+            while off < pad_end {
+                m.w32(dst2.wrapping_add(off as u32), 0);
+                off = off.wrapping_add(4);
+            }
+        }
+        let strm = m.r32(this + 0x38);
+        e.call(m, STRM_RELEASE_PACKET, &[strm, pkt]);
+        aligned as u32
+    } else {
+        let dst = m.r32(this + 0xbc);
+        for off in [0xcu32, 8, 4, 0] {
+            m.w32(dst.wrapping_add(off), 0xb701_0000);
+        }
+        0x10
+    };
+    let feed_buf = m.r32(this + 0xb8);
+    e.call(m, MPEG_FEED_DATA, &[mpeg, feed_buf, feed_len]);
+    1
+}
+
+/// `VideoPlayer_OnMpegNoData` 0x2ba408(mpeg, cb_data, this): callback adapter forwarding to
+/// `VideoPlayer_FeedMpeg(this, mpeg, cb_data)`.
+pub fn player_on_mpeg_no_data(m: &mut Mem, e: &mut dyn VideoEnv, mpeg: u32, cb_data: u32, this: u32) -> u32 {
+    player_feed_mpeg(m, e, this, mpeg, cb_data)
+}
+
+/// `VideoPlayer_Close` 0x2ba998(this): close audio stream (`+0xb0`), video stream (`+0x38`), delete MPEG decoder
+/// (`+0x68`), and `EAMem_Free` buffers at `+0x30, +0xb8, +0x2c, +0x24, +0x28`.
+pub fn player_close(m: &mut Mem, e: &mut dyn VideoEnv, this: u32) {
+    let snd = m.r32(this + 0xb0);
+    e.call(m, SND_STREAM_CLOSE, &[snd]);
+    let strm = m.r32(this + 0x38);
+    e.call(m, STRM_CLOSE, &[strm]);
+    e.call(m, SCE_MPEG_DELETE, &[this.wrapping_add(0x68)]);
+    for off in [0x30u32, 0xb8, 0x2c, 0x24, 0x28] {
+        let p = m.r32(this + off);
+        e.call(m, EAMEM_FREE, &[p]);
+    }
+}
+
+/// `cVideoPlayer::~cVideoPlayer` 0x2bab58(this, flags): restore vtable `0x3b8de8` and `Mem_Delete(this)` when
+/// `flags & 1 != 0`.
+pub fn player_dtor(m: &mut Mem, e: &mut dyn VideoEnv, this: u32, flags: u32) {
+    m.w32(this, VT_VIDEO_PLAYER);
+    if (flags & 1) != 0 {
+        e.call(m, MEM_DELETE, &[this]);
+    }
+}
+
+/// `StaticInit_VideoPlayer` 0x2bac00(): register EH frame table `(0x348678, 0x4039c0)`.
+pub fn static_init_video_player(m: &mut Mem, e: &mut dyn VideoEnv) {
+    e.call(m, REGISTER_FRAME_INFO_TABLE, &[EH_FRAME_VIDEO_PLAYER, EH_OBJ_VIDEO_PLAYER]);
+}
+
+/// `StaticDtor_VideoPlayer` 0x2bac40(): deregister EH frame info `0x348678`.
+pub fn static_dtor_video_player(m: &mut Mem, e: &mut dyn VideoEnv) {
+    e.call(m, DEREGISTER_FRAME_INFO, &[EH_FRAME_VIDEO_PLAYER]);
+}
