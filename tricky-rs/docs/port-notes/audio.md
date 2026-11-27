@@ -2069,3 +2069,29 @@ Proven (`SLUS_203.26` disassembly + runner):
   `PathX_LoadBank` registers it (`SndBank_Register`), relocating resident header (`"PATHXbkh"`) on status `7` and
   returning `-0x27` if read fails; `PathX_PollTask` calls `*(0x34313c)` if non-null and returns `0`.
 - Checked bit-for-bit across `tests/crowd_pathx_tail.rs` (reducing `audio` `not started` from 43 to 27).
+
+## `cBXAudio`, music fade & misc audio tail (row G10u, `sndqueue.rs`, checked: `tests/bxaudio_tail.rs`)
+
+Proven (`SLUS_203.26` disassembly + runner):
+
+- **`cBXAudio::~cBXAudio` (`0x20ddb0`), `PlayFESound` (`0x20eaf0`), `vf1_212280`, `vf2_21bc60`**: destructor restores
+  vtable `0x39f200`, deletes the 3×10 snow-program buffers (`+0x745c/+0x777c/+0x7a9c`), frees narration and char
+  script samples, destructs all 30 `SnowProgram`s in reverse, destroys the `+0x6e24` ring queue, and tail-calls
+  `cController::~cController`. `PlayFESound` pushes a default entry (`SndSys_PushEntryCopy2`), sets `(kind, id)`,
+  binds volume slot 4 (`SndMgr_GetSlot`), and calls `SndSys_PlayPending`. `vf1_212280` forwards to `cSoundSys::vf1`
+  and records mode at `+0x3838` on return `2`; `vf2_21bc60` is a no-op.
+- **`Audio_PlayBigAirWind` (`0x20f630`), `Audio_CancelMusicDuck` (`0x20f8c0`), `Audio_SetMusicMode` (`0x20f998`),
+  `Audio_GetVolumeSlot` (`0x211f50`), `Audio_FadeMusicTo` (`0x211fb8`), `Audio_UpdateMusicFade` (`0x212018`),
+  `Audio_SetMusicState` (`0x21d610`)**: `PlayBigAirWind` starts sound `(0, 0x20)` with slot `+0x38a0` and callback
+  `0x0021_b438_ffff_0000` when `+0x38a4 == 0`; `CancelMusicDuck` invokes virtual `+0x3c` with the same callback and
+  clears `+0x38a4`/`+0x38a0`. `FadeMusicTo` / `UpdateMusicFade` linearly ramp `+0x38d4` at 60 Hz across five
+  channel-mask modes (`0..=4`); `SetMusicState` triggers a 1 s fade to `1.0` via `Audio_MusicStateToMode` (`0x20d9f0`)
+  when entering state `4` with `+0x7444 != 0`.
+- **`Audio_FreeRaceStream` (`0x2151c8`), `Sfx_InstanceControllerVf26` (`0x2168f8`), `Sfx_MeterFullEvent` (`0x219258`),
+  `Audio_ListBankNames` (`0x21a498`), `Audio_LoadFEGlobalBankList` (`0x21ce78`), `Audio_ScheduleWorldTriggersOn`
+  (`0x21e498`), `Audio_GetMusicFxThunk` (`0x21e690`)**: `MeterFullEvent` checks `*(rider+0x18)->+0x1c > 0.875`
+  (`0x3f60_0000`) when `+0x6e3c == 0` and passes `*(rider+0x18)` to `Speech_OnMeterFull`; `ListBankNames` copies
+  `*(+0x38dc)` 64-byte names and fills up to 200 with `"Unused bank %d"`; `LoadFEGlobalBankList` reads `[GLOBAL]`
+  from the INI into `+0x6e9c` (count `+0x6e98`); `ScheduleWorldTriggersOn` schedules `0x0021_e4c0_ffff_0000` in
+  250 ms; `GetMusicFxThunk` returns `*(this+0x3844)`.
+- Checked bit-for-bit across `tests/bxaudio_tail.rs` (reducing `audio` `not started` from 27 to 9).

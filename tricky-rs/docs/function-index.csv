@@ -3543,22 +3543,22 @@ address,size,name,system,status
 0x20da50,128,Audio_CreateSystem,audio,ported
 0x20dad0,68,Audio_DeleteSystem,audio,ported
 0x20db18,660,cBXAudio::cBXAudio,audio,ported
-0x20ddb0,340,cBXAudio::~cBXAudio,audio,not started
+0x20ddb0,340,cBXAudio::~cBXAudio,audio,checked
 0x20df08,1316,cBXAudio::vf13_20df08,audio,checked
 0x20e430,768,cBXAudio::vf14_20e430,audio,ported
 0x20e730,776,cBXAudio::ListenerLocate,audio,checked
 0x20ea38,180,cBXAudio::vf15_20ea38,audio,ported
-0x20eaf0,560,cBXAudio::PlayFESound,audio,not started
+0x20eaf0,560,cBXAudio::PlayFESound,audio,checked
 0x20ed20,312,Audio_GetListenerRider,audio,ported
 0x20ee58,776,Audio_InGameUpdate,audio,ported
 0x20f160,708,Audio_LoadFEConfig,audio,checked
 0x20f430,204,Audio_StartFrontendMusic,audio,ported
 0x20f530,68,Audio_StopMusicAndSpeech,audio,ported
 0x20f578,184,Audio_Shutdown,audio,ported
-0x20f630,652,Audio_PlayBigAirWind,audio,not started
-0x20f8c0,72,Audio_CancelMusicDuck,audio,not started
+0x20f630,652,Audio_PlayBigAirWind,audio,checked
+0x20f8c0,72,Audio_CancelMusicDuck,audio,checked
 0x20f908,140,Sfx_SurfaceSoundType,audio,checked
-0x20f998,20,Audio_SetMusicMode,audio,not started
+0x20f998,20,Audio_SetMusicMode,audio,checked
 0x20f9b0,208,Audio_FindRiderNear,audio,checked
 0x20fa80,228,Audio_AnyRiderNearAhead,audio,checked
 0x20fb68,244,Audio_IsNearerPlayer2,audio,checked
@@ -3578,14 +3578,14 @@ address,size,name,system,status
 0x211db0,184,SndMgr_SetVolume,audio,checked
 0x211f20,20,SndMgr_GetVolume,audio,ported
 0x211f38,20,SndMgr_GetSlot,audio,ported
-0x211f50,20,Audio_GetVolumeSlot,audio,not started
+0x211f50,20,Audio_GetVolumeSlot,audio,checked
 0x211f68,36,Audio_VolumeUp,audio,ported
 0x211f90,36,Audio_VolumeDown,audio,ported
-0x211fb8,92,Audio_FadeMusicTo,audio,not started
-0x212018,504,Audio_UpdateMusicFade,audio,not started
+0x211fb8,92,Audio_FadeMusicTo,audio,checked
+0x212018,504,Audio_UpdateMusicFade,audio,checked
 0x212210,92,Audio_SetSpeechLevel,audio,checked
 0x212270,16,Audio_SetMusicFx,audio,ported
-0x212280,68,cBXAudio::vf1_212280,audio,not started
+0x212280,68,cBXAudio::vf1_212280,audio,checked
 0x212300,68,Audio_PlayFESound32Gated,audio,ported
 0x212348,48,Audio_PlayFESound30,audio,ported
 0x2123c8,48,Audio_PlayFESound12,audio,ported
@@ -3612,7 +3612,7 @@ address,size,name,system,status
 0x214e00,8,Audio_SetMusicMode4,audio,ported
 0x214e08,88,Audio_StopIntroStream,audio,ported
 0x214e60,872,Music_StartCourseSong,audio,checked
-0x2151c8,84,Audio_FreeRaceStream,audio,not started
+0x2151c8,84,Audio_FreeRaceStream,audio,checked
 0x215220,100,Audio_StartRaceMusic,audio,ported
 0x215288,232,Audio_OnRaceGo,audio,ported
 0x215370,136,Audio_UpdateCrowdBoxes,audio,ported
@@ -3626,7 +3626,7 @@ address,size,name,system,status
 0x215f18,984,Sfx_PlayRiderBump,audio,not started
 0x2162f0,728,Sfx_OnWallHit,audio,checked
 0x2165c8,816,Sfx_ScriptSoundPlay,audio,checked
-0x2168f8,52,Sfx_InstanceControllerVf26,audio,not started
+0x2168f8,52,Sfx_InstanceControllerVf26,audio,checked
 0x216930,48,Audio_PlayCountdownBeep,audio,ported
 0x216960,748,Sfx_OnRiderCollision,audio,checked
 0x216c50,260,Sfx_InstanceCollision,audio,checked
@@ -3645,7 +3645,7 @@ address,size,name,system,status
 0x218eb0,576,Sfx_OnRiderReset,audio,checked
 0x2190f0,200,Sfx_OnTrickBookDone,audio,checked
 0x2191c0,152,Sfx_OnMeterAdd,audio,ported
-0x219258,76,Sfx_MeterFullEvent,audio,not started
+0x219258,76,Sfx_MeterFullEvent,audio,checked
 0x2192a8,1208,Sfx_UpdateBoost,audio,checked
 0x219760,120,Sfx_UpdateBoostStop,audio,ported
 0x2197d8,624,Sfx_OnBoost,audio,ported
@@ -3654,7 +3654,7 @@ address,size,name,system,status
 0x219fc0,592,Sfx_PickupTime,audio,ported
 0x21a210,600,Audio_PlayScoreTick,audio,ported
 0x21a468,44,Audio_ClearAmbientLoaded,audio,checked
-0x21a498,176,Audio_ListBankNames,audio,not started
+0x21a498,176,Audio_ListBankNames,audio,checked
 0x21a548,248,Audio_LoadAmbientBank,audio,checked
 0x21a640,100,Audio_FindBankName,audio,checked
 0x21a6a8,68,Sfx_ImpactSpeed,audio,checked
@@ -3669,7 +3669,7 @@ address,size,name,system,status
 0x21b628,236,Sfx_UpdateAiGlideLoop,audio,checked
 0x21b718,272,Sfx_UpdateCarveLoop,audio,checked
 0x21b828,1076,Audio_BigAirMusicDuck,audio,ported
-0x21bc60,8,cBXAudio::vf2_21bc60,audio,not started
+0x21bc60,8,cBXAudio::vf2_21bc60,audio,checked
 0x21bca8,88,Audio_SetVolumePreset,audio,checked
 0x21bfd0,60,Replay_IsPlaying,replay,ported
 0x21c010,100,Audio_GetRiderPos,audio,ported
@@ -3690,25 +3690,25 @@ address,size,name,system,status
 0x21c960,68,Audio_PlayFESound11ThenScreen,audio,ported
 0x21c9a8,120,Audio_StopFEHeld,audio,ported
 0x21ca20,1104,Audio_LoadVolumeLevels,audio,checked
-0x21ce78,184,Audio_LoadFEGlobalBankList,audio,not started
+0x21ce78,184,Audio_LoadFEGlobalBankList,audio,checked
 0x21cf38,104,Jukebox_Open,audio,ported
 0x21cfa0,124,Jukebox_PlayTrack,audio,ported
 0x21d078,56,Music_StopStreamAndFade,audio,ported
 0x21d0b0,16,Audio_QueueEventSound,audio,checked
 0x21d0c0,1284,Audio_PlayEventSound,audio,checked
 0x21d5c8,72,Audio_StopEventSound,audio,checked
-0x21d610,112,Audio_SetMusicState,audio,not started
+0x21d610,112,Audio_SetMusicState,audio,checked
 0x21d680,812,Sfx_PlayClipBoardSound51,audio,not started
 0x21d9b0,812,Sfx_PlayClipBoardSound50,audio,not started
 0x21dce0,224,Sfx_OnMeterFilled,audio,ported
 0x21ddc0,552,Music_PlayMeterCue1,audio,not started
 0x21dfe8,604,Music_PlayMeterCue2,audio,not started
 0x21e248,592,Music_RestartMeterCue,audio,not started
-0x21e498,40,Audio_ScheduleWorldTriggersOn,audio,not started
+0x21e498,40,Audio_ScheduleWorldTriggersOn,audio,checked
 0x21e4f0,44,Audio_ResumeAfterSpeech,audio,ported
 0x21e528,108,Audio_CheerForRider,audio,checked
 0x21e688,8,Audio_GetMusicFx,audio,ported
-0x21e690,28,Audio_GetMusicFxThunk,audio,not started
+0x21e690,28,Audio_GetMusicFxThunk,audio,checked
 0x21e6c0,28,cBXAudio::vf3_21e6c0,audio,ported
 0x21e6e8,80,cBXAudio::__tf,runtime,host
 0x21e738,80,SnowProgram_Destruct,game,checked

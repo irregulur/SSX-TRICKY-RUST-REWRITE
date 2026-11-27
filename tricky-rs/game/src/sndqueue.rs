@@ -1621,3 +1621,367 @@ pub fn snd_play_opts_init_current(m: &mut Mem, this: u32) {
         m.w8(rec + k as u32, b);
     }
 }
+
+// ---- cBXAudio, Music & Sfx tail (row G10u, on engine memory) ----
+
+use crate::libc;
+use crate::ps2f::F;
+
+pub const RING_QUEUE_DESTROY: u32 = 0x209b40;
+pub const SND_SYS_PLAY_PENDING: u32 = 0x20c948;
+pub const SND_MGR_GET_SLOT: u32 = 0x211f38;
+pub const SNOW_PROGRAM_DESTRUCT: u32 = 0x21e738;
+pub const CONTROLLER_DTOR: u32 = 0x21e8d8;
+pub const INI_OPEN: u32 = 0x221668;
+pub const INI_CLOSE: u32 = 0x221788;
+pub const INI_FIND_SECTION: u32 = 0x221af0;
+pub const INI_READ_TOKEN: u32 = 0x221c90;
+pub const INI_AT_SECTION_END: u32 = 0x221e90;
+pub const INI_READ_STRING: u32 = 0x221ef8;
+pub const SND_SYS_SCHEDULE_EVENT: u32 = 0x222cc0;
+pub const SPEECH_SYS_SET_FOLLOW_STREAM: u32 = 0x228b88;
+pub const STREAM_SYS_DESTROY_STREAM: u32 = 0x229d40;
+pub const SPEECH_FREE_NARRATION: u32 = 0x230d78;
+pub const SPEECH_ON_METER_FULL: u32 = 0x233e10;
+pub const SPEECH_FREE_CHAR_SCRIPT_SAMPLES: u32 = 0x2356a0;
+pub const EAMEM_FREE: u32 = 0x2ccfc0;
+pub const SPRINTF: u32 = 0x2fca28;
+
+pub const VT_BX_AUDIO: u32 = 0x39f200;
+pub const STR_GLOBAL: u32 = 0x39ea80;
+pub const STR_UNUSED_BANK: u32 = 0x39ed90;
+pub const CB_BIG_AIR_WIND: u64 = 0x0021_b438_ffff_0000;
+pub const CB_WORLD_TRIGGERS_ON: u64 = 0x0021_e4c0_ffff_0000;
+
+/// `cBXAudio::~cBXAudio` 0x20ddb0(this, flags): restore vtable `0x39f200`, delete 3×10 snow-program buffers at
+/// `+0x745c/+0x777c/+0x7a9c`, free narration & char script samples, destruct all 30 `SnowProgram`s in reverse,
+/// destroy the ring queue at `+0x6e24` with flags `2`, and tail-call `cController::~cController`.
+pub fn bx_audio_dtor(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32, flags: u32) {
+    m.w32(this + 4, VT_BX_AUDIO);
+    for i in 0..10u32 {
+        let base = this.wrapping_add(0x745c + i * 0x50);
+        for off in [0u32, 0x320, 0x640] {
+            let p = m.r32(base + off);
+            env.call(m, MEM_DELETE, &[p]);
+            m.w32(base + off, 0);
+        }
+    }
+    env.call(m, SPEECH_FREE_NARRATION, &[this]);
+    env.call(m, SPEECH_FREE_CHAR_SCRIPT_SAMPLES, &[this]);
+    for start_off in [0x7a9cu32, 0x777c, 0x745c] {
+        let start = this.wrapping_add(start_off);
+        if start != 0 {
+            let mut cur = start.wrapping_add(0x320);
+            while cur != start {
+                cur = cur.wrapping_sub(0x50);
+                env.call(m, SNOW_PROGRAM_DESTRUCT, &[cur, 0]);
+            }
+        }
+    }
+    env.call(m, RING_QUEUE_DESTROY, &[this.wrapping_add(0x6e24), 2]);
+    env.call(m, CONTROLLER_DTOR, &[this, flags]);
+}
+
+/// `cBXAudio::PlayFESound` 0x20eaf0(this, kind, id): push a default sound entry, set `(kind, id)`, bind volume slot 4
+/// via `SndMgr_GetSlot`, and play via `SndSys_PlayPending`.
+pub fn bx_audio_play_fe_sound(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32, kind: u32, id: u32) -> u32 {
+    snd_sys_push_entry_copy2(m, this);
+    let idx = m.r32(this + 0x20);
+    let a40 = m.r32(this + 0xa40);
+    m.w32(a40.wrapping_add(idx << 2), kind);
+    let a44 = m.r32(this + 0xa44);
+    m.w32(a44.wrapping_add(idx << 2), id);
+    let slot = env.call(m, SND_MGR_GET_SLOT, &[this, 4]);
+    let idx2 = m.r32(this + 0x20);
+    let v40 = m.r32(this + 0x40);
+    m.w32(v40.wrapping_add(idx2 << 2), slot);
+    env.call(m, SND_SYS_PLAY_PENDING, &[this])
+}
+
+/// `Audio_PlayBigAirWind` 0x20f630(this): if `+0x38a4 == 0`, push sound `(0, 0x20)` pointing its volume slot at
+/// `this+0x38a0` with callback `0x0021_b438_ffff_0000`, play via `SndSys_PlayPending`, and set `+0x38a4 = 1`.
+pub fn audio_play_big_air_wind(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32) {
+    if m.r32(this + 0x38a4) != 0 {
+        return;
+    }
+    snd_sys_push_entry_copy2(m, this);
+    let idx = m.r32(this + 0x20);
+    let a40 = m.r32(this + 0xa40);
+    m.w32(a40.wrapping_add(idx << 2), 0);
+    let a44 = m.r32(this + 0xa44);
+    m.w32(a44.wrapping_add(idx << 2), 0x20);
+    let v40 = m.r32(this + 0x40);
+    m.w32(v40.wrapping_add(idx << 2), this.wrapping_add(0x38a0));
+    let v7c = m.r32(this + 0x7c);
+    m.w32(v7c.wrapping_add(idx << 2), 0);
+    let cb = this.wrapping_add(idx << 3).wrapping_add(0x44);
+    m.w32(cb, CB_BIG_AIR_WIND as u32);
+    m.w32(cb + 4, (CB_BIG_AIR_WIND >> 32) as u32);
+    env.call(m, SND_SYS_PLAY_PENDING, &[this]);
+    m.w32(this + 0x38a4, 1);
+}
+
+/// `Audio_CancelMusicDuck` 0x20f8c0(this): dispatch virtual `+0x3c` (this-adjust `+0x38`) with callback
+/// `0x0021_b438_ffff_0000`, then clear `+0x38a4` and `+0x38a0`.
+pub fn audio_cancel_music_duck(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32) {
+    let vt = m.r32(this + 4);
+    let adj = m.r16(vt + 0x38) as i16 as i32 as u32;
+    let f = m.r32(vt + 0x3c);
+    env.call(
+        m,
+        f,
+        &[this.wrapping_add(adj), CB_BIG_AIR_WIND as u32, (CB_BIG_AIR_WIND >> 32) as u32],
+    );
+    m.w32(this + 0x38a4, 0);
+    m.w32(this + 0x38a0, 0);
+}
+
+/// `Audio_SetMusicMode` 0x20f998(this, mode): store `mode` at `+0x6e34` when changed.
+pub fn audio_set_music_mode(m: &mut Mem, this: u32, mode: u32) {
+    if m.r32(this + 0x6e34) != mode {
+        m.w32(this + 0x6e34, mode);
+    }
+}
+
+/// `Audio_GetVolumeSlot` 0x211f50(this, idx): return `this + 0x3848 + idx * 0xc`.
+pub fn audio_get_volume_slot(this: u32, idx: u32) -> u32 {
+    this.wrapping_add(idx.wrapping_mul(0xc)).wrapping_add(0x3848)
+}
+
+/// `Audio_FadeMusicTo` 0x211fb8(this, mode, target, secs): start a linear 60 Hz fade from `+0x38d4` to `target` over
+/// `secs` seconds (no-op when `secs == 0.0`).
+pub fn audio_fade_music_to(m: &mut Mem, this: u32, mode: u32, target: f32, secs: f32) {
+    if F(secs).ee() == 0.0 {
+        return;
+    }
+    let cur = F(f32::from_bits(m.r32(this + 0x38d4)));
+    let diff = F(target) - cur;
+    m.w32(this + 0x38c8, mode);
+    m.w32(this + 0x38d0, target.to_bits());
+    let step = (diff / F(secs)) / F(60.0);
+    m.w32(this + 0x38cc, step.0.to_bits());
+    if step.ee() != 0.0 {
+        m.w32(this + 0x38c4, 1);
+    }
+}
+
+/// `Audio_UpdateMusicFade` 0x212018(this): step the active music fade (`+0x38c4`) by `+0x38cc`, clamp at `+0x38d0`,
+/// and multiply the channel volumes selected by fade mode `+0x38c8` (`0..=4`).
+pub fn audio_update_music_fade(m: &mut Mem, this: u32) {
+    if m.r32(this + 0x38c4) == 0 {
+        return;
+    }
+    let cur = F(f32::from_bits(m.r32(this + 0x38d4)));
+    let step = F(f32::from_bits(m.r32(this + 0x38cc)));
+    let next = cur + step;
+    m.w32(this + 0x38d4, next.0.to_bits());
+    let target = F(f32::from_bits(m.r32(this + 0x38d0)));
+    let done = if step.ee() < 0.0 { next.ee() < target.ee() } else { target.ee() < next.ee() };
+    if done {
+        m.w32(this + 0x38d4, target.0.to_bits());
+        m.w32(this + 0x38c4, 0);
+    }
+    let mode = m.r32(this + 0x38c8);
+    let f = F(f32::from_bits(m.r32(this + 0x38d4)));
+    let fb = f.0.to_bits();
+    let mut scale = |src: u32, dst: u32| {
+        let v = F(f32::from_bits(m.r32(this + src))) * f;
+        m.w32(this + dst, v.0.to_bits());
+    };
+    match mode {
+        0 => {
+            for (s, d) in [(0x3858, 0x385c), (0x3864, 0x3868), (0x3870, 0x3874), (0x3888, 0x388c)] {
+                scale(s, d);
+            }
+            for o in [0x38ac, 0x38b0, 0x38b4, 0x38bc] {
+                m.w32(this + o, fb);
+            }
+        }
+        1 => {
+            for (s, d) in [(0x3864, 0x3868), (0x3870, 0x3874), (0x387c, 0x3880), (0x3888, 0x388c)] {
+                scale(s, d);
+            }
+            for o in [0x38b0, 0x38b4, 0x38b8, 0x38bc] {
+                m.w32(this + o, fb);
+            }
+        }
+        2 => {
+            for (s, d) in [(0x3858, 0x385c), (0x387c, 0x3880), (0x3888, 0x388c), (0x3894, 0x3898)] {
+                scale(s, d);
+            }
+            for o in [0x38ac, 0x38b8, 0x38bc, 0x38c0] {
+                m.w32(this + o, fb);
+            }
+        }
+        3 => {
+            for (s, d) in [
+                (0x3858, 0x385c),
+                (0x3870, 0x3874),
+                (0x387c, 0x3880),
+                (0x3888, 0x388c),
+                (0x3894, 0x3898),
+            ] {
+                scale(s, d);
+            }
+            for o in [0x38ac, 0x38b4, 0x38b8, 0x38bc, 0x38c0] {
+                m.w32(this + o, fb);
+            }
+        }
+        4 => {
+            for (s, d) in [
+                (0x3858, 0x385c),
+                (0x3864, 0x3868),
+                (0x387c, 0x3880),
+                (0x3888, 0x388c),
+                (0x3894, 0x3898),
+            ] {
+                scale(s, d);
+            }
+            for o in [0x38ac, 0x38b0, 0x38b8, 0x38bc, 0x38c0] {
+                m.w32(this + o, fb);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// `cBXAudio::vf1_212280` 0x212280(this, mode): forward to `cSoundSys::vf1`, recording `mode` at `+0x3838` when it
+/// returns `2`.
+pub fn bx_audio_vf1(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32, mode: u32) -> u32 {
+    let rc = sound_sys_vf1(m, env, this, mode);
+    if rc == 2 {
+        m.w32(this + 0x3838, mode);
+    }
+    rc
+}
+
+/// `Audio_FreeRaceStream` 0x2151c8(this): destroy stream slot 2, clear follow-stream `(0, 0)`, free `+0x38d8` via
+/// `EAMem_Free` when non-null, and zero `+0x7448` and `+0x38d8`.
+pub fn audio_free_race_stream(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32) {
+    env.call(m, STREAM_SYS_DESTROY_STREAM, &[this, 2]);
+    env.call(m, SPEECH_SYS_SET_FOLLOW_STREAM, &[this, 0, 0]);
+    let p = m.r32(this + 0x38d8);
+    if p != 0 {
+        env.call(m, EAMEM_FREE, &[p]);
+    }
+    m.w32(this + 0x7448, 0);
+    m.w32(this + 0x38d8, 0);
+}
+
+/// `Sfx_InstanceControllerVf26` 0x2168f8(_this, inst): when `*(inst+0xe4)` is non-null, invoke its vtable (`+8`)
+/// entry `+0xdc` (this-adjust `+0xd8`).
+pub fn sfx_instance_controller_vf26(m: &mut Mem, env: &mut dyn SoundMgrEnv, inst: u32) {
+    let ctl = m.r32(inst + 0xe4);
+    if ctl != 0 {
+        let vt = m.r32(ctl + 8);
+        let adj = m.r16(vt + 0xd8) as i16 as i32 as u32;
+        let f = m.r32(vt + 0xdc);
+        env.call(m, f, &[ctl.wrapping_add(adj)]);
+    }
+}
+
+/// `Sfx_MeterFullEvent` 0x219258(this, rider): when `+0x6e3c == 0` and `*(rider+0x18)->+0x1c > 0.875`, call
+/// `Speech_OnMeterFull(this, *(rider+0x18))`; always returns `1`.
+pub fn sfx_meter_full_event(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32, rider: u32) -> u32 {
+    if m.r32(this + 0x6e3c) == 0 {
+        let score_obj = m.r32(rider + 0x18);
+        let meter = F(f32::from_bits(m.r32(score_obj + 0x1c))).ee();
+        if 0.875f32 < meter {
+            env.call(m, SPEECH_ON_METER_FULL, &[this, score_obj]);
+        }
+    }
+    1
+}
+
+/// `Audio_ListBankNames` 0x21a498(this, out_buf): copy `*(this+0x38dc)` 64-byte bank names from `+0x38e0` into
+/// `out_buf`, then format remaining entries up to `200` via `sprintf(dst, "Unused bank %d", i)`.
+pub fn audio_list_bank_names(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32, out_buf: u32) {
+    let mut n = m.r32(this + 0x38dc) as i32;
+    let mut i = 0i32;
+    while i < n {
+        libc::strcpy(
+            m,
+            out_buf.wrapping_add((i as u32) << 6),
+            this.wrapping_add(0x38e0 + ((i as u32) << 6)),
+        );
+        i += 1;
+        n = m.r32(this + 0x38dc) as i32;
+    }
+    let mut j = n;
+    while j < 0xc8 {
+        env.call(m, SPRINTF, &[out_buf.wrapping_add((j as u32) << 6), STR_UNUSED_BANK, j as u32]);
+        j += 1;
+    }
+}
+
+/// `cBXAudio::vf2_21bc60` 0x21bc60(): empty virtual stub.
+pub fn bx_audio_vf2() {}
+
+/// `Audio_LoadFEGlobalBankList` 0x21ce78(this, path, sp): open INI `path` with mode `0x10`, find `[GLOBAL]`, copy
+/// every string value into `this + 0x6e9c + idx * 0x40` (incrementing `this + 0x6e98`), and close the reader.
+pub fn audio_load_fe_global_bank_list(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32, path: u32, sp: u32) {
+    let reader = sp.wrapping_add(0x40);
+    env.call(m, INI_OPEN, &[reader, path, 0x10]);
+    if env.call(m, INI_FIND_SECTION, &[reader, STR_GLOBAL]) != 0 {
+        while env.call(m, INI_AT_SECTION_END, &[reader]) == 0 {
+            let tok = env.call(m, INI_READ_TOKEN, &[reader]);
+            env.call(m, INI_READ_STRING, &[reader, tok, sp]);
+            let idx = m.r32(this + 0x6e98);
+            m.w32(this + 0x6e98, idx.wrapping_add(1));
+            libc::strcpy(m, this.wrapping_add(0x6e9c + (idx << 6)), sp);
+        }
+    }
+    env.call(m, INI_CLOSE, &[reader, 2]);
+}
+
+fn audio_music_state_to_mode(state: u32) -> u32 {
+    match state {
+        0 | 1 => 3,
+        2 => 1,
+        3 => 4,
+        _ => 5,
+    }
+}
+
+/// `Audio_SetMusicState` 0x21d610(this, state, param): for state `4`, if `+0x7444 != 0`, fade music to `1.0` over
+/// `1.0s` in the mode mapped from the previous state (`Audio_MusicStateToMode` `0x20d9f0`) and clear `+0x7444`;
+/// otherwise record `param` at `+0x7440`; always store `state` at `+0x743c`.
+pub fn audio_set_music_state(m: &mut Mem, this: u32, state: u32, param: f32) {
+    if state == 4 {
+        if m.r32(this + 0x7444) != 0 {
+            let prev = m.r32(this + 0x743c);
+            let mode = audio_music_state_to_mode(prev);
+            audio_fade_music_to(m, this, mode, 1.0, 1.0);
+            m.w32(this + 0x7444, 0);
+        }
+        m.w32(this + 0x743c, state);
+    } else {
+        m.w32(this + 0x7440, param.to_bits());
+        m.w32(this + 0x743c, state);
+    }
+}
+
+/// `Audio_ScheduleWorldTriggersOn` 0x21e498(this): schedule callback `0x0021_e4c0_ffff_0000` in 250 ms via
+/// `SndSys_ScheduleEvent`.
+pub fn audio_schedule_world_triggers_on(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32) -> u32 {
+    env.call(
+        m,
+        SND_SYS_SCHEDULE_EVENT,
+        &[
+            this,
+            0xfa,
+            CB_WORLD_TRIGGERS_ON as u32,
+            (CB_WORLD_TRIGGERS_ON >> 32) as u32,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ],
+    )
+}
+
+/// `Audio_GetMusicFxThunk` 0x21e690(this): forward to `Audio_GetMusicFx` (`0x21e688`), returning `*(this+0x3844)`.
+pub fn audio_get_music_fx_thunk(m: &Mem, this: u32) -> u32 {
+    m.r32(this + 0x3844)
+}
