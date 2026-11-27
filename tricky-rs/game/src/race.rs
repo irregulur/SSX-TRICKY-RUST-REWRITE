@@ -646,7 +646,7 @@ impl Race {
         let mut lap_line = 0.0;
         let mut length = line.place.to_finish;
         if course == 8 {
-            if let Some((k, e)) = lines.lines.iter().enumerate().find_map(|(k, p)| p.events.iter().find(|e| e.0 == 0xd).map(|e| (k, *e))) {
+            if let Some((k, e)) = lines.lines.iter().enumerate().find_map(|(k, p)| p.find_event(0xd).map(|i| (k, p.events[i]))) {
                 lap_line = lines.to_finish[k] - e.2;
             }
             length += lines.to_finish[lines.main] * 3.0;

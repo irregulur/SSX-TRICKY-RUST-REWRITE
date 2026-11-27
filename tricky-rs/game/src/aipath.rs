@@ -170,6 +170,12 @@ impl Default for Cache {
     }
 }
 
+/// `AIPathSet_SortByDistance` 0x197f08(set, p, out, n): [`sort_by_distance`] of the set's AI paths, respawnable
+/// ones only
+pub fn sort_set_by_distance(paths: &[Path], p: V4, n: usize) -> Vec<usize> {
+    sort_by_distance(paths, p, n, true)
+}
+
 /// `AIP_SortLinesByDistance` 0x197f28: up to `n` paths by how far `p` is outside their boxes: first those it is
 /// inside, in order, then the nearest one at a time (the first on a tie); only respawnable ones if `respawnable`.
 pub fn sort_by_distance(paths: &[Path], p: V4, n: usize, respawnable: bool) -> Vec<usize> {
@@ -206,9 +212,16 @@ pub fn sort_by_distance(paths: &[Path], p: V4, n: usize, respawnable: bool) -> V
 }
 
 impl Path {
-    /// `cPath::vf1` 0x197b90 (vtable +0x14): a fork marker (event type 0x1f, file code 300) overlapping `from..to`.
+    /// `cPath::vf1` 0x197b90 (vtable +0x14): a fork marker (event type 0x1f, file code 300) overlapping `from..to`
+    /// (one neither starting after `to` nor ending before `from`).
     pub fn fork_between(&self, from: f32, to: f32) -> bool {
-        self.events.iter().any(|e| e.2 <= to && from <= e.3 && e.0 == 0x1f)
+        self.events.iter().any(|e| !(to < e.2) && !(e.3 < from) && e.0 == 0x1f)
+    }
+
+    /// `AIPath_FindEvent` 0x1977f0: the first event of type `kind` (its place in the event table), as its index
+    /// (`crate::aipathset::find_event` on the game's bytes)
+    pub fn find_event(&self, kind: u32) -> Option<usize> {
+        self.events.iter().position(|e| e.0 == kind)
     }
 }
 

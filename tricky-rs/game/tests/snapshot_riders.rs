@@ -26,7 +26,7 @@ impl Rng {
 
 const SEQ_SAVE: u32 = 0x01f3_0000;
 const SEQ_LOAD: u32 = 0x01f3_0010;
-const STAND_INS: [u32; 11] = [0x203b98, 0x198688, 0x1986d8, 0x203c20, 0x15a700, 0x1551c0, 0x260cb8, 0x159a80, 0x158dc0, 0x1125c8, 0x1163a0];
+const STAND_INS: [u32; 9] = [0x203b98, 0x203c20, 0x15a700, 0x1551c0, 0x260cb8, 0x159a80, 0x158dc0, 0x1125c8, 0x1163a0];
 const MORE: [u32; 2] = [0x115fe8, 0x260060];
 
 #[derive(Clone, Debug, PartialEq)]
@@ -41,7 +41,7 @@ struct World {
 
 fn n_args(f: u32) -> usize {
     match f {
-        0x198688 | 0x1986d8 | 0x1551c0 | 0x158dc0 | 0x1125c8 | 0x260060 => 2,
+        0x1551c0 | 0x158dc0 | 0x1125c8 | 0x260060 => 2,
         0x260cb8 => 4,
         SEQ_SAVE | SEQ_LOAD => 2,
         _ => 1,
@@ -52,8 +52,6 @@ fn n_args(f: u32) -> usize {
 fn answer(w: &mut World, m: &mut dyn FnMut(u32, u32), f: u32, a: &[u32]) -> u32 {
     match f {
         0x203b98 => a[0] % 7,
-        0x198688 => a[1] % 300,
-        0x1986d8 => (a[1] % 500).wrapping_neg(),
         0x260cb8 => a[1] ^ a[2] ^ a[3] ^ 0x5a5a,
         0x158dc0 => a[1] ^ 0x1234,
         0x15a700 => {
@@ -83,7 +81,7 @@ fn rider_and_ai_snapshots_are_the_original() {
     for a in [
         0x1533f8, 0x153450, 0x13a460, 0x13a4b8, 0x117d20, 0x117ec0, 0x15a3d8, 0x15a4b0, 0x203aa0, 0x203ac8, 0x112790, 0x1127e0, 0x1164c0,
         0x1164d8, 0x160058, 0x1600d0, 0x15a798, 0x15a818, 0x123f08, 0x123f30, 0x157980, 0x1579a8, 0x154480, 0x1544a8, 0x17d260, 0x17d2a0,
-        0x192c10, 0x192ca0, 0x2ce114, 0x2cc808,
+        0x192c10, 0x192ca0, 0x2ce114, 0x2cc808, 0x198688, 0x1986d8,
     ]
     .into_iter()
     .chain(sn::RIDER_PARTS.iter().flat_map(|_| []))
@@ -180,6 +178,19 @@ fn rider_and_ai_snapshots_are_the_original() {
         m.w32(vts + 0x24, SEQ_SAVE);
         m.w32(vts + 0x28, 0);
         m.w32(vts + 0x2c, SEQ_LOAD);
+        // the course's path set (0x337fb8): a few paths of each kind, the riders' paths among them or not
+        let set = 0x337fb8;
+        m.w32(set, g.below(6));
+        m.w32(set + 8, g.below(6));
+        for (rider, data) in [(src, data_s), (dst, data_d)] {
+            let _ = rider;
+            let k = g.below(8);
+            let ev = if g.below(5) == 0 { 0 } else { m.r32(set + 0xc).wrapping_add(0x3c * k) };
+            let k = g.below(8);
+            let ai = if g.below(5) == 0 { 0 } else { m.r32(set + 4).wrapping_add(0x40 * k) };
+            m.w32(data + 0x57a0, ev);
+            m.w32(data + 0x57a4, ai);
+        }
         // the riders: their boarder data, the animation layers' rings (empty or a sequence or two)
         for (rider, data) in [(src, data_s), (dst, data_d)] {
             m.w32(rider, data);

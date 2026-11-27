@@ -748,7 +748,8 @@ pub fn anim_ctl_load(m: &mut Mem, env: &mut dyn LoadEnv, p: u32, s: u32) {
 /// `Boarder_SaveSnapshot` 0x117d20(rider): the boarder data's (the rider's first word) 0x450 bytes at +0x10 tagged
 /// 0xdeadbef8, a 1 and a word the game never sets (STANDIN: 0 here), its animation (+0x46c0), air prediction
 /// (+0x57b0, 0x60 tagged 0xdeadbef9) and score (+0x5820, 0x24c tagged 0xdeadbf1f), the rider's motions and controls,
-/// then its AI path and line (+0x57a0 / +0x57a4) as indices (`AIP_GetPathIndex` / `AIP_GetLineIndex` on 0x337fb8)
+/// then its AI path and line (+0x57a0 / +0x57a4) as indices (`AIP_GetPathIndex` / `AIP_GetLineIndex` on 0x337fb8,
+/// `crate::aipathset`)
 pub fn boarder_save(m: &mut Mem, env: &mut dyn LoadEnv, rider: u32, s: u32) {
     let d = m.r32(rider);
     part_save(m, d + 0x10, 0x450, 0xdead_bef8, s);
@@ -766,8 +767,8 @@ pub fn boarder_save(m: &mut Mem, env: &mut dyn LoadEnv, rider: u32, s: u32) {
         }
     }
     let d = m.r32(rider);
-    let path = env.call(m, 0x198688, &[0x337fb8, m.r32(d + 0x57a0)]);
-    let line = env.call(m, 0x1986d8, &[0x337fb8, m.r32(d + 0x57a4)]);
+    let path = crate::aipathset::path_index(m, crate::aipathset::PATHS, m.r32(d + 0x57a0));
+    let line = crate::aipathset::line_index(m, crate::aipathset::PATHS, m.r32(d + 0x57a4));
     let b = [(path as u16).to_le_bytes(), (line as u16).to_le_bytes()].concat();
     crate::replaymgr::stream_write_bytes(m, s, &b);
 }

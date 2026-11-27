@@ -1492,3 +1492,25 @@ random values; 1,952 domain/singularity errors), checking both raw bits and `err
 - Checked in the runner: 3,000 random files (11,694 paths, 19,060 events, 2,665 paths with a repeated parameter,
   6,619 parameters shorter than a word, sections cut short, unknown kinds, main indices anywhere): the set and every
   record compared. 10 mutants of `tricky_data::aip`, all killed.
+
+## The path set's small functions (row E2p; `game/src/aipathset.rs`, `aipath.rs`, `tests/aipathset.rs`, proven)
+
+- The set (0x337fb8): +0 AI paths' count, +4 their 0x40-byte records, +8 event paths' count, +0xc their 0x3c-byte
+  records, +0x10 the main event path, +0x14 the start positions, +0x2c the loaded file.
+- `AIP_GetPathIndex` 0x198688(set, path) looks among the **event** paths (+8 / +0xc, 0x3c apart) and
+  `AIP_GetLineIndex` 0x1986d8 among the **AI** paths (+0 / +4, 0x40 apart), the names notwithstanding: the rider's
+  +0x57a0 (its race line) and +0x57a4 (its AI path) in `Boarder_SaveSnapshot`. −1 for 0 or no match (a count
+  read as signed). `snapshot::boarder_save` now uses them (they were run through the runner).
+- `AIPathSet_GetMainPath` 0x197ef0 (+0x10), `AIPathSet_GetPath` 0x197ef8(set, k) (+0x14 + 4k, unchecked k).
+- `AIPath_FindEvent` 0x1977f0(path, kind): the first event (+4, 16 bytes each, +0 their count) whose type (its place
+  in the event table) is `kind`, or 0; `aipath::Path::find_event` (used by `race.rs` for the lap event 0xd).
+- `AIPath_Free` 0x197e90(set) (from `Course_Unload`): `Mem_Free` 0x14a040 on +4, +0xc, +0x2c when not 0, each
+  cleared; the counts stay.
+- `cPath::vf1` 0x197b90(path, from f12, to f13): an event of type 0x1f with neither `to < start` nor `end < from`
+  (`Path::fork_between`, now written that way: the same for numbers, it matters only for NaN).
+  `cPath::vf2` 0x197ce8 / `vf3` 0x197ce0 are empty.
+- `AIPathSet_SortByDistance` 0x197f08 is `AIP_SortLinesByDistance` with respawnable = 1 (t0):
+  `aipath::sort_set_by_distance`.
+- Checked in the runner: 20,000 random sets (counts negative too, record pointers 0, events touching the range's
+  ends exactly), answers, memory and the frees compared; `tests/snapshot_riders.rs` now runs the original two
+  index functions on a set with a few paths. 16 mutants, all killed.

@@ -2284,28 +2284,28 @@ address,size,name,system,status
 0x197250,548,AIP_ProjectOntoPath,ai,checked
 0x197478,700,AIP_ProjectOntoPathFrom,ai,checked
 0x197738,104,AIP_GetDirectionAtDistance,ai,checked
-0x1977f0,64,AIPath_FindEvent,ai,ported
+0x1977f0,64,AIPath_FindEvent,ai,checked
 0x197830,224,AIP_DistanceToLineBox,ai,checked
 0x197910,232,cPath::vf0_197910,ai,checked
 0x1979f8,340,AIP_GetPositionAtDistance,ai,checked
 0x197b50,64,AIP_GetPathLength,ai,checked
-0x197b90,112,cPath::vf1_197b90,ai,ported
-0x197ce0,8,cPath::vf3_197ce0,ai,not started
-0x197ce8,8,cPath::vf2_197ce8,ai,not started
+0x197b90,112,cPath::vf1_197b90,ai,checked
+0x197ce0,8,cPath::vf3_197ce0,ai,checked
+0x197ce8,8,cPath::vf2_197ce8,ai,checked
 0x197d30,64,cPath::__tf,runtime,host
 0x197d70,44,Vec4_ScaleCopy22,common,checked
 0x197da0,236,AIP_LoadPathsFromFile,files,checked
-0x197e90,96,AIPath_Free,ai,not started
+0x197e90,96,AIPath_Free,ai,checked
 0x197ef0,8,AIPathSet_GetMainPath,ai,checked
-0x197ef8,16,AIPathSet_GetPath,ai,not started
-0x197f08,28,AIPathSet_SortByDistance,ai,not started
+0x197ef8,16,AIPathSet_GetPath,ai,checked
+0x197f08,28,AIPathSet_SortByDistance,ai,checked
 0x197f28,484,AIP_SortLinesByDistance,ai,checked
 0x198110,448,AIP_FindNearestLines,ai,checked
 0x1982d0,256,AIPathSet_FindRaceLineAt,ai,checked
 0x1983d0,324,AIP_LoadEventPaths,files,checked
 0x198518,364,AIP_LoadAIPaths,files,checked
-0x198688,76,AIP_GetPathIndex,ai,ported
-0x1986d8,72,AIP_GetLineIndex,ai,ported
+0x198688,76,AIP_GetPathIndex,ai,checked
+0x1986d8,72,AIP_GetLineIndex,ai,checked
 0x198720,24,Vec3_Assign,common,checked
 0x198738,24,Mem_Copy4,common,checked
 0x198750,24,Float_Assign,common,checked
