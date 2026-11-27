@@ -299,6 +299,28 @@ block has +0xc the count and from +0x10 the strings' offsets; strings are 16-bit
   `kOvCombo` 0xe41, `kOVInvalidCard` 0x16e, ...). Use it to read which text a `Loc_GetString` call asks for.
 - `LETTER.LOC`: the English text with a few strings changed (a variant, unused).
 
+### The block manager (row E2s; `tricky_game::mempool`, checked: `tests/mempool.rs`)
+
+Proven (from the disassembly; Ghidra was not running):
+
+- `BlockMan_Init` 0x23d160(man, n, classes): one `EAMem_Alloc` (name "BlockManMem" 0x3a4258, flags 0) of the
+  class table (16 bytes a class) plus every class's count × (size rounded up to 16, signed, + 0x10 header),
+  filled with 0xdeadc0ed; the classes laid out in table order, each class's blocks chained (+4) into its free
+  list in address order. The manager: +0 the allocation, +4 its size, +8 the table, +0xc the count. The game's
+  (0x345e48, from 0x3a8d78): 10 × 0x80, 10 × 0x200, 200 × 0x400, 32 × 0x800.
+- `MemPool_Alloc` 0x23d3b0(man, size, flags, name, w2, w3): the first class whose block size ≥ size (unsigned)
+  with a free block; the header gets the class and the three words; returns header + 0x10 or 0. The flags are
+  not read. `MemPool_Free` 0x23d420 puts the block back at the head of its class's list.
+- `Mem_Free` 0x14a040 = `Mem_Delete` 0x114f80: to the block manager when 0 < p − its allocation < its size
+  (signed), else `EAMem_Free`. `Pool_Destroy` 0x23d368: `Mem_Free` of the allocation (so the heap), four words
+  cleared. `Object_Delete` 0x23d738: the vtable's entry 1 (this-adjust half +8, function +0xc) with 3.
+  `Debug_Printf` 0x23d5d0 does nothing. `Rand_SeedFx` / `Rand_SeedGame` jump to `Rand_Seed` on 0x345e58 / 0x345e70.
+- Quirks kept: a class of 0 blocks points its free list at the next class's first block; a size that rounds to
+  0 or below gives blocks whose data is the next block. The game's table has neither; the test keeps clear.
+- Checked in the runner: 1,000 managers over our heap, 150 steps each (33,329 blocks taken, 41,604 asks with
+  none, frees through all three entries, 12,103 to the heap, object deletes), destroy, seeders; memory and
+  answers equal. 14 mutants: 13 killed, 1 equivalent (the signed rounding on positive sizes).
+
 ### The trick book's functions checked (row E12h; `tricky_game::career`, `tests/trickbook.rs`)
 
 - `TrickBook_IsTrickDone` 0x164258 (book +8 forced or +4 done, bit t & 31), `TrickBook_TricksPerPage` 0x164108

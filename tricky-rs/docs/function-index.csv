@@ -206,7 +206,7 @@ address,size,name,system,status
 0x114f28,8,cReplayEndRaceHandler::Exit,game,checked
 0x114f30,64,cAIStateHandler::__tf,runtime,host
 0x114f70,16,Career_StoreCircuitAttitudes,race,checked
-0x114f80,60,Mem_Delete,common,ported
+0x114f80,60,Mem_Delete,common,checked
 0x114fc0,116,cAIState::__tf,runtime,host
 0x115038,8,cReplayEndRaceHandler::Update,game,checked
 0x115040,8,cReplayEndRaceHandler::Enter,game,checked
@@ -897,7 +897,7 @@ address,size,name,system,status
 0x149e48,52,cRollerNode::Kill,world,not started
 0x149e80,100,cRollerNode::__tf,runtime,host
 0x149fd8,44,Vec4_ScaleCopy16,common,checked
-0x14a040,60,Mem_Free,common,ported
+0x14a040,60,Mem_Free,common,checked
 0x14a0c0,80,cRigidBody::__tf,runtime,host
 0x14a110,116,cRollerNodeState::__tf,runtime,host
 0x14a188,116,cTimerNodeState::__tf,runtime,host
@@ -4304,24 +4304,24 @@ address,size,name,system,status
 0x23cff0,80,cMemoryBigFile::__tf,runtime,host
 0x23d080,8,cAsyncBigFile::vf5_23d080,files,checked
 0x23d088,64,cAsyncBigFile::__tf,runtime,host
-0x23d160,520,BlockMan_Init,common,ported
-0x23d368,68,Pool_Destroy,common,ported
-0x23d3b0,108,MemPool_Alloc,common,ported
-0x23d420,36,MemPool_Free,common,ported
-0x23d498,16,Rand_SeedFx,common,ported
+0x23d160,520,BlockMan_Init,common,checked
+0x23d368,68,Pool_Destroy,common,checked
+0x23d3b0,108,MemPool_Alloc,common,checked
+0x23d420,36,MemPool_Free,common,checked
+0x23d498,16,Rand_SeedFx,common,checked
 0x23d4a8,32,Rand_Fx,common,checked
-0x23d4c8,16,Rand_SeedGame,common,ported
+0x23d4c8,16,Rand_SeedGame,common,checked
 0x23d4d8,32,Rand_Game,common,checked
 0x23d4f8,100,Rand_GameRange,common,checked
 0x23d560,76,Rand_GameJitter,common,checked
 0x23d5b0,16,Rand_SaveGameSnapshot,common,checked
 0x23d5c0,16,Rand_LoadGameSnapshot,common,checked
-0x23d5d0,40,Debug_Printf,common,ported
+0x23d5d0,40,Debug_Printf,common,checked
 0x23d5f8,44,StaticInit_MemCard,save,not started
 0x23d628,84,MemCard_AsciiToSjis,save,checked
 0x23d680,88,MemCard_SjisToAscii,save,checked
 0x23d6e0,84,MemCard_Create,save,ported
-0x23d738,52,Object_Delete,common,ported
+0x23d738,52,Object_Delete,common,checked
 0x23d770,248,Ascii_ToSjis,save,checked
 0x23d868,160,Sjis_ToAscii,save,checked
 0x23d908,52,cPS2MemCard::cPS2MemCard,save,checked
