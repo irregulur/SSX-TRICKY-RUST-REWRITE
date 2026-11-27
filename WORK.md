@@ -32,6 +32,7 @@ state machine and the renderer are ours. Nothing has been checked against the or
 | ID | Task | Area | Needs | Who | Notes |
 |---|---|---|---|---|---|
 | E1 | Start-up and main loop: `entry` 0x100008, the `gApp` (0x337C58) init, `cGame::Init` 0x17E148, `cGame::Update` 0x181638, game modes and the front end ↔ race switch, pause (`cGame::IsPaused` 0x17F078) | unowned | F1 | | [est] Our Bevy app loop is the stand-in |
+| E1l | Split of E1: the last 3 `not started` `common` functions (`Quat_RotateByVecToVec` 0x250728, `Vu0_CopyOutData` 0x257708, `Vu0_GetVi1` 0x257780) and the last 1 `not started` `replay` function (`Huff_CreateHeader` 0x241bb8), checked in the runner | any | F4a | irregulur/neon (2026-11-27) | Split of E1 |
 | E1b | Random numbers: the game's `rand` and seeding, used by AI tricks, grabs, announcer, so runs can match the original | unowned | F1 | | [est] Split: E1b1, E1b2 |
 | E1b2 | Replace the xorshift stand-ins (`race.rs`, `props.rs`, `intro.rs`) with the game's streams at the game's call sites, in the game's order | unowned | E1b1 | | Split of E1b; split into E1b2a to E1b2d |
 | E1b2g7d | The rest of the race-line hooks in the app (`race::Hooks` in `game/src/race.rs`): speech (`Speech_OnCheckpoint` 0x233ee0, place and local lines), the cheer, the event sounds (`FUN_0021c0a0`, 0xe/0x17/0x18 `Audio_QueueEventSound` 0x21d0b0), `Boarder_Finish`'s `HUD_ShowItem` 7, and the places (+0x110) from the ported `placing::update` 0x115100 in place of the STANDIN `Race::places` | any | E1b2g7b | | Gap of E1b2g7b; split into E1b2g7d1 to E1b2g7d5 |
@@ -1942,3 +1943,4 @@ matches the original.
 - 2026-11-27 irregulur/neon: E1j done (ported and runner-checked `Trick_GetInfo` 0x154638, `cTrickInfo::vf2_154688` 0x154688, `TrickInfo_BuildText` 0x1546c8, `cGameTrickInfo::vf5_154b18` 0x154b18, `cGameTrickInfo::cGameTrickInfo` 0x154d20, `cGameTrickInfo::vf3_154d60` 0x154d60, `cGameTrickInfo::vf4_154e20` 0x154e20, `cGameTrickInfo::~cGameTrickInfo` 0x155058 in `lesson_draw.rs` / `tests/trick_info.rs`).
 - 2026-11-27 irregulur/neon: added and claimed E8u (split of E8).
 - 2026-11-27 irregulur/neon: E8u done (ported and runner-checked the last 7 `wipeout` functions `0x10ebc8`, `0x10ebd0`, `0x235fc8`, `0x236000`, `0x236128`, `0x236130`, `0x236758` in `collbody.rs`/`ragdoll.rs`/`tests/wipeout_rest.rs`; `wipeout` now at 0 `not started`).
+- 2026-11-27 irregulur/neon: added and claimed E1l (split of E1).
