@@ -6180,18 +6180,18 @@ address,size,name,system,status
 0x2c266c,40,Shape_GetEntry,lib-shape,ported
 0x2c2694,64,Shape_GetEntryName,lib-shape,not started
 0x2c26d8,240,Shape_PixelFormatIndex,lib-shape,ported
-0x2c27c8,948,Compress_Decode18Block,lib-compress,ported
-0x2c2bb8,60,Compress_IsType18,lib-compress,ported
-0x2c2bf8,288,Compress_Decode18Rows,lib-compress,ported
-0x2c2d18,196,Compress_Decode18,lib-compress,ported
+0x2c27c8,948,Compress_Decode18Block,lib-compress,checked
+0x2c2bb8,60,Compress_IsType18,lib-compress,checked
+0x2c2bf8,288,Compress_Decode18Rows,lib-compress,checked
+0x2c2d18,196,Compress_Decode18,lib-compress,checked
 0x2c2de0,432,Compress_Decode,lib-compress,checked
-0x2c2f90,28,Compress_DecodeApi,lib-compress,ported
-0x2c2fb0,476,Compress_UnpackedSize,lib-compress,ported
-0x2c3190,28,Compress_UnpackedSizeApi,lib-compress,ported
-0x2c31b0,804,RefPack_Decode,lib-compress,ported
-0x2c34d8,104,BTree_EmitSymbol,lib-compress,ported
-0x2c3540,492,BTree_Decode,lib-compress,ported
-0x2c3730,3396,Huff_Decode,lib-compress,ported
+0x2c2f90,28,Compress_DecodeApi,lib-compress,checked
+0x2c2fb0,476,Compress_UnpackedSize,lib-compress,checked
+0x2c3190,28,Compress_UnpackedSizeApi,lib-compress,checked
+0x2c31b0,804,RefPack_Decode,lib-compress,checked
+0x2c34d8,104,BTree_EmitSymbol,lib-compress,checked
+0x2c3540,492,BTree_Decode,lib-compress,checked
+0x2c3730,3396,Huff_Decode,lib-compress,checked
 0x2c4478,96,Fmt_WriteDigits,lib-text,not started
 0x2c44d8,44,Fmt_WriteAbsDigits,lib-text,not started
 0x2c4508,216,Fmt_WriteFixed,lib-text,not started

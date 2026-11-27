@@ -166,6 +166,20 @@ Proven (ported in `tricky-data/src/compress.rs`):
 
 Checked: all 793 entries of the character archives unpack to the same bytes as `tools/afl/refpack.py`.
 
+Checked in the runner (row E2q, `tricky-game/tests/refpack.rs`):
+
+- `RefPack_Decode` through `Compress_DecodeApi` 0x2c2f90 → `Compress_Decode`: 4,000 streams written by the test
+  (0x10fb, 0x11fb, 0x90fb, 0x91fb; every command with 0–3 literals, the longest copies, offsets up to 0x20000,
+  copies overlapping what they write, every literal run, every end; 329 streams past 128 KiB, 176 MB in all).
+  Same bytes, nothing written past the end, same answer (the size field).
+- `Compress_UnpackedSizeApi` 0x2c3190 → `Compress_UnpackedSize`: on those streams and on 20,000 headers of every
+  type byte, with and without 0xfb. Proven there: 0x1c and 0x9c, which `Compress_Decode` does decode, have no size
+  (0), so the loader takes such a file as not packed; 0x1e / 0x9e have one only when the registered codec is set
+  (never).
+- `Compress_Decode` on every type it does not take (and every mark other than 0xfb): 0, nothing written.
+- The two wrappers are plain calls (`jal`, nothing else).
+- 19 hand mutants of `refpack_decode`, `unpacked_size` and `decode`'s dispatch: all killed.
+
 ## Character and board models, `.mpf` (rows E4a, E4d)
 
 Proven (loader, renderers, and VU1 chain `0x318080`; see also `notes/characters.md`, verified by
