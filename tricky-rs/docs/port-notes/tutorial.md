@@ -197,6 +197,32 @@ the pad config between two stand-ins that write nothing).
 - `Lesson_DrawMenu` 0x14d5e0(lm, flag) calls `Overlay_DrawMenuList` with ten arguments (the last two, `flag` and
   lm+0x84, on the stack). `Lesson_GetString` 0x14ed88(lm, id) is `Loc_GetString(id)`.
 - `cTrickInfo` vf1/vf3/vf5 do nothing, vf4 answers 0.0, its destructor sets the table 0x36fad0 at +0x24.
+- `cGameTrickInfo` and `Trick_GetInfo` (row E1j, proven, `tricky_game::lesson_draw`, checked in
+  `tests/trick_info.rs`: 6,780 cases across all 8 functions, including 720 populated-table cases run against
+  real ELF `EAMem_Set` and `sprintf`/`vfprintf` in regular and goofy stance, and 500 custom + 500 real-vtable
+  `vf5` draw cases verifying icon, `'('`/`')'`, `'+'`, space, and text branches):
+  - `Trick_GetInfo` 0x154638(`rider`, `trick`) returns `0x31e210 + rider * 0x348 + trick * 0x1c`.
+  - `cTrickInfo::vf2_154688` 0x154688(`info`, `pad_cfg`, `rider`, `trick`) stores `rider` (+0x8) and `trick`
+    (+0xc), dispatches virtual `vf4` (+0x28/+0x2c) with `(info + adj, pad_cfg)`, and stores the width float at +0x10.
+  - `TrickInfo_BuildText` 0x1546c8(`pad_cfg`, `out`, `entry`) zeroes `out[..0x30]` (`EAMem_Set`), negates the
+    spin count (`entry+0xa`) if the player in `race+0x8c` (`0..race+0x7c`) whose `+0x870 == pad_cfg` has
+    `boarder+0x464 -> +0x40 != 0` (goofy), then formats spin (`a`/`d` + `180*n`), flip (`+` if original spin
+    non-zero, `x`/`w` + `360*n`), rail (`" RAIL"` and `" %d"` for `((entry+0x4 >> 4) & 0xf) * 180`), `' '`,
+    grab 1 (`entry+0x14 != 0x1a` -> `pad_cfg + 0x1cc + 4*g` unless `-1`, mapped via the 12 `(mask, ch)` entries
+    at `0x31e090`), tweak 1 (`entry+0x10 != 0` -> `"+"` + `pad_cfg+0x24c` bits wrapped as `(aORb)` when 2+),
+    grab 2 (`entry+0x18 != 0x1a` -> `" TO "` + mask), and tweak 2 (`entry+0x12 != 0`).
+  - `cGameTrickInfo::cGameTrickInfo` 0x154d20 sets vtable `0x36fa98` (+0x24), defaults `+0x14 = 240.0`,
+    `+0x18 = 20.0`, `+0x20 = 1.0`, clears `+0x0`/`+0x4`; `cGameTrickInfo::~cGameTrickInfo` 0x155058 sets
+    vtable `0x36fa98` and tail-calls `cTrickInfo::~cTrickInfo` 0x1550f8.
+  - `cGameTrickInfo::vf3_154d60` 0x154d60(`info`, `x_ptr`, `idx`; `y`) draws icon `idx` from the 12 `0x18`-byte
+    records at `0x31e0f0` (`char`, `1.0`, `dx`, `dy`, `advance`, `sprite_id`) via `SpriteSet_GetRect` 0x1f9e50 +
+    `Sprite_DrawRectScaled` 0x14eed0 at `(*x_ptr + dx, y + dy)` and adds `advance` to `*x_ptr`.
+  - `cGameTrickInfo::vf4_154e20` 0x154e20(`info`, `pad_cfg`) builds the prompt into `sp - 0x80` and sums icon
+    advances (`0x31e0f0 + 0x10`), `8.0` for `' '`, and `font+0x18 * Font_GetGlyphWidth(font, ch) * info+0x20 + 1.0`.
+  - `cGameTrickInfo::vf5_154b18` 0x154b18(`info`, `pad_cfg`; `x`, `y`) calls virtual `vf1` (+0x10/+0x14), sets
+    `cur_x = x - info+0x10 * 0.5` at `sp - 0x70`, builds the prompt into `sp - 0xb0`, and draws icons via `vf3`
+    (+0x20/+0x24), spaces as `+8.0`, and text characters via `Font_PrintfShadowed` 0x19d3f0 (y offset `-1.0` for
+    `'('`/`')'`, `-2.0` for `'+'`, `0.0` else) + `Font_GetGlyphWidth` 0x19d9e0.
 - `cLessonOverlay::Draw` 0x1b8548(ov) is `DrawPage(race+0x34, ov)` (the overlay is the font set);
   `cLessonControllerOverlay::Draw` 0x1b8560 does nothing. Both in the same test.
 

@@ -8,6 +8,7 @@
 //! `sp`, the stack pointer on entry, and lays its buffers out in the original's frame below it (so a caller's `sp`
 //! for a page is the page's caller's less that caller's frame). Floats are the PS2's ([`F`]).
 
+use crate::animseq::cvt_s_w;
 use crate::pf::Mem;
 use crate::ps2f::F;
 use crate::textbox::TextBoxEnv;
@@ -64,14 +65,33 @@ pub const DIALOG_DRAW: u32 = 0x1aa268;
 pub const MENU_LIST: u32 = 0x1aa630;
 pub const HUD_SPRITE: u32 = 0x1c0068;
 pub const SPRITE_RECT: u32 = 0x1f9e50;
+pub const FONT_PRINTF_SHADOWED: u32 = 0x19d3f0;
+pub const FONT_GLYPH_WIDTH: u32 = 0x19d9e0;
+pub const MEM_SET: u32 = 0x2cc808;
 pub const LOC_STRING: u32 = 0x2c5160;
+pub const SPRINTF: u32 = 0x2fca28;
 pub const STRCMP: u32 = 0x2fd008;
 pub const STRCPY: u32 = 0x2fd14c;
 pub const STRLEN: u32 = 0x2fd260;
 pub const MEM_DELETE: u32 = 0x114f80;
 
+/// `cGameTrickInfo`'s table (0x36fa98), written by its constructor and destructor at +0x24
+pub const GAME_TRICK_INFO_VT: u32 = 0x36fa98;
 /// `cTrickInfo`'s table (0x36fad0), set back by its destructor at +0x24
 pub const TRICK_INFO_VT: u32 = 0x36fad0;
+/// The trick book table (`DAT_0031e210`): 12 riders × 30 tricks × `0x1c` bytes
+pub const TRICK_TABLE: u32 = 0x31e210;
+/// `TrickInfo_BuildText`'s 12 button-mask → glyph-char entries (`0x31e090`, 8 bytes each)
+pub const TRICK_BUTTONS: u32 = 0x31e090;
+/// `cGameTrickInfo`'s 12 icon-glyph records (`0x31e0f0`, `0x18` bytes each: char, 1.0, dx, dy, advance, sprite)
+pub const TRICK_ICONS: u32 = 0x31e0f0;
+/// Format strings used by `TrickInfo_BuildText`
+pub const FMT_INT: u32 = 0x36fa50;
+pub const FMT_RAIL: u32 = 0x36fa70;
+pub const FMT_SPACE_INT: u32 = 0x36fa78;
+pub const FMT_PLUS: u32 = 0x36fa80;
+pub const FMT_OR: u32 = 0x36fa88;
+pub const FMT_TO: u32 = 0x36fa90;
 
 /// The pad picture's buttons (0x31df88, 16 bytes each): x and y from the picture's corner, the sprite, the
 /// buttons' bits that light it
@@ -575,6 +595,316 @@ pub fn draw_menu(m: &mut Mem, e: &mut dyn TextBoxEnv, lm: u32, flag: u32) {
 /// `Lesson_GetString` 0x14ed88(lm, id): the localiser's string `id` (`lm` unused)
 pub fn get_string(m: &mut Mem, e: &mut dyn TextBoxEnv, id: u32) -> u32 {
     loc(m, e, id)
+}
+
+/// `Trick_GetInfo` 0x154638(rider, trick): pointer to the trick's `0x1c`-byte record in `DAT_0031e210`
+/// (`rider * 0x348 + trick * 0x1c`)
+pub fn trick_get_info(rider: u32, trick: u32) -> u32 {
+    TRICK_TABLE
+        .wrapping_add(rider.wrapping_mul(0x348))
+        .wrapping_add(trick.wrapping_mul(0x1c))
+}
+
+/// `cTrickInfo::vf2_154688` 0x154688(info, pad_cfg, rider, trick): records `rider` (+0x8) and `trick` (+0xc),
+/// then calls virtual `vf4` (+0x28/+0x2c, measuring width on `pad_cfg`) and stores the returned float bits at +0x10
+pub fn trick_info_set_trick(
+    m: &mut Mem,
+    e: &mut dyn TextBoxEnv,
+    info: u32,
+    pad_cfg: u32,
+    rider: u32,
+    trick: u32,
+) {
+    m.w32(info + 0x8, rider);
+    m.w32(info + 0xc, trick);
+    let vt = m.r32(info + 0x24);
+    let adj = m.r16(vt + 0x28) as i16 as u32;
+    let func = m.r32(vt + 0x2c);
+    let w = call(m, e, func, &[info.wrapping_add(adj), pad_cfg], &[]);
+    m.w32(info + 0x10, w);
+}
+
+fn append_button_mask(m: &mut Mem, out: u32, pos: &mut u32, mask: u32) {
+    for k in 0..12u32 {
+        let rec = TRICK_BUTTONS + 8 * k;
+        if mask & m.r32(rec) != 0 {
+            m.w8(out.wrapping_add(*pos), m.r8(rec + 4));
+            *pos = pos.wrapping_add(1);
+        }
+    }
+}
+
+fn append_tweak(m: &mut Mem, e: &mut dyn TextBoxEnv, pad_cfg: u32, out: u32, pos: &mut u32) {
+    let n = call(m, e, SPRINTF, &[out.wrapping_add(*pos), FMT_PLUS], &[]);
+    *pos = pos.wrapping_add(n);
+    let mask = m.r32(pad_cfg + 0x24c);
+    let mut count = 0i32;
+    for k in 0..12u32 {
+        let rec = TRICK_BUTTONS + 8 * k;
+        if mask & m.r32(rec) != 0 {
+            let was_one = count == 1;
+            count += 1;
+            if was_one {
+                let p = out.wrapping_add(*pos);
+                let prev = m.r8(p.wrapping_sub(1));
+                m.w8(p.wrapping_sub(1), b'(');
+                m.w8(p, prev);
+                *pos = pos.wrapping_add(1);
+            }
+            if count != 1 {
+                let n = call(m, e, SPRINTF, &[out.wrapping_add(*pos), FMT_OR], &[]);
+                *pos = pos.wrapping_add(n);
+            }
+            m.w8(out.wrapping_add(*pos), m.r8(rec + 4));
+            *pos = pos.wrapping_add(1);
+        }
+    }
+    if count >= 2 {
+        m.w8(out.wrapping_add(*pos), b')');
+        *pos = pos.wrapping_add(1);
+    }
+}
+
+/// `TrickInfo_BuildText` 0x1546c8(pad_cfg, out, entry): builds the 48-byte glyph/text prompt for a trick
+/// record (`0x1c` bytes from `DAT_0031e210`): clears `out[..0x30]`, flips spin direction if the player matching
+/// `pad_cfg` in `race+0x8c` is goofy (`boarder+0x464` -> `+0x40 != 0`), appends spin (`a`/`d` + `180*n`), flip
+/// (`+` if spin, `x`/`w` + `360*n`), rail (`" RAIL"` and `" %d"` for `(flags >> 4) & 0xf`), `' '`, grab 1
+/// buttons, tweak 1 (`+b` or `+(b1ORb2)`), grab 2 (`" TO "` + buttons), and tweak 2
+pub fn trick_info_build_text(m: &mut Mem, e: &mut dyn TextBoxEnv, pad_cfg: u32, out: u32, entry: u32) {
+    call(m, e, MEM_SET, &[out, 0, 0x30], &[]);
+    let mut pos = 0u32;
+    let mut spin = m.r16(entry + 0xa) as i16 as i32;
+    let race = m.r32(m.r32(m.r32(APP) + 0x730) + 0x1c);
+    let n_players = m.r32(race + 0x7c) as i32;
+    if n_players > 0 {
+        for i in 0..n_players as u32 {
+            let player = m.r32(race + 0x8c + 4 * i);
+            if m.r32(player + 0x870) == pad_cfg {
+                let boarder = m.r32(player);
+                let goofy = m.r32(m.r32(boarder + 0x464) + 0x40);
+                if goofy != 0 {
+                    spin = spin.wrapping_neg();
+                }
+                break;
+            }
+        }
+    }
+    if spin != 0 {
+        let deg = if spin < 0 {
+            m.w8(out, b'a');
+            (spin.wrapping_neg() as u32).wrapping_mul(0xb4)
+        } else {
+            m.w8(out, b'd');
+            (spin as u32).wrapping_mul(0xb4)
+        };
+        let n = call(m, e, SPRINTF, &[out.wrapping_add(1), FMT_INT, deg], &[]);
+        pos = n.wrapping_add(1);
+    }
+    if m.r16(entry + 0x8) as i16 != 0 {
+        if m.r16(entry + 0xa) as i16 != 0 {
+            m.w8(out.wrapping_add(pos), b'+');
+            pos = pos.wrapping_add(1);
+        }
+        let flip = m.r16(entry + 0x8) as i16 as i32;
+        let deg = if flip < 0 {
+            m.w8(out.wrapping_add(pos), b'x');
+            pos = pos.wrapping_add(1);
+            (flip.wrapping_neg() as u32).wrapping_mul(0x168)
+        } else {
+            m.w8(out.wrapping_add(pos), b'w');
+            pos = pos.wrapping_add(1);
+            (flip as u32).wrapping_mul(0x168)
+        };
+        let n = call(m, e, SPRINTF, &[out.wrapping_add(pos), FMT_INT, deg], &[]);
+        pos = pos.wrapping_add(n);
+    }
+    if m.r16(entry + 0xc) as i16 != 0 {
+        let n = call(m, e, SPRINTF, &[out.wrapping_add(pos), FMT_RAIL], &[]);
+        pos = pos.wrapping_add(n);
+        let flags = m.r32(entry + 0x4);
+        if flags & 0xf0 != 0 {
+            let deg = ((flags >> 4) & 0xf).wrapping_mul(0xb4);
+            let n = call(m, e, SPRINTF, &[out.wrapping_add(pos), FMT_SPACE_INT, deg], &[]);
+            pos = pos.wrapping_add(n);
+        }
+    }
+    m.w8(out.wrapping_add(pos), b' ');
+    pos = pos.wrapping_add(1);
+    let grab1 = m.r32(entry + 0x14);
+    if grab1 != 0x1a {
+        let mask = m.r32(pad_cfg.wrapping_add(grab1.wrapping_mul(4)).wrapping_add(0x1cc));
+        if mask != u32::MAX {
+            append_button_mask(m, out, &mut pos, mask);
+        }
+    }
+    if m.r16(entry + 0x10) as i16 != 0 {
+        append_tweak(m, e, pad_cfg, out, &mut pos);
+    }
+    let grab2 = m.r32(entry + 0x18);
+    if grab2 != 0x1a {
+        let n = call(m, e, SPRINTF, &[out.wrapping_add(pos), FMT_TO], &[]);
+        pos = pos.wrapping_add(n);
+        let grab2 = m.r32(entry + 0x18);
+        let mask = m.r32(pad_cfg.wrapping_add(grab2.wrapping_mul(4)).wrapping_add(0x1cc));
+        if mask != u32::MAX {
+            append_button_mask(m, out, &mut pos, mask);
+        }
+    }
+    if m.r16(entry + 0x12) as i16 != 0 {
+        append_tweak(m, e, pad_cfg, out, &mut pos);
+    }
+}
+
+/// `cGameTrickInfo::cGameTrickInfo` 0x154d20(info): writes vtable `0x36fa98` (+0x24), defaults `+0x14 = 240.0`,
+/// `+0x18 = 20.0`, `+0x20 = 1.0`, zeroes `+0x0` and `+0x4`, returns `info`
+pub fn game_trick_info_construct(m: &mut Mem, info: u32) -> u32 {
+    m.w32(info + 0x24, GAME_TRICK_INFO_VT);
+    m.w32(info + 0x14, 0x4370_0000);
+    m.w32(info + 0x18, 0x41a0_0000);
+    m.w32(info + 0x20, 0x3f80_0000);
+    m.w32(info, 0);
+    m.w32(info + 0x4, 0);
+    info
+}
+
+/// `cGameTrickInfo::~cGameTrickInfo` 0x155058(info, how): sets vtable `0x36fa98` at +0x24 and tail-calls
+/// `cTrickInfo::~cTrickInfo` 0x1550f8
+pub fn game_trick_info_destruct(m: &mut Mem, e: &mut dyn TextBoxEnv, info: u32, how: u32) {
+    m.w32(info + 0x24, GAME_TRICK_INFO_VT);
+    trick_info_destruct(m, e, info, how);
+}
+
+/// `cGameTrickInfo::vf3_154d60` 0x154d60(info, x_ptr, idx; y): draws icon `idx` from `0x31e0f0` (`0x18` bytes
+/// each: +8 dx, +0xc dy, +0x10 advance, +0x14 sprite id) at `(*x_ptr + dx, y + dy)` and adds `advance` to `*x_ptr`
+pub fn game_trick_info_draw_icon(m: &mut Mem, e: &mut dyn TextBoxEnv, _info: u32, x_ptr: u32, idx: u32, y: F) {
+    let rec = TRICK_ICONS.wrapping_add(idx.wrapping_mul(0x18));
+    let dy = cvt_s_w(m.r32(rec + 0xc) as i32);
+    let dx = cvt_s_w(m.r32(rec + 0x8) as i32);
+    let set = m.r32(m.r32(APP) + 0x728);
+    let sprite = m.r32(rec + 0x14);
+    let py = y + dy;
+    let rect = call(m, e, SPRITE_RECT, &[set, sprite], &[]);
+    let px = rf(m, x_ptr) + dx;
+    let one = k(0x3f800000);
+    call(m, e, SPRITE_DRAW, &[rect, 0], &[px, py, one, one]);
+    let adv = cvt_s_w(m.r32(rec + 0x10) as i32);
+    wf(m, x_ptr, rf(m, x_ptr) + adv);
+}
+
+/// `cGameTrickInfo::vf4_154e20` 0x154e20(info, pad_cfg): builds the prompt text into its `0x80`-byte stack
+/// frame (`sp - 0x80`) and sums widths: icon advance from `0x31e0f0`, `8.0` for `' '`, or
+/// `font+0x18 * Font_GetGlyphWidth(font, ch) * info+0x20 + 1.0`
+pub fn game_trick_info_measure(m: &mut Mem, e: &mut dyn TextBoxEnv, info: u32, pad_cfg: u32, sp: u32) -> F {
+    let frame = sp - 0x80;
+    let mut total = F(0.0);
+    let entry = trick_get_info(m.r32(info + 0x8), m.r32(info + 0xc));
+    trick_info_build_text(m, e, pad_cfg, frame, entry);
+    let mut p = frame;
+    loop {
+        let ch = m.r8(p);
+        if ch == 0 {
+            return total;
+        }
+        let ch_i = ch as i8;
+        let mut matched = false;
+        for idx in 0..12u32 {
+            let rec = TRICK_ICONS + 0x18 * idx;
+            if ch_i == m.r8(rec) as i8 {
+                total = total + cvt_s_w(m.r32(rec + 0x10) as i32);
+                matched = true;
+                break;
+            }
+        }
+        if !matched {
+            if ch_i == b' ' as i8 {
+                total = total + k(0x4100_0000);
+            } else {
+                let font = m.r32(info);
+                let spacing = rf(m, font + 0x18);
+                let w = call(m, e, FONT_GLYPH_WIDTH, &[font, ch_i as i32 as u32], &[]) as i32;
+                let scale = rf(m, info + 0x20);
+                total = total + (spacing * cvt_s_w(w) * scale + k(0x3f80_0000));
+            }
+        }
+        p = p.wrapping_add(1);
+    }
+}
+
+/// `cGameTrickInfo::vf5_154b18` 0x154b18(info, pad_cfg; x, y): calls `vf1`, centres `x` by half of `info+0x10`,
+/// builds the prompt into `sp - 0xb0`, and draws each glyph either via `vf3` (icons in `0x31e0f0`), `+8.0` for
+/// `' '`, or `Font_PrintfShadowed` + `Font_GetGlyphWidth`
+pub fn game_trick_info_draw(
+    m: &mut Mem,
+    e: &mut dyn TextBoxEnv,
+    info: u32,
+    pad_cfg: u32,
+    x: F,
+    y: F,
+    sp: u32,
+) {
+    let frame = sp - 0xb0;
+    let vt = m.r32(info + 0x24);
+    let adj = m.r16(vt + 0x10) as i16 as u32;
+    let vf1 = m.r32(vt + 0x14);
+    call(m, e, vf1, &[info.wrapping_add(adj)], &[]);
+
+    let cur_x = frame + 0x40;
+    let start_x = x - rf(m, info + 0x10) * k(0x3f00_0000);
+    wf(m, cur_x, start_x);
+    let entry = trick_get_info(m.r32(info + 0x8), m.r32(info + 0xc));
+    trick_info_build_text(m, e, pad_cfg, frame, entry);
+
+    let mut p = frame;
+    loop {
+        let ch = m.r8(p);
+        if ch == 0 {
+            return;
+        }
+        let ch_i = ch as i8;
+        let mut icon = None;
+        for idx in 0..12u32 {
+            let rec = TRICK_ICONS + 0x18 * idx;
+            if ch_i == m.r8(rec) as i8 {
+                icon = Some(idx);
+                break;
+            }
+        }
+        if let Some(idx) = icon {
+            let vt = m.r32(info + 0x24);
+            let adj = m.r16(vt + 0x20) as i16 as u32;
+            let vf3 = m.r32(vt + 0x24);
+            call(m, e, vf3, &[info.wrapping_add(adj), cur_x, idx], &[y]);
+        } else {
+            let y_off = if ch.wrapping_sub(0x28) < 2 {
+                k(0xbf80_0000)
+            } else if ch == b'+' {
+                k(0xc000_0000)
+            } else {
+                F(0.0)
+            };
+            m.w8(frame + 0x30, ch);
+            m.w8(frame + 0x31, 0);
+            if m.r8(p) as i8 == b' ' as i8 {
+                wf(m, cur_x, rf(m, cur_x) + k(0x4100_0000));
+            } else {
+                let scale = rf(m, info + 0x20);
+                let cx = rf(m, cur_x);
+                let py = y / scale + y_off;
+                let px = cx / scale + F(0.0);
+                let one = k(0x3f80_0000);
+                let font = m.r32(info);
+                call(m, e, FONT_PRINTF_SHADOWED, &[font, frame + 0x30], &[one, px, py]);
+                let font = m.r32(info);
+                let ch_s = m.r8(p) as i8 as i32 as u32;
+                let spacing = rf(m, font + 0x18);
+                let w = call(m, e, FONT_GLYPH_WIDTH, &[font, ch_s], &[]) as i32;
+                let scale = rf(m, info + 0x20);
+                let cx = rf(m, cur_x);
+                wf(m, cur_x, cx + (spacing * cvt_s_w(w) * scale + one));
+            }
+        }
+        p = p.wrapping_add(1);
+    }
 }
 
 /// `cTrickInfo::~cTrickInfo` 0x1550f8(info, how): the table back at +0x24; deleted when `how` has bit 0. Its

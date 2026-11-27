@@ -1074,14 +1074,14 @@ address,size,name,system,status
 0x154548,44,Vec4_ScaleCopy17,common,checked
 0x154580,56,TrickDef_Load,scoring,ported
 0x1545b8,12,TrickDef_Unload,scoring,ported
-0x154638,36,Trick_GetInfo,frontend,ported
-0x154688,64,cTrickInfo::vf2_154688,tutorial,ported
-0x1546c8,1104,TrickInfo_BuildText,game,not started
-0x154b18,520,cGameTrickInfo::vf5_154b18,game,ported
-0x154d20,64,cGameTrickInfo::cGameTrickInfo,game,ported
-0x154d60,192,cGameTrickInfo::vf3_154d60,game,not started
-0x154e20,368,cGameTrickInfo::vf4_154e20,game,not started
-0x155058,20,cGameTrickInfo::~cGameTrickInfo,game,ported
+0x154638,36,Trick_GetInfo,frontend,checked
+0x154688,64,cTrickInfo::vf2_154688,tutorial,checked
+0x1546c8,1104,TrickInfo_BuildText,game,checked
+0x154b18,520,cGameTrickInfo::vf5_154b18,game,checked
+0x154d20,64,cGameTrickInfo::cGameTrickInfo,game,checked
+0x154d60,192,cGameTrickInfo::vf3_154d60,game,checked
+0x154e20,368,cGameTrickInfo::vf4_154e20,game,checked
+0x155058,20,cGameTrickInfo::~cGameTrickInfo,game,checked
 0x155070,80,cGameTrickInfo::__tf,runtime,host
 0x1550c8,8,cTrickInfo::vf5_1550c8,tutorial,checked
 0x1550d0,12,cTrickInfo::vf4_1550d0,tutorial,checked
