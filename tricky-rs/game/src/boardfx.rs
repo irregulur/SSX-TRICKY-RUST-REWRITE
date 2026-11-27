@@ -249,3 +249,158 @@ pub fn trail_draw(m: &mut Mem, env: &mut dyn RiderDrawEnv, trail: u32, scratch: 
     vcall(m, env, r, 0x1e8, &[0, 0]);
     vcall(m, env, r, 0x1e0, &[3]);
 }
+
+/// `AirPredict_Reset` 0x123ab8(p): zeroes `+8`, `(p+0x20)&!15` (16 B), `+0x44/+0x48/+0x4c/+0x50`, and sets
+/// `(p+0x30)&!15` to `[0, 0, 1.0, 0]`
+pub fn air_predict_reset(m: &mut Mem, p: u32) {
+    m.w32(p + 8, 0);
+    let q30 = p.wrapping_add(0x30) & !15;
+    m.w32(q30, 0);
+    m.w32(q30 + 4, 0);
+    m.w32(q30 + 8, 0x3f80_0000);
+    m.w32(q30 + 0xc, 0);
+    let q20 = p.wrapping_add(0x20) & !15;
+    for k in 0..4u32 {
+        m.w32(q20 + 4 * k, 0);
+    }
+    m.w32(p + 0x4c, 0);
+    m.w32(p + 0x44, 0);
+    m.w32(p + 0x50, 0);
+    m.w32(p + 0x48, 0);
+}
+
+/// `AirPredict_Init` 0x123a88(p): zeroes `+0x60`, calls [`air_predict_reset`], returns `p`
+pub fn air_predict_init(m: &mut Mem, p: u32) -> u32 {
+    m.w32(p + 0x60, 0);
+    air_predict_reset(m, p);
+    p
+}
+
+/// `Fx_Splash_Reset` 0x12c178(p): zeroes `+0x10..=+0x1c`
+pub fn fx_splash_reset(m: &mut Mem, p: u32) {
+    m.w32(p + 0x14, 0);
+    m.w32(p + 0x18, 0);
+    m.w32(p + 0x1c, 0);
+    m.w32(p + 0x10, 0);
+}
+
+/// `Fx_Splash_Init` 0x12c0e8(p): calls [`fx_splash_reset`], returns `p`
+pub fn fx_splash_init(m: &mut Mem, p: u32) -> u32 {
+    fx_splash_reset(m, p);
+    p
+}
+
+/// `Fx_BrakeSpray_Reset` 0x12dfd0(p): resets embedded splash at `p+0x970`, zeroes `+0x960..=+0x96c`
+pub fn fx_brake_spray_reset(m: &mut Mem, p: u32) {
+    fx_splash_reset(m, p.wrapping_add(0x970));
+    m.w32(p + 0x968, 0);
+    m.w32(p + 0x960, 0);
+    m.w32(p + 0x964, 0);
+    m.w32(p + 0x96c, 0);
+}
+
+/// `Fx_BrakeSpray_Init` 0x12df58(p): initializes embedded splash at `p+0x970`, calls [`fx_brake_spray_reset`], returns `p`
+pub fn fx_brake_spray_init(m: &mut Mem, p: u32) -> u32 {
+    fx_splash_init(m, p.wrapping_add(0x970));
+    fx_brake_spray_reset(m, p);
+    p
+}
+
+/// `Fx_BoardPuff_Reset` 0x12ec98(p): zeroes `+0x1c10`, `+0x1c14`
+pub fn fx_board_puff_reset(m: &mut Mem, p: u32) {
+    m.w32(p + 0x1c14, 0);
+    m.w32(p + 0x1c10, 0);
+}
+
+/// `Fx_BoardPuff_Init` 0x12ec08(p): calls [`fx_board_puff_reset`], returns `p`
+pub fn fx_board_puff_init(m: &mut Mem, p: u32) -> u32 {
+    fx_board_puff_reset(m, p);
+    p
+}
+
+/// `Fx_BoardPuff_Destruct` 0x12ec78(p, how) and `Fx_SpeedDust_Destruct` 0x12f490(p, how): calls `Mem_Delete(p)`
+/// (`0x114f80`) when `how` has bit 0
+pub fn fx_delete_if(m: &mut Mem, e: &mut dyn crate::fe3dstate::FeEnv, p: u32, how: u32) {
+    if how & 1 != 0 {
+        e.call(m, 0x114f80, &[p]);
+    }
+}
+
+/// `Fx_SpeedDust_Reset` 0x12f4b0(p): zeroes `+0xd50`, `+0xd54`
+pub fn fx_speed_dust_reset(m: &mut Mem, p: u32) {
+    m.w32(p + 0xd54, 0);
+    m.w32(p + 0xd50, 0);
+}
+
+/// `Fx_SpeedDust_Init` 0x12f420(p): calls [`fx_speed_dust_reset`], returns `p`
+pub fn fx_speed_dust_init(m: &mut Mem, p: u32) -> u32 {
+    fx_speed_dust_reset(m, p);
+    p
+}
+
+/// `Fx_BoardTrail_Reset` 0x12fed8(p): zeroes `+0`, `+4`, `+0x30`, `+0x50`, `+0x54`
+pub fn fx_board_trail_reset(m: &mut Mem, p: u32) {
+    m.w32(p + 4, 0);
+    m.w32(p + 0x30, 0);
+    m.w32(p + 0x50, 0);
+    m.w32(p + 0x54, 0);
+    m.w32(p, 0);
+}
+
+/// `Fx_BoardTrail_Init` 0x12fe48(p): calls [`fx_board_trail_reset`], returns `p`
+pub fn fx_board_trail_init(m: &mut Mem, p: u32) -> u32 {
+    fx_board_trail_reset(m, p);
+    p
+}
+
+/// `Fx_SurfaceSpray_Reset` 0x131160(p): zeroes `+0`, `+4`, `+8`, `+0x20`, and 16 bytes at `+0x24..+0x34`
+pub fn fx_surface_spray_reset(m: &mut Mem, p: u32) {
+    m.w32(p, 0);
+    m.w32(p + 4, 0);
+    m.w32(p + 8, 0);
+    m.w32(p + 0x20, 0);
+    for k in 0..16u32 {
+        m.w8(p.wrapping_add(0x24 + k), 0);
+    }
+}
+
+/// `Fx_SurfaceSpray_Init` 0x131110(p): calls [`fx_surface_spray_reset`], returns `p`
+pub fn fx_surface_spray_init(m: &mut Mem, p: u32) -> u32 {
+    fx_surface_spray_reset(m, p);
+    p
+}
+
+/// `Fx_BoardTrack_Reset` 0x132518(p): zeroes `+0x1940..=+0x1950`, `+0x1980`, `+0x20..=+0x30`, all 100 track
+/// slots' `+0x60..=+0x70` (stride `0x40`), and writes `[0, 0, 0, 1.0]` at `(p+0x1960)&!15` and `(p+0x1970)&!15`
+pub fn fx_board_track_reset(m: &mut Mem, p: u32) {
+    m.w32(p + 0x194c, 0);
+    m.w32(p + 0x1944, 0);
+    m.w32(p + 0x1940, 0);
+    m.w32(p + 0x1948, 0);
+    for i in 0..100u32 {
+        let e = p.wrapping_add(i * 0x40);
+        m.w32(e + 0x70, 0);
+        m.w32(e + 0x6c, 0);
+        m.w32(e + 0x64, 0);
+        m.w32(e + 0x60, 0);
+        m.w32(e + 0x68, 0);
+    }
+    m.w32(p + 0x1950, 0);
+    for off in [0x1960u32, 0x1970] {
+        let q = p.wrapping_add(off) & !15;
+        m.w32(q, 0);
+        m.w32(q + 4, 0);
+        m.w32(q + 8, 0);
+        m.w32(q + 0xc, 0x3f80_0000);
+    }
+    m.w32(p + 0x1980, 0);
+    for off in [0x20u32, 0x24, 0x28, 0x2c, 0x30] {
+        m.w32(p + off, 0);
+    }
+}
+
+/// `Fx_BoardTrack_Init` 0x1324c8(p): calls [`fx_board_track_reset`], returns `p`
+pub fn fx_board_track_init(m: &mut Mem, p: u32) -> u32 {
+    fx_board_track_reset(m, p);
+    p
+}

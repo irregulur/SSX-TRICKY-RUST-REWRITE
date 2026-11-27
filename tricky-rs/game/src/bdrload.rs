@@ -555,3 +555,28 @@ pub fn request(m: &mut Mem, env: &mut dyn TextBoxEnv, load: u32, rider: u32, own
     }
     n
 }
+
+pub const MPF_ADD_PART: u32 = 0x208488;
+pub const BDR_LOAD_COLORS: u32 = 0x3d2958;
+
+/// `BdrLoad_AddPart` 0x201118(_, flag, a2, mpf): when both `flag` and `mpf` are non-zero, tail-calls
+/// `MpfFile_AddPart(mpf, flag, a2)` (`0x208488`)
+pub fn add_part(m: &mut Mem, env: &mut dyn TextBoxEnv, flag: u32, a2: u32, mpf: u32) {
+    if flag != 0 && mpf != 0 {
+        env.call(m, MPF_ADD_PART, &[mpf, flag, a2], &[]);
+    }
+}
+
+/// `StaticInit_BdrLoad` 0x208540(): writes the three static 3-float colour triples at `0x3d2958`, `0x3d2968`, and
+/// `0x3d2978`
+pub fn static_init_bdr_load(m: &mut Mem) {
+    m.w32(0x3d2978, 0x3f80_0000);
+    m.w32(0x3d297c, 0x3d9b_3d08);
+    m.w32(0x3d2980, 0x3b03_126f);
+    m.w32(0x3d2968, 0x3f80_0000);
+    m.w32(0x3d296c, 0x3ef2_fec5);
+    m.w32(0x3d2970, 0);
+    m.w32(0x3d2958, 0x3f80_0000);
+    m.w32(0x3d295c, 0x3f76_e979);
+    m.w32(0x3d2960, 0);
+}

@@ -1342,3 +1342,93 @@ pub fn spline_path_draw_path(m: &mut Mem, env: &mut dyn LoadEnv, sm: u32, color:
         cur = m.r32(cur + 0x54);
     }
 }
+
+/// `Spline_FindSegmentForward` 0x251508(sm; dist): walks `cur = *(sm+0xc)` forward via `+0x54` until `cur` has
+/// no next pointer or `cur+0x78 <= dist < cur+0x78 + cur+0x74`, updating `sm+0xc` on each step, and returns `cur`
+pub fn spline_find_segment_forward(m: &mut Mem, sm: u32, dist: f32) -> u32 {
+    use crate::ps2f::F;
+    let mut cur = m.r32(sm + 0xc);
+    while m.r32(cur + 0x54) != 0 {
+        let start = F(f32::from_bits(m.r32(cur + 0x78)));
+        if start.0 <= dist {
+            let end = start + F(f32::from_bits(m.r32(cur + 0x74)));
+            if dist < end.0 {
+                return cur;
+            }
+        }
+        cur = m.r32(cur + 0x54);
+        m.w32(sm + 0xc, cur);
+    }
+    cur
+}
+
+/// `Spline_FindSegmentBackward` 0x251568(sm; dist): walks `cur = *(sm+0xc)` backward via `+0x50` until `cur` has
+/// no prev pointer or `cur+0x78 <= dist < cur+0x78 + cur+0x74`, updating `sm+0xc` on each step, and returns `cur`
+pub fn spline_find_segment_backward(m: &mut Mem, sm: u32, dist: f32) -> u32 {
+    use crate::ps2f::F;
+    let mut cur = m.r32(sm + 0xc);
+    while m.r32(cur + 0x50) != 0 {
+        let start = F(f32::from_bits(m.r32(cur + 0x78)));
+        if start.0 <= dist {
+            let end = start + F(f32::from_bits(m.r32(cur + 0x74)));
+            if dist < end.0 {
+                return cur;
+            }
+        }
+        cur = m.r32(cur + 0x50);
+        m.w32(sm + 0xc, cur);
+    }
+    cur
+}
+
+/// `Spline_Evaluate` 0x2515c8(sm, out_pos, out_tan; dist): wraps `dist` by subtracting `sm+0x10` while
+/// `sm+0x10 <= dist`, seeks the containing segment backward or forward if needed (updating `sm+0xc`), and
+/// tail-calls `0x251390(seg, out_pos, out_tan; dist)` (passing `dist.to_bits()` as arg 3)
+pub fn spline_evaluate(m: &mut Mem, env: &mut dyn LoadEnv, sm: u32, out_pos: u32, out_tan: u32, dist: f32) {
+    use crate::ps2f::F;
+    let mut d = F(dist);
+    let total = F(f32::from_bits(m.r32(sm + 0x10)));
+    while total.0 <= d.0 {
+        d = d - total;
+    }
+    let cur = m.r32(sm + 0xc);
+    let start = F(f32::from_bits(m.r32(cur + 0x78)));
+    if d.0 < start.0 {
+        let seg = spline_find_segment_backward(m, sm, d.0);
+        m.w32(sm + 0xc, seg);
+    } else {
+        let end = start + F(f32::from_bits(m.r32(cur + 0x74)));
+        if end.0 < d.0 {
+            let seg = spline_find_segment_forward(m, sm, d.0);
+            m.w32(sm + 0xc, seg);
+        }
+    }
+    let seg = m.r32(sm + 0xc);
+    env.call(m, 0x251390, &[seg, out_pos, out_tan, d.0.to_bits()]);
+}
+
+/// Unindexed `Spline_IsVisible` 0x2516a8(sm; sp on entry, inside `Spline_Evaluate`'s 520-byte index range):
+/// fetches `Course_GetSplineSegment(0x346488, sm+8)`, writes its min/max bounds (`+0..+8`, `+0xc..+0x14`, w=1.0)
+/// to `sp - 0x30` and `sp - 0x20`, calls renderer `+0x284` (`CullBox`), and returns `(res != 1) as u32`
+pub fn spline_is_visible(m: &mut Mem, env: &mut dyn LoadEnv, sm: u32, sp: u32) -> u32 {
+    let frame = sp.wrapping_sub(0x30);
+    let idx = m.r32(sm + 8);
+    let seg = env.call(m, 0x254b20, &[0x346488, idx]);
+    for (src, dst) in [(seg, frame), (seg.wrapping_add(0xc), frame.wrapping_add(0x10))] {
+        m.w32(dst, m.r32(src));
+        m.w32(dst + 4, m.r32(src + 4));
+        m.w32(dst + 8, m.r32(src + 8));
+        m.w32(dst + 0xc, 0x3f80_0000);
+    }
+    let ren = m.r32(m.r32(crate::fe3dstate::GAPP) + 0x724);
+    let vt = m.r32(ren + 0x10);
+    let adj = m.r16(vt + 0x280) as i16 as u32;
+    let f = m.r32(vt + 0x284);
+    let res = env.call(m, f, &[ren.wrapping_add(adj), frame, frame.wrapping_add(0x10)]);
+    ((res ^ 1) != 0) as u32
+}
+
+/// `RailNode_GetSpline` 0x2609b0(w, idx): calls `Course_GetSplineSegment(w, idx)` (`0x254b20`) and returns it
+pub fn rail_node_get_spline(m: &mut Mem, env: &mut dyn LoadEnv, w: u32, idx: u32) -> u32 {
+    env.call(m, 0x254b20, &[w, idx])
+}

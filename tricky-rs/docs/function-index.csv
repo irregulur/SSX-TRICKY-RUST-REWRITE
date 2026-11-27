@@ -430,8 +430,8 @@ address,size,name,system,status
 0x123958,116,cRailSlideControlState::__tf,runtime,host
 0x1239d0,116,cSpinControlState::__tf,runtime,host
 0x123a48,64,cReplayRecordHeader::__tf,runtime,host
-0x123a88,44,AirPredict_Init,boarder,not started
-0x123ab8,88,AirPredict_Reset,boarder,not started
+0x123a88,44,AirPredict_Init,boarder,checked
+0x123ab8,88,AirPredict_Reset,boarder,checked
 0x123b10,948,AirPredict_AtTakeoff,boarder,checked
 0x123ec8,52,AirPredict_Tick,boarder,checked
 0x123f00,8,AirPredict_ClearLandTime,boarder,ported
@@ -480,8 +480,8 @@ address,size,name,system,status
 0x12bee0,272,Takeoff_Setup,boarder,ported
 0x12bff0,124,StaticInit_Takeoff,boarder,checked
 0x12c088,44,Vec4_ScaleCopy6,common,checked
-0x12c0e8,140,Fx_Splash_Init,boarder,not started
-0x12c178,20,Fx_Splash_Reset,boarder,not started
+0x12c0e8,140,Fx_Splash_Init,boarder,checked
+0x12c178,20,Fx_Splash_Reset,boarder,checked
 0x12c190,832,Fx_Splash_EmitRing,boarder,checked
 0x12c4d0,780,Fx_BrakeFan_Emit,boarder,ported
 0x12c7e0,1256,Fx_Splash_EmitAtPoint,boarder,checked
@@ -489,35 +489,35 @@ address,size,name,system,status
 0x12d108,1464,Fx_BrakeFan_Update,boarder,ported
 0x12d6c0,464,Fx_Spray_ComputeParticle,boarder,checked
 0x12d890,1736,Fx_Spray_DrawParticles,boarder,checked
-0x12df58,116,Fx_BrakeSpray_Init,boarder,not started
-0x12dfd0,56,Fx_BrakeSpray_Reset,boarder,not started
+0x12df58,116,Fx_BrakeSpray_Init,boarder,checked
+0x12dfd0,56,Fx_BrakeSpray_Reset,boarder,checked
 0x12e008,220,Fx_BrakeSpray_Emit,boarder,checked
 0x12e0e8,584,Fx_SpawnLandingPuffs,boarder,checked
 0x12e330,948,Fx_Spray_SpawnParticle,boarder,checked
 0x12e6e8,560,Fx_BrakeSpray_Update,boarder,checked
 0x12e918,752,Fx_Spray_Draw,boarder,checked
-0x12ec08,108,Fx_BoardPuff_Init,boarder,not started
-0x12ec78,28,Fx_BoardPuff_Destruct,boarder,not started
-0x12ec98,12,Fx_BoardPuff_Reset,boarder,not started
+0x12ec08,108,Fx_BoardPuff_Init,boarder,checked
+0x12ec78,28,Fx_BoardPuff_Destruct,boarder,checked
+0x12ec98,12,Fx_BoardPuff_Reset,boarder,checked
 0x12eca8,1228,Fx_BoardPuff_Update,boarder,checked
 0x12f178,676,Fx_BoardPuff_Draw,boarder,checked
-0x12f420,108,Fx_SpeedDust_Init,boarder,not started
-0x12f490,28,Fx_SpeedDust_Destruct,boarder,not started
-0x12f4b0,12,Fx_SpeedDust_Reset,boarder,not started
+0x12f420,108,Fx_SpeedDust_Init,boarder,checked
+0x12f490,28,Fx_SpeedDust_Destruct,boarder,checked
+0x12f4b0,12,Fx_SpeedDust_Reset,boarder,checked
 0x12f4c0,1660,Fx_SpeedDust_Update,boarder,checked
 0x12fb40,776,Fx_SpeedDust_Draw,boarder,checked
-0x12fe48,140,Fx_BoardTrail_Init,boarder,not started
-0x12fed8,24,Fx_BoardTrail_Reset,boarder,not started
+0x12fe48,140,Fx_BoardTrail_Init,boarder,checked
+0x12fed8,24,Fx_BoardTrail_Reset,boarder,checked
 0x12fef0,1976,Fx_BoardTrail_Update,boarder,checked
 0x1306b0,684,Fx_BoardTrail_SetPoint,boarder,ported
 0x130960,568,Fx_BoardTrail_Push,boarder,ported
 0x130b98,1396,Fx_BoardTrail_Draw,boarder,checked
-0x131110,80,Fx_SurfaceSpray_Init,boarder,not started
-0x131160,76,Fx_SurfaceSpray_Reset,boarder,not started
+0x131110,80,Fx_SurfaceSpray_Init,boarder,checked
+0x131160,76,Fx_SurfaceSpray_Reset,boarder,checked
 0x1311b0,4440,Fx_SurfaceSpray,boarder,checked
 0x132308,448,Fx_SurfaceSpray_Draw,boarder,checked
-0x1324c8,80,Fx_BoardTrack_Init,boarder,not started
-0x132518,160,Fx_BoardTrack_Reset,boarder,not started
+0x1324c8,80,Fx_BoardTrack_Init,boarder,checked
+0x132518,160,Fx_BoardTrack_Reset,boarder,checked
 0x1325b8,140,Fx_BoardTrack_GetLight,boarder,ported
 0x132648,2912,Fx_BoardTrack,boarder,checked
 0x1331a8,532,Fx_BoardTrack_Draw,boarder,checked
@@ -3347,7 +3347,7 @@ address,size,name,system,status
 0x201018,124,StaticInit_Instance,world,checked
 0x201098,44,Vec4_ScaleCopy27,common,checked
 0x2010c8,80,BdrLoad_LoadRider,boarder,ported
-0x201118,32,BdrLoad_AddPart,boarder,not started
+0x201118,32,BdrLoad_AddPart,boarder,checked
 0x201138,1616,BdrLoad_BuildSkin,boarder,ported
 0x201788,8,AsyncBdrLoad_SetMode,boarder,checked
 0x201790,676,BdrLoad_RequestRider,boarder,checked
@@ -3445,7 +3445,7 @@ address,size,name,system,status
 0x208400,100,RiderSkin_CopyBoneMatrices,render,checked
 0x208468,32,MpfFile_Open,render,ported
 0x208488,184,MpfFile_AddPart,render,ported
-0x208540,164,StaticInit_BdrLoad,boarder,not started
+0x208540,164,StaticInit_BdrLoad,boarder,checked
 0x2085e8,64,Mat4_TransformVec4Copy1,common,checked
 0x208628,44,Vec4_ScaleCopy28,common,checked
 0x2086d8,628,AsyncSys_PopQueue,audio,checked
@@ -4548,9 +4548,9 @@ address,size,name,system,status
 0x250fd0,296,Math_Asin,common,checked
 0x2510f8,320,Math_Atan,common,checked
 0x2514c0,72,SplineModel_Init,ai,checked
-0x251508,96,Spline_FindSegmentForward,boarder,not started
-0x251568,96,Spline_FindSegmentBackward,boarder,not started
-0x2515c8,520,Spline_Evaluate,boarder,not started
+0x251508,96,Spline_FindSegmentForward,boarder,checked
+0x251568,96,Spline_FindSegmentBackward,boarder,checked
+0x2515c8,520,Spline_Evaluate,boarder,checked
 0x251748,540,SplinePathNode_DrawPath,ai,checked
 0x251968,68,Spline_GetLength,boarder,ported
 0x2519b0,120,Spline_SaveSnapshot,boarder,checked
@@ -4721,7 +4721,7 @@ address,size,name,system,status
 0x260458,668,World_CullVisibility,world,checked
 0x2606f8,412,Course_RemapTextures,race,ported
 0x260898,264,Course_RemapLightmapTextures,race,ported
-0x2609b0,28,RailNode_GetSpline,boarder,not started
+0x2609b0,28,RailNode_GetSpline,boarder,checked
 0x2609d0,328,World_LoadTextures,world,ported
 0x260b18,144,WorldGrid_CellAtPos,world,checked
 0x260ba8,248,WorldGrid_CellAt,world,checked

@@ -2011,3 +2011,29 @@ is equivalent: nothing reads it in between).
   `AirPredict_Destruct` 0x1230c0 and `CollBody_Destruct` 0x236190 only delete on bit 0.
 - `cBoarder`'s small virtuals: vf6 0x122fc8 and vf5 0x122fd0 answer 0; vf13 0x122e20 answers 1.0. vf12, vf20..vf14,
   vf9 and vf4..vf1 do nothing.
+
+## Boarder FX init/reset, `AirPredict` init/reset, `BdrLoad` helpers, and spline seek/eval (row G1y; `boardfx.rs`, `bdrload.rs`, `snapshot.rs`, checked: `tests/boarder_fx_spline_tail.rs`)
+
+Proven (`SLUS_203.26` disassembly + runner):
+
+- **`AirPredict_Init` 0x123a88 / `AirPredict_Reset` 0x123ab8** (`boardfx.rs`): `Reset` zeroes `+8`, `(p+0x20)&!15`
+  (16 B), `+0x44/+0x48/+0x4c/+0x50` and writes `[0, 0, 1.0, 0]` at `(p+0x30)&!15`; `Init` zeroes `+0x60`, calls
+  `Reset`, and returns `p`.
+- **16 boarder FX init/reset/destruct helpers** (`boardfx.rs`): `Fx_Splash_Init`/`Reset` (`0x12c0e8`/`0x12c178`),
+  `Fx_BrakeSpray_Init`/`Reset` (`0x12df58`/`0x12dfd0`, resets embedded splash at `+0x970`),
+  `Fx_BoardPuff_Init`/`Destruct`/`Reset` (`0x12ec08`/`0x12ec78`/`0x12ec98`),
+  `Fx_SpeedDust_Init`/`Destruct`/`Reset` (`0x12f420`/`0x12f490`/`0x12f4b0`),
+  `Fx_BoardTrail_Init`/`Reset` (`0x12fe48`/`0x12fed8`), `Fx_SurfaceSpray_Init`/`Reset` (`0x131110`/`0x131160`),
+  and `Fx_BoardTrack_Init`/`Reset` (`0x1324c8`/`0x132518`: clears 100 slots' `+0x60..=+0x70`, writes `[0, 0, 0, 1.0]`
+  to `(p+0x1960)&!15` and `(p+0x1970)&!15`).
+- **`BdrLoad_AddPart` 0x201118 / `StaticInit_BdrLoad` 0x208540** (`bdrload.rs`): `AddPart` tail-calls
+  `MpfFile_AddPart(mpf, flag, a2)` (`0x208488`) when both `flag` and `mpf` are non-zero; `StaticInit_BdrLoad`
+  writes the three 3-float colour triples at `0x3d2958`, `0x3d2968`, `0x3d2978`.
+- **Spline seek/evaluate and rail lookup** (`snapshot.rs`): `Spline_FindSegmentForward` `0x251508` (`+0x54`) and
+  `Spline_FindSegmentBackward` `0x251568` (`+0x50`) walk until `[start, start+len)` contains `dist` (updating
+  `sm+0xc` each step); `Spline_Evaluate` `0x2515c8` wraps `dist` by subtracting `sm+0x10`, seeks backward or
+  forward if outside the cached segment, and tail-calls `0x251390`; unindexed `Spline_IsVisible` `0x2516a8` tests
+  `Course_GetSplineSegment(0x346488, sm+8)` bounds against renderer `+0x284` (`CullBox`); `RailNode_GetSpline`
+  `0x2609b0` wraps `Course_GetSplineSegment` `0x254b20`.
+- Checked bit-for-bit in `tests/boarder_fx_spline_tail.rs` (400 FX/AirPredict/BdrLoad cases + 1,500 Spline/RailNode
+  cases); only 13 `not started` `boarder` functions remain.
