@@ -894,3 +894,240 @@ pub fn free_handle(m: &mut Mem, e: &mut dyn FsEnv, h: u32) {
     eamem::set(m, h, 0, HANDLE_SIZE);
     unlock(m, e);
 }
+
+// ---- The devices (row E2w) ----
+//
+// A device handle: bits 24..31 the device (1 the disc, 2 the host), 0..23 the disc's entry number or the host's
+// file descriptor. `run_queue` calls these through `FsEnv` (as the game calls them), so a host may stand in.
+
+/// The disc's table: the size of an entry's name (0x349d44, as `DISC_ENTRY`) and where the table is (0x349d8c)
+pub const DISC_TABLE: u32 = 0x349d8c;
+/// Points at "cd:" (gp − 0x7f84)
+pub const CD_PREFIX_PTR2: u32 = 0x3bb96c;
+/// The host file last read and where the read ended (gp − 0x7f80, gp − 0x7f7c)
+pub const HOST_LAST_FD: u32 = 0x3bb970;
+pub const HOST_LAST_POS: u32 = 0x3bb974;
+/// The host's one read request: busy, file, buffer, offset, size
+pub const HOST_REQUEST: u32 = 0x4039e8;
+
+pub const CDFS_FIND_FILE: u32 = 0x2c9cc0;
+pub const CDFS_START_READ: u32 = 0x2c9e20;
+pub const ADD_POLL_TASK: u32 = 0x2cebe8;
+pub const HOSTFS_SERVICE_READ: u32 = 0x2cc680;
+pub const SCE_OPEN: u32 = 0x30a7f0;
+pub const SCE_CLOSE: u32 = 0x30aa78;
+pub const SCE_LSEEK: u32 = 0x30abf8;
+pub const SCE_READ: u32 = 0x30ae30;
+pub const SCE_WRITE: u32 = 0x30b0a0;
+
+fn disc_entry(m: &Mem, index: u32) -> u32 {
+    let size = m.r32(DISC_ENTRY).wrapping_add(0xc);
+    m.r32(DISC_TABLE).wrapping_add(index.wrapping_sub(1).wrapping_mul(size))
+}
+
+/// `CdFs_GetFileInfo` 0x2ca0b0(entry number, name out, size out): the entry's name copied (its name size) and its
+/// size; the size
+pub fn cdfs_get_file_info(m: &mut Mem, index: u32, name: u32, size: u32) -> u32 {
+    let entry = disc_entry(m, index);
+    if name != 0 {
+        let n = m.r32(DISC_ENTRY);
+        crate::libc::strncpy(m, name, entry + 0xc, n);
+    }
+    if size != 0 {
+        m.w32(size, m.r32(entry + 8));
+    }
+    m.r32(entry + 8)
+}
+
+/// `CdFs_FindEntry` 0x2ca120(path): the disc's entry of the path (`CdFs_FindFile`, mode 0), 0 if none. `sp` is
+/// the stack pointer on entry (the number comes back through the game's frame).
+pub fn cdfs_find_entry(m: &mut Mem, e: &mut dyn FsEnv, sp: u32, path: u32) -> u32 {
+    let at = sp - 0x20;
+    if e.call(m, CDFS_FIND_FILE, &[path, 0, at]) == 0 {
+        return 0;
+    }
+    let index = m.r32(at);
+    disc_entry(m, index)
+}
+
+/// `HostFs_Init` 0x2cc2c0(_, disc): the host's read is polled (`HostFs_ServiceRead`); the devices are the host and,
+/// with a disc, the disc, which is then the root's device (else the host)
+pub fn hostfs_init(m: &mut Mem, e: &mut dyn FsEnv, disc: u32) -> u32 {
+    m.w32(DEVICES, 0);
+    e.call(m, ADD_POLL_TASK, &[HOSTFS_SERVICE_READ, 0, 0]);
+    let d = m.r32(DEVICES);
+    m.w32(DEVICES, d | 2);
+    if disc != 0 {
+        m.w32(DEVICES, d | 3);
+        m.w32(ROOT_DEVICE, 1);
+        d | 3
+    } else {
+        m.w32(ROOT_DEVICE, 2);
+        2
+    }
+}
+
+/// `FileSys_MakeDevicePath` 0x2cc368(path, out, device out): "cd:" or "host0:" name the device (else the root's
+/// device; a path naming another device ("x:...", the ':' third) is left as it is, with the disc as root's device a
+/// path with any other ':' gives nothing); the host's prefix, then the root unless the path starts with '\', '/' or
+/// '~', then the path, every '\' made '/'. The device goes out only when made. The answer is what the game leaves
+/// (0 when made, else 1 or ':').
+pub fn make_device_path(m: &mut Mem, path: u32, out: u32, device: u32) -> u32 {
+    let mut path = path;
+    m.w8(out, 0);
+    let mut dev = m.r32(ROOT_DEVICE);
+    if cstr(m, path).contains(&b':') {
+        let host = m.r32(HOST_PREFIX_PTR);
+        let n = crate::libc::strlen(m, host);
+        let cd = m.r32(CD_PREFIX_PTR2);
+        if crate::libc::strncmp(m, path, cd, 3) == 0 {
+            dev = 1;
+            path += 3;
+        } else if crate::libc::strncmp(m, path, host, n) == 0 {
+            path = path.wrapping_add(n);
+            dev = 2;
+        } else {
+            if m.r32(ROOT_DEVICE) == 1 {
+                return 1;
+            }
+            if m.r8(path + 2) != b':' {
+                return b':' as u32;
+            }
+        }
+    }
+    let strcat = |m: &mut Mem, d: u32, s: u32| {
+        let len = crate::libc::strlen(m, d);
+        crate::libc::strcpy(m, d + len, s);
+    };
+    if dev == 2 {
+        let host = m.r32(HOST_PREFIX_PTR);
+        strcat(m, out, host);
+    }
+    let c = m.r8(path);
+    if c != b'\\' && c != b'/' && c != b'~' {
+        strcat(m, out, ROOT);
+    }
+    strcat(m, out, path);
+    let mut p = out;
+    while m.r8(p) != 0 {
+        if m.r8(p) == b'\\' {
+            m.w8(p, b'/');
+        }
+        p += 1;
+    }
+    if device != 0 {
+        m.w32(device, dev);
+    }
+    0
+}
+
+/// `FileSys_OpenOnDisc` 0x2cc4b8(path, mode, handle out): the path made (`make_device_path`, on the game's frame;
+/// `sp` is the stack pointer on entry); the disc: `CdFs_FindFile`, the handle 0x1000000 | its number; the host:
+/// `sceOpen` with flags by mode & 7 (0: 0x103, 1: 1, 2: 0x203, 6: 0x603, else none: −1 out), the handle
+/// 0x2000000 | the descriptor (0 out on failure). 1 if opened.
+pub fn open_on_disc(m: &mut Mem, e: &mut dyn FsEnv, sp: u32, path: u32, mode: u32, out: u32) -> u32 {
+    let buf = sp - 0x140;
+    make_device_path(m, path, buf, buf + 0x100);
+    let dev = m.r32(buf + 0x100);
+    if dev == 1 {
+        if e.call(m, CDFS_FIND_FILE, &[buf, mode, out]) == 0 {
+            return 0;
+        }
+        m.w32(out, 0x100_0000 | m.r32(out));
+        return 1;
+    }
+    if dev != 2 {
+        return 0;
+    }
+    let flags = match mode & 7 {
+        1 => 1,
+        0 => 0x103,
+        2 => 0x203,
+        6 => 0x603,
+        _ => {
+            m.w32(out, -1i32 as u32);
+            return 0;
+        }
+    };
+    let fd = e.call(m, SCE_OPEN, &[buf, flags]);
+    m.w32(out, fd);
+    if (fd as i32) < 0 {
+        m.w32(out, 0);
+        return 0;
+    }
+    m.w32(out, fd | m.r32(buf + 0x100) << 24);
+    1
+}
+
+/// `HostFs_Close` 0x2cc5a8(handle): a host file closed (`sceClose`), forgotten as the last read; 0
+pub fn hostfs_close(m: &mut Mem, e: &mut dyn FsEnv, handle: u32) -> u32 {
+    let fd = handle & 0xff_ffff;
+    if (handle as i32) >> 24 == 2 {
+        e.call(m, SCE_CLOSE, &[fd]);
+        if m.r32(HOST_LAST_FD) == fd {
+            m.w32(HOST_LAST_FD, -1i32 as u32);
+        }
+    }
+    0
+}
+
+/// `FileSys_DevRead` 0x2cc600(handle, buffer, offset, size): the disc's read started (`CdFs_StartRead`, its
+/// answer); a host read taken as the one request (1; 0 if one is waiting); else 0
+pub fn dev_read(m: &mut Mem, e: &mut dyn FsEnv, handle: u32, buf: u32, pos: u32, n: u32) -> u32 {
+    let dev = (handle as i32) >> 24;
+    let h = handle & 0xff_ffff;
+    if dev == 1 {
+        return e.call(m, CDFS_START_READ, &[h, buf, pos, n]);
+    }
+    if dev != 2 || m.r32(HOST_REQUEST) != 0 {
+        return 0;
+    }
+    m.w32(HOST_REQUEST, 1);
+    m.w32(HOST_REQUEST + 4, h);
+    m.w32(HOST_REQUEST + 8, buf);
+    m.w32(HOST_REQUEST + 0xc, pos);
+    m.w32(HOST_REQUEST + 0x10, n);
+    1
+}
+
+/// `HostFs_ServiceRead` 0x2cc680 (polled): the waiting host read done (a seek first unless it goes on from the last
+/// read), the running operation completed (all read or not); 0
+pub fn hostfs_service_read(m: &mut Mem, e: &mut dyn FsEnv) -> u32 {
+    let r = HOST_REQUEST;
+    if m.r32(r) == 0 {
+        return 0;
+    }
+    if m.r32(HOST_LAST_FD) != m.r32(r + 4) || m.r32(HOST_LAST_POS) != m.r32(r + 0xc) {
+        let (fd, pos) = (m.r32(r + 4), m.r32(r + 0xc));
+        e.call(m, SCE_LSEEK, &[fd, pos, 0]);
+    }
+    let (fd, buf, n) = (m.r32(r + 4), m.r32(r + 8), m.r32(r + 0x10));
+    let got = e.call(m, SCE_READ, &[fd, buf, n]);
+    let ok = (got == m.r32(r + 0x10)) as u32;
+    m.w32(HOST_LAST_FD, m.r32(r + 4));
+    m.w32(r, 0);
+    m.w32(HOST_LAST_POS, m.r32(r + 0xc).wrapping_add(m.r32(r + 0x10)));
+    complete_current(m, e, ok);
+    0
+}
+
+/// `HostFs_Write` 0x2cc730(handle, buffer, offset, size): seek, write, the running operation completed (done
+/// whatever was written); 0
+pub fn hostfs_write(m: &mut Mem, e: &mut dyn FsEnv, handle: u32, buf: u32, pos: u32, n: u32) -> u32 {
+    let fd = handle & 0xff_ffff;
+    e.call(m, SCE_LSEEK, &[fd, pos, 0]);
+    e.call(m, SCE_WRITE, &[fd, buf, n]);
+    complete_current(m, e, 1);
+    0
+}
+
+/// `FileSys_DevGetSize` 0x2cc7a0(handle): the disc entry's size, or the host file's (a seek to its end); else 0
+pub fn dev_get_size(m: &mut Mem, e: &mut dyn FsEnv, handle: u32) -> u32 {
+    let dev = (handle as i32) >> 24;
+    let h = handle & 0xff_ffff;
+    match dev {
+        1 => cdfs_get_file_info(m, h, 0, 0),
+        2 => e.call(m, SCE_LSEEK, &[h, 0, 2]),
+        _ => 0,
+    }
+}

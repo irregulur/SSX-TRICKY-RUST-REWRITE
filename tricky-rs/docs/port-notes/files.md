@@ -1807,3 +1807,33 @@ Proven (from the disassembly; Ghidra was not running):
   equivalent or out of the test's reach (a cancelled operation's `ok`; size operations are never queued; with one
   operation queued the move in `SetPriority` changes nothing; the two walks that only differ on an operation or
   archive that is not there, which the test keeps away from).
+
+## The file system's devices (row E2w; `tricky_game::filesys`, `tests/filesys_dev.rs`)
+
+Proven (from the disassembly; Ghidra was not running):
+
+- A device handle: bits 24..31 the device (1 the disc, 2 the host; read with an arithmetic shift), 0..23 the
+  disc's entry number or the host's file descriptor. The disc's table at the word 0x349d8c, entries of (the word
+  at 0x349d44) + 0xc bytes, +8 the size, +0xc the name, numbered from 1: `CdFs_GetFileInfo` 0x2ca0b0,
+  `CdFs_FindEntry` 0x2ca120 (`CdFs_FindFile` with mode 0).
+- `HostFs_Init` 0x2cc2c0: the devices word 0x3bba64 to 0, `HostFs_ServiceRead` 0x2cc680 added to the poll list,
+  then (re-read) | 2, and | 3 with a disc; the root's device 0x3bba60 is the disc (1) with one, else the host (2).
+- `FileSys_MakeDevicePath` 0x2cc368(path, out, device out): "cd:" (the pointer at 0x3bb96c) or "host0:" set the
+  device and are cut; a path with another ':' gives nothing (answer 1) when the root's device is the disc, or when
+  its ':' is not the third character (answer ':'); else the root's device. Out: "host0:" for the host, the root
+  (0x34eef8) unless the path starts with '\', '/' or '~', the path, every '\' made '/'. The device goes out only
+  then (`FileSys_OpenOnDisc` reads its frame's word anyway).
+- `FileSys_OpenOnDisc` 0x2cc4b8: disc: `CdFs_FindFile`(path, mode, out), out | 0x1000000. Host: `sceOpen` with
+  flags by mode & 7 (0: 0x103, 1: 1, 2: 0x203, 6: 0x603; other modes put −1 out and fail), out descriptor | 0x2000000,
+  0 on failure.
+- The host does one read at a time: `FileSys_DevRead` 0x2cc600 stores it at 0x4039e8 (busy, fd, buffer, offset,
+  size; refused while one waits); `HostFs_ServiceRead` (polled) seeks unless the read goes on from the last (fd and
+  end at 0x3bb970 / 0x3bb974), reads, and completes the running operation (all read or not). Disc reads go to
+  `CdFs_StartRead` 0x2c9e20 (host). `HostFs_Write` 0x2cc730 seeks, writes and completes it as done whatever was
+  written. `HostFs_Close` 0x2cc5a8 closes host files only and forgets the last read's file. `FileSys_DevGetSize`
+  0x2cc7a0: the entry's size, or a seek to the host file's end.
+- Host: the kernel's file calls (`sceOpen`, `sceClose`, `sceLseek`, `sceRead`, `sceWrite`), `CdFs_FindFile` (ported
+  as `tricky_data::disc`), `CdFs_StartRead`, `Sys_AddPollTask`. `run_queue` still calls the devices through
+  `FsEnv`, as the game does.
+- Checked in the runner: 400 runs of 40 calls, memory (stack aside), answers and calls out equal; 34 mutants, all
+  killed.
