@@ -3316,29 +3316,29 @@ address,size,name,system,status
 0x1ff608,64,FE3DTransition_ApplyCurrentValues,frontend,checked
 0x1ff648,80,FE3DTransition_Start,frontend,checked
 0x1ff6a0,36,FE3DTransition_StopFade,frontend,checked
-0x1ff6f0,300,VideoStream_Init,video,not started
-0x1ff820,112,VideoStreamMan_Destroy,video,not started
-0x1ff890,148,VideoStream_CreateFrameTexture,video,not started
+0x1ff6f0,300,VideoStream_Init,video,checked
+0x1ff820,112,VideoStreamMan_Destroy,video,checked
+0x1ff890,148,VideoStream_CreateFrameTexture,video,checked
 0x1ff928,96,VideoStreamMan_DecodeFrame,video,checked
-0x1ff988,8,VideoStreamMan_FreeFrameBuffer,video,not started
-0x1ff990,128,VideoStream_Open,video,ported
-0x1ffa10,40,VideoStream_Stop,video,not started
-0x1ffa38,76,VideoStreamMan_Reopen,video,not started
-0x1ffa88,244,VideoStreamMan_UpdateFrame,video,ported
-0x1ffb80,84,VideoStreamMan_UploadFrame,video,not started
-0x1ffbd8,420,VideoStream_AllocShape,video,not started
-0x1ffd80,96,cVideoStreamMan::cVideoStreamMan,video,ported
-0x1ffde0,144,cVideoStreamMan::~cVideoStreamMan,video,not started
-0x1ffe70,188,VideoPlayer_AddStream,video,ported
-0x1fff30,356,VideoPlayer_Open,video,ported
-0x200098,88,VideoPlayer_Release,video,ported
-0x2000f0,88,VideoStreamMan_Release,video,not started
-0x200148,88,VideoStreamMan_ReleaseAll,video,ported
-0x2001a0,40,VideoStreamMan_GetTexture,video,ported
-0x2001c8,44,Movie_GetFrameTexture,video,ported
-0x2001f8,116,cVideoStreamMan::vf1_2001f8,video,not started
-0x200270,116,cVideoStreamMan::vf2_200270,video,not started
-0x2002e8,20,VideoStreamMan_IsFinished,video,ported
+0x1ff988,8,VideoStreamMan_FreeFrameBuffer,video,checked
+0x1ff990,128,VideoStream_Open,video,checked
+0x1ffa10,40,VideoStream_Stop,video,checked
+0x1ffa38,76,VideoStreamMan_Reopen,video,checked
+0x1ffa88,244,VideoStreamMan_UpdateFrame,video,checked
+0x1ffb80,84,VideoStreamMan_UploadFrame,video,checked
+0x1ffbd8,420,VideoStream_AllocShape,video,checked
+0x1ffd80,96,cVideoStreamMan::cVideoStreamMan,video,checked
+0x1ffde0,144,cVideoStreamMan::~cVideoStreamMan,video,checked
+0x1ffe70,188,VideoPlayer_AddStream,video,checked
+0x1fff30,356,VideoPlayer_Open,video,checked
+0x200098,88,VideoPlayer_Release,video,checked
+0x2000f0,88,VideoStreamMan_Release,video,checked
+0x200148,88,VideoStreamMan_ReleaseAll,video,checked
+0x2001a0,40,VideoStreamMan_GetTexture,video,checked
+0x2001c8,44,Movie_GetFrameTexture,video,checked
+0x2001f8,116,cVideoStreamMan::vf1_2001f8,video,checked
+0x200270,116,cVideoStreamMan::vf2_200270,video,checked
+0x2002e8,20,VideoStreamMan_IsFinished,video,checked
 0x200300,80,cVideoStreamMan::__tf,runtime,host
 0x200390,748,Instance_DrawVisibleCells,world,checked
 0x200680,100,Instance_Draw,world,checked

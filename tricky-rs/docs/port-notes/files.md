@@ -624,6 +624,30 @@ Checked in the runner on 3,000 random shapes of the converted types and others, 
 decoder treats alike.
 
 
+### The stream manager (row G11a3; `tricky_game::videoman`, checked: `tests/videoman.rs`)
+
+Proven (from the disassembly; Ghidra was not running):
+
+- `cVideoStreamMan` (table 0x39af08): +0xc streams (at most 3, `VideoPlayer_AddStream` 0x1ffe70 answers 0 past
+  that), +0x10 the streams, +0x1c their users. A stream is 0x118 bytes (layout in the module's notes).
+- `VideoStream_Init` 0x1ff6f0: 10 frames a second, stopped; the frame's shape (`VideoStream_AllocShape` 0x1ffbd8
+  kind 1: 16-bit pixels, type `Shape_PixelFormatIndex(16)`) and its texture (renderer virtual +0x150); EA's
+  stream on max(0x19000, `Strm_CalcMemSize(2,1,1)` + 0x18000 + w·h/2) bytes, though `Strm_Create` is told
+  0x19000.
+- `VideoPlayer_Open` 0x1fff30(name, w, h, loop, fps): a playing stream with the same name (`strcmp`), loop and fps
+  gets a user; else the first stopped stream of exactly w × h opens it (`VideoStream_Open` 0x1ff990: fps clamped
+  to 1..30, ≤ 0 → 1; the file queued); −1 if none. `VideoPlayer_Release` 0x200098 stops the stream on the last
+  user; `VideoStreamMan_Release` 0x2000f0 (and `ReleaseAll`) instead rebuilds EA's stream (`Reopen` 0x1ffa38).
+- `VideoStreamMan_UpdateFrame` 0x1ffa88 (vf1 0x2001f8, streams with users): a tick counter; once 60 / fps ticks
+  passed since the last frame, the next packet is decoded (`DecodeFrame` 0x1ff928: type 0x60, `Shape_Unpack`,
+  pixels copied, frame waiting) and released; at the stream's end it queues the file again when looping, else
+  finishes and stops. `UploadFrame` 0x1ffb80 (vf2) hands a waiting frame to the renderer (virtual +0x160).
+- `AllocShape` kind 2 (never asked for): 8-bit pixels and a palette block of a grey ramp (k, k, k, 0xff); kind 0
+  and others read registers the function never set (not ported).
+- Checked in the runner: 400 managers, 48,000 steps (4,406 films opened, 7,877 frames decoded), memory, answers
+  and the logged calls out equal after every call. 22 mutants: 20 killed, 2 equivalent (w·h / 2 signed on small
+  sizes, the fps clamp at exactly 30).
+
 ## Names from F1c batch 17 (proven)
 
 - `MemCard_ClearCurrentSlotStatus` 0x23ea98: clears +0x174 / +0x178 of the current slot (+0x10, 0x14 apart).
