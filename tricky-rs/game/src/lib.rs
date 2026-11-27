@@ -62,6 +62,7 @@ pub mod snowfall;
 pub mod videoman;
 pub mod wstr;
 pub mod fe_character;
+pub mod fileload;
 pub mod fog;
 pub mod fe_title;
 pub mod fe_numplayers;

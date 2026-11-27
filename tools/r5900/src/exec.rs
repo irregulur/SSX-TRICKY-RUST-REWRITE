@@ -119,6 +119,7 @@ fn step(r: &mut Runner, pc: u32) -> Result<Next, Error> {
                     return Ok(Next::Seq);
                 } // movn
                 13 => return Err(Error::Trap { pc }), // break
+                15 => return Ok(Next::Seq),           // sync: memory order, nothing to do here
                 52 => {
                     // teq: traps only when equal
                     return if a == b { Err(Error::Trap { pc }) } else { Ok(Next::Seq) };
@@ -373,6 +374,8 @@ fn step(r: &mut Runner, pc: u32) -> Result<Next, Error> {
             store(r, pc, addr & !15, &b)?;
             Ok(Next::Seq)
         }
+        // cache: the runner has no caches
+        47 => Ok(Next::Seq),
         _ => unimpl(&format!("opcode {op}")),
     }
 }

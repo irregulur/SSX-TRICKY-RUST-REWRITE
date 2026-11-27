@@ -1699,3 +1699,44 @@ Proven (from the disassembly; Ghidra was not running):
 - Checked in the runner: 300 tables, 45,000 steps (10,344 file system callbacks, 2,423 loads finished, 3,015
   waits, 243 tables cancelled; slots another thread is finishing simulated); 46 mutants, 45 killed, 1 equivalent
   (`Cancel`'s free of a slot being finished is unreachable: such a slot is not marked cancelled).
+
+## The file loads that wait (row E2u; `tricky_game::fileload`, `tests/fileload.rs`)
+
+Proven (from the disassembly; Ghidra was not running):
+
+- The sync operations queue one file system operation with no callback (last argument 0), wait on it
+  (`FileSys_WaitOp`) and answer its result: `File_CloseSync` 0x2c8e48, `File_SizeSync` 0x2c8ea0,
+  `FileSys_OpenSync` 0x2c9018 (`FileSys_Open`), `FileSys_UnmountBig` 0x2c8fc0; nothing queued answers 0.
+  `File_OpenSync` 0x2c8d98 and `FileSys_MountBig` 0x2c8f50 also answer whether the operation's status
+  (`FileSys_GetStatus`) is 1 and give the result through a pointer (0 when not queued). `FileSys_SyncOp0`
+  0x2c8ef8 and `FileSys_SyncOp2` 0x2c9070 queue through `FileSys_QueueUnsupported` 0x2cebb0, which answers 0, so
+  they always answer 0. `FileSys_Exists` 0x2c7e38 is `FileSys_OpenSync`(path, the word at 0x3bb930).
+- `File_ReadChunked` 0x2c8cf0 (`File_ReadSync` 0x2c8e08 with `FileSys_QueueRead`, `File_WriteSync` 0x2c8e28 with
+  `FileSys_QueueWrite`): a block on its stack (n, handle, offset, left, done, chunk, buffer, queue, operation),
+  chunks of at most 0x8000 bytes; `File_ReadChunkCb` 0x2c8be8 counts each, and a status other than 1, a chunk
+  shorter than asked or nothing left ends it; the caller waits while bytes are left or an operation is pending,
+  and answers the bytes done.
+- The loads run a callback on the file thread (`FileSys_RunWithHeap` 0x2cb190: callback, 0, the word at 0x3bb930,
+  a block on the caller's stack: path, buffer, flags or size, 1 or 0 in the `…0` forms). The callbacks get (a
+  number n, the block) and open with n, then read and close with n − 1:
+  `File_GetSize` 0x2c7ec8 / `GetSize0` 0x2c7f18 → `File_GetSizeCb` 0x2c7e58 (open, size, close);
+  `File_LoadAlloc` 0x2c8018 / `LoadAlloc0` 0x2c8068 → `File_LoadAllocCb` 0x2c7f60 (a buffer of the size, under
+  the path's name with the block's flags, read whole); `File_LoadAllocSize` 0x2c8178 / `File_ReadWhole` 0x2c81e8
+  → `File_LoadAllocSizeCb` 0x2c80b8 (the same, the size back through the block); `File_LoadInto` 0x2c82f0 /
+  `LoadInto0` 0x2c8348 → `File_LoadIntoCb` 0x2c8258 (into the caller's buffer, at most the size; none or negative:
+  no limit); `File_LoadMany` 0x2c8430 / `File_BatchLoad` 0x2c84a0 → `File_LoadManyCb` 0x2c8398 (`File_LoadAlloc0`
+  for each path; 1 when all loaded; no files answers 0, the list's first word still read); `File_OpenBig`
+  0x2c8668 / `OpenBig0` 0x2c86b8 → `File_OpenBigCb` 0x2c8508 (the first 0xa90 bytes; not `C0FB` / `BIGF`: given
+  back, 0; a directory longer than 0xa90: a buffer of its size, the first part copied, the rest read after it).
+- `File_LoadAndUnpack` 0x2c8938 (`File_Load` 0x2c8a70): read whole; packed (`Compress_UnpackedSize` not 0, size
+  not 0): copied to a buffer of flags ^ 0x10, unpacked (`Compress_Decode`) into one of `flags`, the copy given
+  back; a refused stream (answer 0) gives 0. `File_LoadUnpackInto` 0x2c8a90 (`File_LoadUnpackInto2` 0x2c8bc8):
+  the same with flags 0x10, then at most `max` bytes copied to the caller and the buffer given back; the bytes.
+  `File_PeekUnpackedSize` 0x2c88d8: the first 0x80 bytes onto the stack, their unpacked size (0 if nothing was
+  read; `File_PeekUnpackedSizeUnchecked` 0x2c8910 asks anyway).
+- Host: the file system's queue, waits and results, the thread runner. Not ported: `Host_WriteFile` 0x2c8708 and
+  `Host_WriteFileChecked` 0x2c87e8 (the development host's files). The function runner learnt `sync` and `cache`
+  (no-ops there) for the loads' cache flush.
+- Checked in the runner: 400 runs, 16,000 calls of every function above (callbacks also on made-up blocks), memory
+  (stack aside), answers and calls out equal; 51 mutants, 49 killed, 2 equivalent (a chunk of exactly 0x8000 cut
+  to 0x8000, and where `File_GetSizeCb` keeps its handle on its own stack).
