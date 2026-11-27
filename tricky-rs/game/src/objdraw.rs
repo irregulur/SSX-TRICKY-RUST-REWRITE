@@ -322,3 +322,128 @@ fn mat_mul(m: &mut Mem, out: u32, a: u32, b: u32) {
         }
     }
 }
+
+/// Destructor and draw helpers for animated world nodes (row G5e):
+/// `cMeshAnimNode` table 0x36c938, `cAnimObjectNode` table 0x38c650, `cAnimComboNode` table 0x38c460,
+/// `cAnimTexFlipNode` table 0x38c368, `Mem_Delete` 0x114f80, `cControllerNode::~cControllerNode` 0x13a8e0,
+/// `TexFlip_ApplyFrame` 0x142d40, `cTexFlip::~cTexFlip` 0x1499e8, `Mem_Free` 0x14a040,
+/// `Contact_RemoveAllForNode` 0x14fb38, `cAnimObjectNode::vf28` 0x199320
+pub const MESH_ANIM_NODE_VT: u32 = 0x36c938;
+pub const ANIM_OBJECT_NODE_VT: u32 = 0x38c650;
+pub const ANIM_COMBO_NODE_VT: u32 = 0x38c460;
+pub const ANIM_TEX_FLIP_NODE_VT: u32 = 0x38c368;
+pub const MEM_DELETE: u32 = 0x114f80;
+pub const CONTROLLER_NODE_DTOR: u32 = 0x13a8e0;
+pub const TEX_FLIP_APPLY: u32 = 0x142d40;
+pub const TEX_FLIP_DTOR: u32 = 0x1499e8;
+pub const MEM_FREE: u32 = 0x14a040;
+pub const CONTACT_REMOVE_FOR_NODE: u32 = 0x14fb38;
+pub const ANIM_OBJECT_VF28: u32 = 0x199320;
+
+/// `cMeshAnimNode::~cMeshAnimNode` 0x146ef0(o, how): restores `MESH_ANIM_NODE_VT` at `+8`, calls `Mem_Free` on
+/// `*(o+0x6c0)` if non-null, and tail-calls `cControllerNode::~cControllerNode(o, how)` (`0x13a8e0`)
+pub fn mesh_anim_node_destruct(m: &mut Mem, env: &mut dyn ObjEnv, o: u32, how: u32) {
+    m.w32(o + 8, MESH_ANIM_NODE_VT);
+    let p = m.r32(o + 0x6c0);
+    if p != 0 {
+        env.call(m, MEM_FREE, &[p]);
+    }
+    env.call(m, CONTROLLER_NODE_DTOR, &[o, how]);
+}
+
+/// `cAnimObjectNode::~cAnimObjectNode` 0x198da8(o, how): restores `ANIM_OBJECT_NODE_VT` at `+0x38`; if `*(o+0x64)`
+/// is non-null, removes its contacts (`Contact_RemoveAllForNode` `0x14fb38` on broadphase `gApp+0x730 -> +0x30`,
+/// `c + 0x40`) and deletes `*(o+0x64)`; if `*(o+0x60)` is non-null, destroys its `*(arr-0x10)` `0xd0`-byte frame
+/// elements in reverse via virtual `+8/+0xc(0)` and frees `arr - 0x10`; destroys the embedded `cControllerNode` at
+/// `o + 0x30` (`0`); deletes `o` when `how` has bit 0
+pub fn anim_object_destruct(m: &mut Mem, env: &mut dyn ObjEnv, o: u32, how: u32) {
+    m.w32(o + 0x38, ANIM_OBJECT_NODE_VT);
+    let c = m.r32(o + 0x64);
+    if c != 0 {
+        let bp = m.r32(m.r32(m.r32(GAPP) + 0x730) + 0x30);
+        env.call(m, CONTACT_REMOVE_FOR_NODE, &[bp, c.wrapping_add(0x40)]);
+        let c = m.r32(o + 0x64);
+        env.call(m, MEM_DELETE, &[c]);
+    }
+    let arr = m.r32(o + 0x60);
+    if arr != 0 {
+        let count = m.r32(arr.wrapping_sub(0x10));
+        let mut cur = arr.wrapping_add(count.wrapping_mul(0xd0));
+        let mut base_arr = arr;
+        if base_arr != cur {
+            cur = cur.wrapping_sub(0xd0);
+            loop {
+                let vt = m.r32(cur + 0x8c);
+                let adj = m.r16(vt + 8) as i16 as u32;
+                let f = m.r32(vt + 0xc);
+                env.vcall(m, f, cur.wrapping_add(adj), &[0]);
+                base_arr = m.r32(o + 0x60);
+                if base_arr == cur {
+                    break;
+                }
+                cur = cur.wrapping_sub(0xd0);
+            }
+        }
+        env.call(m, MEM_FREE, &[base_arr.wrapping_sub(0x10)]);
+    }
+    env.call(m, CONTROLLER_NODE_DTOR, &[o.wrapping_add(0x30), 0]);
+    if how & 1 != 0 {
+        env.call(m, MEM_DELETE, &[o]);
+    }
+}
+
+/// `cAnimComboNode::Draw` 0x1992e0(o): if `*(o+0x58)`'s flags `+0xe8` have bit 2 set, calls virtual `+0xe8/+0xec`
+/// via vtable at `o+0x38` with `(inst, 1)`
+pub fn anim_combo_draw(m: &mut Mem, env: &mut dyn ObjEnv, o: u32) {
+    let inst = m.r32(o + 0x58);
+    if m.r32(inst + 0xe8) & 4 != 0 {
+        let (this, f) = vfn(m, o, 0x38, 0xe8);
+        env.vcall(m, f, this, &[inst, 1]);
+    }
+}
+
+/// `cAnimComboNode::~cAnimComboNode` 0x19a1a8(o, how): restores `ANIM_COMBO_NODE_VT` at `+0x54`, frees `*(o+0x84)`
+/// if non-null, destroys embedded `cAnimObjectNode` at `o + 0x1c` (`0`), and deletes `o` when `how` has bit 0
+pub fn anim_combo_destruct(m: &mut Mem, env: &mut dyn ObjEnv, o: u32, how: u32) {
+    m.w32(o + 0x54, ANIM_COMBO_NODE_VT);
+    let p = m.r32(o + 0x84);
+    if p != 0 {
+        env.call(m, MEM_FREE, &[p]);
+    }
+    anim_object_destruct(m, env, o.wrapping_add(0x1c), 0);
+    if how & 1 != 0 {
+        env.call(m, MEM_DELETE, &[o]);
+    }
+}
+
+/// `cAnimTexFlipNode::Draw` 0x19a8b0(o): if `*(o+0x70)`'s flags `+0xe8` have bit 2 set, calls virtual `+0xe8/+0xec`
+/// via vtable at `o+0x50` (with `this` base `o + 0x18`) with `(inst, 1)`
+pub fn anim_tex_flip_draw(m: &mut Mem, env: &mut dyn ObjEnv, o: u32) {
+    let inst = m.r32(o + 0x70);
+    if m.r32(inst + 0xe8) & 4 != 0 {
+        let base = o.wrapping_add(0x18);
+        let vt = m.r32(o + 0x50);
+        let adj = m.r16(vt + 0xe8) as i16 as u32;
+        let f = m.r32(vt + 0xec);
+        env.vcall(m, f, base.wrapping_add(adj), &[inst, 1]);
+    }
+}
+
+/// `cAnimTexFlipNode::vf28_19a8f0` 0x19a8f0(o, matrix, test): calls `TexFlip_ApplyFrame(o + 0x80)` (`0x142d40`),
+/// then tail-calls `cAnimObjectNode::vf28(o + 0x18, matrix, test)` (`0x199320`)
+pub fn anim_tex_flip_vf28(m: &mut Mem, env: &mut dyn ObjEnv, o: u32, matrix: u32, test: u32) {
+    env.call(m, TEX_FLIP_APPLY, &[o.wrapping_add(0x80)]);
+    env.call(m, ANIM_OBJECT_VF28, &[o.wrapping_add(0x18), matrix, test]);
+}
+
+/// `cAnimTexFlipNode::~cAnimTexFlipNode` 0x19ac48(o, how): restores `ANIM_TEX_FLIP_NODE_VT` at `+0x50`, destroys
+/// `cTexFlip` at `o + 0x80` (`2`), destroys embedded `cAnimObjectNode` at `o + 0x18` (`0`), and deletes `o` when
+/// `how` has bit 0
+pub fn anim_tex_flip_destruct(m: &mut Mem, env: &mut dyn ObjEnv, o: u32, how: u32) {
+    m.w32(o + 0x50, ANIM_TEX_FLIP_NODE_VT);
+    env.call(m, TEX_FLIP_DTOR, &[o.wrapping_add(0x80), 2]);
+    anim_object_destruct(m, env, o.wrapping_add(0x18), 0);
+    if how & 1 != 0 {
+        env.call(m, MEM_DELETE, &[o]);
+    }
+}

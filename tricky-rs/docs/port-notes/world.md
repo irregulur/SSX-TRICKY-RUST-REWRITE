@@ -2961,3 +2961,36 @@ Still unclear: 0x1e4288 (from `Gfx_FlipDisplay` and the render thread), 0x2ea158
   two 8 KB stack buffers) → `Tex_SwizzlePage4` 0x1fb690 → `Tex_SwizzleBlock4` 0x1fb4e0 (nibble reorder by the
   table 0x340b10). `Tex_Swizzle` → `Tex_SwizzlePage8` 0x1fb920 (128 × 64 page, block tables 0x341290 / 0x341210)
   → `Tex_SwizzleBlock8` 0x1fb600 (byte reorder of a 256-byte block by the table 0x340f10).
+
+## Animation frames and world animation node lifecycle/draws (row G5e; `tricky_game::camera_misc`, `tricky_game::objdraw`, checked: `tests/animation_tail.rs`)
+
+Proven (`SLUS_203.26` disassembly + runner):
+
+- **Animation frames & static destructor** (`camera_misc.rs`):
+  - `StaticDtor_AnimLayer` 0x15a980: tail-calls `AnimData_Destruct(0x3211a8, 2)` (`0x15a8c0`).
+  - `cAnimFrame::cAnimFrame` 0x1cba68 / `~cAnimFrame` 0x1cba40: installs/restores vtable `0x391b10` at `+0x8c`; ctor
+    calls `AnimFrame_Clear` `0x1cb150` and returns `f`; dtor deletes `f` (`Mem_Delete` `0x114f80`) on `how & 1`.
+  - `AnimFrame_Init` 0x1cb078: installs `0x391b10` at `+0x8c`, calls `AnimFrame_Clear` `0x1cb150` and
+    `AnimFrame_SetKey(f, key; t)` `0x1cb0d8`, returns `f`.
+  - `cMeshAnimFrame::cMeshAnimFrame` 0x1cb278 / `~cMeshAnimFrame` 0x1cb990: ctor calls `AnimFrame_Init`, installs
+    vtable `0x391af8` at `+0x8c`, copies the 64-byte matrix `0x346440` into `(f+0x90) & !15` (`lq/sq`), stores `key`
+    at `+0x48`, calls `cMeshAnimFrame::vf1(f; t)` `0x1cb498`, returns `f`; dtor sets `+0x8c = 0x391af8` and tail-calls
+    `cAnimFrame::~cAnimFrame`.
+  - `AnimFrame_MulMatrix` 0x1cb658: VU0 4×4 matrix product `(f+0x90) & !15 = ((f+0x90) & !15) * (mat & !15)`.
+- **Animated world nodes** (`objdraw.rs`):
+  - `cMeshAnimNode::~cMeshAnimNode` 0x146ef0: sets `+8 = 0x36c938`, frees `*(o+0x6c0)` (`Mem_Free` `0x14a040`) if
+    non-null, tail-calls `cControllerNode::~cControllerNode(o, how)` `0x13a8e0`.
+  - `cAnimObjectNode::~cAnimObjectNode` 0x198da8: sets `+0x38 = 0x38c650`; if `*(o+0x64)` is set, removes its
+    contacts via `Contact_RemoveAllForNode(gApp+0x730 -> +0x30, c+0x40)` `0x14fb38` and deletes `*(o+0x64)`; if
+    `*(o+0x60)` (`arr`) is set, destroys the `*(arr-0x10)` `0xd0`-byte frame objects in reverse via virtual
+    `+8/+0xc(0)` and frees `arr - 0x10`; destroys `cControllerNode` at `o + 0x30` (`0`); deletes `o` on `how & 1`.
+  - `cAnimComboNode::Draw` 0x1992e0 / `~cAnimComboNode` 0x19a1a8: `Draw` checks `*(o+0x58)+0xe8 & 4` and dispatches
+    vtable `*(o+0x38)` slot `+0xe8/+0xec(inst, 1)`; dtor sets `+0x54 = 0x38c460`, frees `*(o+0x84)` if set, destroys
+    embedded `cAnimObjectNode` at `o + 0x1c` (`0`), deletes `o` on `how & 1`.
+  - `cAnimTexFlipNode::Draw` 0x19a8b0 / `vf28_19a8f0` 0x19a8f0 / `~cAnimTexFlipNode` 0x19ac48: `Draw` checks
+    `*(o+0x70)+0xe8 & 4` and dispatches vtable `*(o+0x50)` slot `+0xe8/+0xec(o+0x18 + adj, inst, 1)`; `vf28` calls
+    `TexFlip_ApplyFrame(o + 0x80)` `0x142d40` and tail-calls `cAnimObjectNode::vf28(o + 0x18, matrix, test)`
+    `0x199320`; dtor sets `+0x50 = 0x38c368`, destroys `cTexFlip` at `o + 0x80` (`2`), destroys `cAnimObjectNode` at
+    `o + 0x18` (`0`), deletes `o` on `how & 1`.
+- Checked bit-for-bit in `tests/animation_tail.rs` (2,000 frame/static-dtor cases + 2,100 node draw/dtor cases);
+  `animation` is now at 0 `not started`.

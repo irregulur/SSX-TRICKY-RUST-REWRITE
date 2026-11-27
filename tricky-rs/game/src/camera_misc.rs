@@ -245,3 +245,88 @@ pub fn resolve_cameras(m: &mut Mem, e: &mut dyn CamMiscEnv, o: u32, n: u32, p: u
     }
     1
 }
+
+/// `cMeshAnimFrame`'s table (0x391af8), `gIdentityMat4` (0x346440), `gAnimData` (0x3211a8),
+/// `AnimData_Destruct` 0x15a8c0, `AnimFrame_SetKey` 0x1cb0d8, `cMeshAnimFrame::vf1` 0x1cb498
+pub const MESH_ANIM_FRAME_VT: u32 = 0x391af8;
+pub const IDENTITY_MAT4: u32 = 0x346440;
+pub const ANIM_DATA_GLOBAL: u32 = 0x3211a8;
+pub const ANIM_DATA_DESTRUCT: u32 = 0x15a8c0;
+pub const ANIM_FRAME_SET_KEY: u32 = 0x1cb0d8;
+pub const MESH_ANIM_FRAME_EVAL: u32 = 0x1cb498;
+
+/// `StaticDtor_AnimLayer` 0x15a980(): tail-calls `AnimData_Destruct(0x3211a8, 2)` (`0x15a8c0`)
+pub fn static_dtor_anim_layer(m: &mut Mem, e: &mut dyn CamMiscEnv) {
+    e.call(m, ANIM_DATA_DESTRUCT, &[ANIM_DATA_GLOBAL, 2]);
+}
+
+/// `cAnimFrame::cAnimFrame` 0x1cba68(f): installs `ANIM_FRAME_VT` at `+0x8c`, calls `AnimFrame_Clear` (`0x1cb150`),
+/// and returns `f`
+pub fn anim_frame_ctor(m: &mut Mem, e: &mut dyn CamMiscEnv, f: u32) -> u32 {
+    m.w32(f + 0x8c, ANIM_FRAME_VT);
+    e.call(m, ANIM_FRAME_CLEAR, &[f]);
+    f
+}
+
+/// `cAnimFrame::~cAnimFrame` 0x1cba40(f, how): restores `ANIM_FRAME_VT` at `+0x8c`, and calls `Mem_Delete(f)` when
+/// `how` has bit 0
+pub fn anim_frame_dtor(m: &mut Mem, e: &mut dyn CamMiscEnv, f: u32, how: u32) {
+    m.w32(f + 0x8c, ANIM_FRAME_VT);
+    if how & 1 != 0 {
+        e.call(m, MEM_DELETE, &[f]);
+    }
+}
+
+/// `AnimFrame_Init` 0x1cb078(f, key; t): installs `ANIM_FRAME_VT` at `+0x8c`, calls `AnimFrame_Clear` (`0x1cb150`),
+/// calls `AnimFrame_SetKey(f, key; t)` (`0x1cb0d8`), and returns `f`
+pub fn anim_frame_init(m: &mut Mem, e: &mut dyn CamMiscEnv, f: u32, key: u32, t: f32) -> u32 {
+    m.w32(f + 0x8c, ANIM_FRAME_VT);
+    e.call(m, ANIM_FRAME_CLEAR, &[f]);
+    e.call_f(m, ANIM_FRAME_SET_KEY, &[f, key], t);
+    f
+}
+
+/// `cMeshAnimFrame::cMeshAnimFrame` 0x1cb278(f, key; t): calls [`anim_frame_init`], installs `MESH_ANIM_FRAME_VT`
+/// at `+0x8c`, copies the 64-byte matrix at `0x346440` into `(f+0x90) & !15`, stores `key` at `+0x48`, calls
+/// `cMeshAnimFrame::vf1(f; t)` (`0x1cb498`), and returns `f`
+pub fn mesh_anim_frame_ctor(m: &mut Mem, e: &mut dyn CamMiscEnv, f: u32, key: u32, t: f32) -> u32 {
+    anim_frame_init(m, e, f, key, t);
+    m.w32(f + 0x8c, MESH_ANIM_FRAME_VT);
+    let dst = (f.wrapping_add(0x90)) & !15;
+    for k in 0..16u32 {
+        let w = m.r32(IDENTITY_MAT4 + 4 * k);
+        m.w32(dst + 4 * k, w);
+    }
+    m.w32(f + 0x48, key);
+    e.call_f(m, MESH_ANIM_FRAME_EVAL, &[f], t);
+    f
+}
+
+/// `cMeshAnimFrame::~cMeshAnimFrame` 0x1cb990(f, how): restores `MESH_ANIM_FRAME_VT` at `+0x8c` and tail-calls
+/// [`anim_frame_dtor`]
+pub fn mesh_anim_frame_dtor(m: &mut Mem, e: &mut dyn CamMiscEnv, f: u32, how: u32) {
+    m.w32(f + 0x8c, MESH_ANIM_FRAME_VT);
+    anim_frame_dtor(m, e, f, how);
+}
+
+/// `AnimFrame_MulMatrix` 0x1cb658(f, mat): multiplies each row of `(f+0x90) & !15` through the four rows of
+/// `mat & !15` (VU0 `vmulax`/`vmadday`/`vmaddaz`/`vmaddw`) and stores the 4×4 product back at `(f+0x90) & !15`
+pub fn anim_frame_mul_matrix(m: &mut Mem, f: u32, mat: u32) {
+    use crate::ps2f::F;
+    let a = mat & !15;
+    let b = f.wrapping_add(0x90) & !15;
+    let row = |m: &Mem, base: u32, i: u32| -> [F; 4] {
+        [0, 1, 2, 3].map(|j| F(f32::from_bits(m.r32(base + 0x10 * i + 4 * j))))
+    };
+    let ra = [row(m, a, 0), row(m, a, 1), row(m, a, 2), row(m, a, 3)];
+    let rb = [row(m, b, 0), row(m, b, 1), row(m, b, 2), row(m, b, 3)];
+    let out: [[F; 4]; 4] = std::array::from_fn(|i| {
+        let v = rb[i];
+        std::array::from_fn(|c| ((ra[0][c] * v[0] + ra[1][c] * v[1]) + ra[2][c] * v[2]) + ra[3][c] * v[3])
+    });
+    for (i, r) in out.iter().enumerate() {
+        for (j, x) in r.iter().enumerate() {
+            m.w32(b + 0x10 * i as u32 + 4 * j as u32, x.0.to_bits());
+        }
+    }
+}

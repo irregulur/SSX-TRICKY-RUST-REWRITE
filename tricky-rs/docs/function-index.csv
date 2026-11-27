@@ -805,7 +805,7 @@ address,size,name,system,status
 0x146660,84,cUVScrollTexFlipNode::SaveSnapshot,world,checked
 0x1466b8,1876,cMeshAnimNode::cMeshAnimNode,animation,checked
 0x146e10,224,cMeshAnimNode::cMeshAnimNode,animation,checked
-0x146ef0,80,cMeshAnimNode::~cMeshAnimNode,animation,not started
+0x146ef0,80,cMeshAnimNode::~cMeshAnimNode,animation,checked
 0x146f40,752,MeshAnimNode_Start,render,ported
 0x147230,620,cMeshAnimNode::Update,animation,checked
 0x1474a0,120,cMeshAnimNode::Kill,animation,checked
@@ -1192,7 +1192,7 @@ address,size,name,system,status
 0x15a798,128,AnimLayer_SaveSnapshot,animation,checked
 0x15a818,168,AnimLayer_LoadSnapshot,animation,checked
 0x15a8c0,192,AnimData_Destruct,animation,checked
-0x15a980,16,StaticDtor_AnimLayer,animation,not started
+0x15a980,16,StaticDtor_AnimLayer,animation,checked
 0x15abe8,92,cBoarderSequence::__tf,runtime,host
 0x15ac48,76,AnimFile_Destruct,animation,checked
 0x15ad18,80,cBoarderSequenceState::__tf,runtime,host
@@ -2311,14 +2311,14 @@ address,size,name,system,status
 0x198750,24,Float_Assign,common,checked
 0x198810,820,cAnimObjectNode::cAnimObjectNode,animation,checked
 0x198b48,604,cAnimObjectNode::cAnimObjectNode,animation,checked
-0x198da8,272,cAnimObjectNode::~cAnimObjectNode,animation,not started
+0x198da8,272,cAnimObjectNode::~cAnimObjectNode,animation,checked
 0x198eb8,260,cAnimObjectNode::OnContact,animation,checked
 0x198fc0,112,AnimObjectNode_RefitBox,animation,ported
 0x199030,36,AnimNode_TickDelay,animation,checked
 0x199058,424,cAnimObjectNode::Update,animation,checked
 0x199200,88,cAnimObjectNode::Kill,animation,checked
 0x199258,132,MeshAnim_ApplyFrames,render,ported
-0x1992e0,64,cAnimComboNode::Draw,animation,not started
+0x1992e0,64,cAnimComboNode::Draw,animation,checked
 0x199320,1328,cAnimObjectNode::vf28_199320,animation,checked
 0x1998d0,36,MeshAnimNode_GetFrameMatrix,render,ported
 0x1998f8,240,cAnimObjectNode::SaveSnapshot,animation,checked
@@ -2329,7 +2329,7 @@ address,size,name,system,status
 0x199ee0,60,cAnimComboNode::vf38_199ee0,animation,checked
 0x199f20,392,AnimComboNode_Init,animation,checked
 0x19a0a8,256,cAnimComboNode::cAnimComboNode,animation,checked
-0x19a1a8,112,cAnimComboNode::~cAnimComboNode,animation,not started
+0x19a1a8,112,cAnimComboNode::~cAnimComboNode,animation,checked
 0x19a218,184,cAnimComboNode::Update,animation,ported
 0x19a390,128,cAnimComboNode::Kill,animation,checked
 0x19a410,104,cAnimComboNode::SaveSnapshot,animation,checked
@@ -2337,11 +2337,11 @@ address,size,name,system,status
 0x19a5a8,344,cAnimTexFlipNode::cAnimTexFlipNode,animation,checked
 0x19a700,120,cAnimTexFlipNode::cAnimTexFlipNode,animation,checked
 0x19a778,312,cAnimTexFlipNode::Update,animation,ported
-0x19a8b0,64,cAnimTexFlipNode::Draw,animation,not started
-0x19a8f0,76,cAnimTexFlipNode::vf28_19a8f0,animation,not started
+0x19a8b0,64,cAnimTexFlipNode::Draw,animation,checked
+0x19a8f0,76,cAnimTexFlipNode::vf28_19a8f0,animation,checked
 0x19aa18,148,Model_IsBoxCulled,render,not started
 0x19aab0,404,MeshAnim_AllocFrames,render,not started
-0x19ac48,108,cAnimTexFlipNode::~cAnimTexFlipNode,animation,not started
+0x19ac48,108,cAnimTexFlipNode::~cAnimTexFlipNode,animation,checked
 0x19acb8,92,cAnimTexFlipNode::__tf,runtime,host
 0x19ad18,92,cAnimComboNode::__tf,runtime,host
 0x19ad90,84,cAnimDeltaNode::__tf,runtime,host
@@ -2768,25 +2768,25 @@ address,size,name,system,status
 0x1cae08,64,cFogVolume::__tf,runtime,host
 0x1cae48,44,Vec4_ScaleCopy23,common,checked
 0x1caef8,212,EffectsLoader_LoadTextures,game,ported
-0x1cb078,92,AnimFrame_Init,animation,not started
+0x1cb078,92,AnimFrame_Init,animation,checked
 0x1cb0d8,116,AnimFrame_SetKey,animation,checked
 0x1cb150,68,AnimFrame_Clear,animation,checked
 0x1cb198,120,AnimObjectNode_SaveState,animation,checked
 0x1cb210,100,AnimObjectNode_LoadState,animation,checked
-0x1cb278,136,cMeshAnimFrame::cMeshAnimFrame,animation,not started
+0x1cb278,136,cMeshAnimFrame::cMeshAnimFrame,animation,checked
 0x1cb300,404,cAnimFrame::vf1_1cb300,animation,ported
 0x1cb498,448,cMeshAnimFrame::vf1_1cb498,animation,checked
-0x1cb658,188,AnimFrame_MulMatrix,animation,not started
+0x1cb658,188,AnimFrame_MulMatrix,animation,checked
 0x1cb718,76,cCamAnimFrame::cCamAnimFrame,camera,checked
 0x1cb768,8,cCamAnimFrame::vf1_1cb768,camera,checked
 0x1cb770,192,AnimCurve_FindSegment,animation,ported
 0x1cb8b0,20,cCamAnimFrame::~cCamAnimFrame,camera,checked
 0x1cb908,80,cCamAnimFrame::__tf,runtime,host
 0x1cb960,48,AnimFrame_SetIdentity,animation,checked
-0x1cb990,20,cMeshAnimFrame::~cMeshAnimFrame,animation,not started
+0x1cb990,20,cMeshAnimFrame::~cMeshAnimFrame,animation,checked
 0x1cb9f0,80,cMeshAnimFrame::__tf,runtime,host
-0x1cba40,36,cAnimFrame::~cAnimFrame,animation,not started
-0x1cba68,52,cAnimFrame::cAnimFrame,animation,not started
+0x1cba40,36,cAnimFrame::~cAnimFrame,animation,checked
+0x1cba68,52,cAnimFrame::cAnimFrame,animation,checked
 0x1cbaa0,84,cAnimFrame::__tf,runtime,host
 0x1cbb38,80,cAnimFrameState::__tf,runtime,host
 0x1cbb88,64,cReplayRecordHeader::__tf,runtime,host
