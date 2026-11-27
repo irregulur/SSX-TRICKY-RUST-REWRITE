@@ -42,6 +42,7 @@ state machine and the renderer are ours. Nothing has been checked against the or
 | E8 | Physics: check the ported boarder motion against the original once F4 exists: ground `cBoarder_GroundMotion_Update` 0x10a0d8, drag 0x109cb8, side friction 0x109ef8, thrust 0x109950, spring 0x109878, probe 0x128ae8, surface table `SurfaceTable_Init` 0x256188 | any | F4a | | [repo] Ported in `rider.rs`; README still says some constants at the top of `rider.rs` are guesswork: find which. Split: E8f–E8i |
 | E8a | Air: `Air_IntegrateRK4` 0x12b340, `AirPredict_AtTakeoff` 0x123b10, landing `Air_MotionUpdate` 0x108378, `Landing_CheckAngles` 0x12ba78, `Landing_ChooseState` 0x109308 | any | F4a | | [repo] Ported, unchecked Split: E8a1, E8a2 |
 | E9 | Script machine: `TriggerScript_Run`, `TriggerScript_ExecOp` 0x13bfd0 with every op, controllers (`TriggerScript_Op0_SpawnController` 0x13c600), persistent cell scripts, run at runtime instead of read statically | unowned | E3c | | [repo] `logic.rs` reads SSFLogic.json statically today |
+| E9n | Split of E9: 28 `not started` `world` UVScroll/TexFlip/Fence/Flag/Cracked/CrowdBox/TrickTrigger/Emitter/Particle/CollideEmitter/Movie/RailMan node functions (`0x142128..0x148f70`) ported and runner-checked | any | F4 | irregulur/neon (2026-11-27) | Split of E9 |
 | E11 | Camera: named cameras `cBxCamera_EvalNamedCam` 0x174888 (ported), director scripts `cBxCamera_RunDirectorScript`, replay and finish cameras, camera collision | any | | | [repo] Chase cam ported in `rider.rs`; free camera is ours (keep, tag) |
 
 ## P2 Gameplay systems
@@ -2011,3 +2012,4 @@ matches the original.
 - 2026-11-27 irregulur/neon: E9l done (ported and runner-checked 42 `world` base node / controller / counter / script functions in `controllers.rs`; `world` down to 96 `not started`, total `not started` down to 534).
 - 2026-11-27 irregulur/neon: added and claimed E9m (split of E9).
 - 2026-11-27 irregulur/neon: E9m done (ported and runner-checked 35 `world` roller, debounce, timer, boost, and node destructor functions in `controllers.rs`; `world` down to 61 `not started`, total `not started` down to 499).
+- 2026-11-27 irregulur/neon: added and claimed E9n (split of E9).
