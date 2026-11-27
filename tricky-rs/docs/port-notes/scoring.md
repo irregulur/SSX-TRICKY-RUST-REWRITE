@@ -194,3 +194,16 @@ Part of the port notes (index: [README.md](README.md)); units and wording as des
 - Verified against real `TRICKY_DISC` (`DATA/TUTORIAL/TRICKDEF.DAT` + `CareerFile`) in
   `book::tests::career_trick_book_check_uses_trickdef_and_lesson_gate` (lesson gate, mode gate, chapter-order
   gating, chapter completion, score message `0x11`, and chapter 2 unlocking).
+
+## The score ranks (row G2e; `tricky_game::rank`, checked: `tests/rank.rs`)
+
+Proven (from the disassembly; Ghidra was not running):
+
+- The six ranks at 0x338120, 0x14 bytes each: the least points as a float (0, 1001, 2501, 4001, 7501, 11501), then
+  a colour (four floats).
+- `Score_GetRankForPoints` 0x19e7a0(points, colour): the int points as a float; from rank 5 down, the first whose
+  least points are ≤ them (a NaN never is); 0 if none. With `colour` not 0, rank 0's colour is stored first,
+  then the found rank's. `Score_GetRankColour` 0x19e840(rank, colour): any rank, the table read as it lies.
+  `Score_GetTrickName` 0x157978: score + 0x250.
+- Checked in the runner on the game's table and random ones (NaN, negative, unordered thresholds), 60,000 points;
+  8 mutants: 7 killed, 1 equivalent (the rank 0 test, whose colour is already stored).

@@ -137,6 +137,7 @@ pub mod race;
 pub mod raceline;
 pub mod raceoverlays;
 pub mod rand;
+pub mod rank;
 pub mod ground;
 pub mod ground_motion;
 pub mod jump;

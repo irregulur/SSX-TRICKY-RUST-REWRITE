@@ -1127,7 +1127,7 @@ address,size,name,system,status
 0x157308,40,Score_ClearTrickEntries,scoring,checked
 0x157330,352,Scoring_PushMessage,scoring,checked
 0x157490,1252,Score_BuildTrickId,scoring,checked
-0x157978,8,Score_GetTrickName,scoring,ported
+0x157978,8,Score_GetTrickName,scoring,checked
 0x157980,40,Score_SaveSnapshot,scoring,checked
 0x1579a8,56,Score_LoadSnapshot,scoring,checked
 0x1579e0,572,Score_TrickBookCheck,scoring,checked
@@ -2398,8 +2398,8 @@ address,size,name,system,status
 0x19e3b0,8,thunk_FUN_0019ded0,runtime,ported
 0x19e460,572,Font_DrawWithCursor,hud,checked
 0x19e6a0,124,StaticInit_Font,hud,checked
-0x19e7a0,160,Score_GetRankForPoints,scoring,ported
-0x19e840,68,Score_GetRankColour,scoring,ported
+0x19e7a0,160,Score_GetRankForPoints,scoring,checked
+0x19e840,68,Score_GetRankColour,scoring,checked
 0x19e888,12492,HudOverlay_InitTables,frontend,checked
 0x1a1958,8,cHUDOverlay::Reset,frontend,checked
 0x1a1960,8,cHUDOverlay::vf16_1a1960,frontend,checked
