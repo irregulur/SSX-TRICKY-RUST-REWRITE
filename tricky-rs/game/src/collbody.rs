@@ -5,6 +5,8 @@
 //! overlap these give.
 
 use crate::jump::{add, dot, normalize, scale, sub};
+use crate::pf::Mem;
+use crate::ps2f::{load, F};
 
 type V4 = [f32; 4];
 
@@ -66,6 +68,83 @@ impl CollBody {
             s.0 = add(s.0, v);
         }
     }
+
+    /// `CollBody_ConstructCopy` 0x236000 on Rust values: copy of `src`.
+    pub fn construct_copy(src: &CollBody) -> CollBody {
+        *src
+    }
+
+    /// `CollBody_Copy` 0x236130 on Rust values: copies all fields from `src`.
+    pub fn copy_from(&mut self, src: &CollBody) {
+        *self = *src;
+    }
+
+    /// `CollBody_GetSphereBounds` 0x236758: `(min, max)` AABB covering the bounding centre and all `count`
+    /// spheres (`c ± r` per axis, `w` kept as `center[3]`; returns `(center, center)` when `count <= 0`).
+    pub fn sphere_bounds(&self) -> (V4, V4) {
+        let mut lo = self.center;
+        let mut hi = self.center;
+        if self.count <= 0 {
+            return (lo, hi);
+        }
+        for &(c, r) in self.spheres.iter().take(self.count as usize) {
+            let rf = F(r);
+            for i in 0..3 {
+                let a = (F(c[i]) - rf).0;
+                if load(a) < load(lo[i]) {
+                    lo[i] = a;
+                }
+            }
+            for i in 0..3 {
+                let b = (F(c[i]) + rf).0;
+                if load(hi[i]) < load(b) {
+                    hi[i] = b;
+                }
+            }
+        }
+        (lo, hi)
+    }
+}
+
+/// `CollBody_Construct` 0x235fc8(this): runs 18 empty sphere constructors (no bytes written) and returns `this`.
+pub fn construct_bytes(this: u32) -> u32 {
+    this
+}
+
+/// `CollBody_SetSkeleton` 0x236128(this, skel): stores the skeleton bone-matrix pointer at `+0x0`.
+pub fn set_skeleton(m: &mut Mem, body: u32, skel: u32) {
+    m.w32(body, skel);
+}
+
+/// `CollBody_Copy` 0x236130(dst, src): copies `+0x0` (skeleton ptr), `+0x10..+0x20` (center), `+0x20` (radius),
+/// `+0x24` (`x24`), `+0x28` (count), and `+0x30..+0x270` (`0x240` bytes = 18 spheres via `EAMem_Copy`), leaving
+/// padding `+0x04..+0x10` and `+0x2c..+0x30` untouched; returns `dst`.
+pub fn copy_bytes(m: &mut Mem, dst: u32, src: u32) -> u32 {
+    let skel = m.r32(src);
+    let rad = m.r32(src + 0x20);
+    m.w32(dst, skel);
+    m.w32(dst + 0x20, rad);
+    for off in (0x10..0x20u32).step_by(4) {
+        let w = m.r32(src + off);
+        m.w32(dst + off, w);
+    }
+    let cnt = m.r32(src + 0x28);
+    m.w32(dst + 0x28, cnt);
+    let mask = m.r32(src + 0x24);
+    m.w32(dst + 0x24, mask);
+    let mut buf = [0u8; 0x240];
+    for (i, b) in buf.iter_mut().enumerate() {
+        *b = m.r8(src + 0x30 + i as u32);
+    }
+    for (i, &b) in buf.iter().enumerate() {
+        m.w8(dst + 0x30 + i as u32, b);
+    }
+    dst
+}
+
+/// `CollBody_ConstructCopy` 0x236000(dst, src): runs 18 empty sphere constructors, then [`copy_bytes`], returning `dst`.
+pub fn construct_copy_bytes(m: &mut Mem, dst: u32, src: u32) -> u32 {
+    copy_bytes(m, dst, src)
 }
 
 /// `CollBody_OverlapSpheres` 0x236a00: if the bounding spheres meet, the first pair of spheres (a's in order, then

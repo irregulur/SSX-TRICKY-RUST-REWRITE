@@ -243,11 +243,22 @@ Part of the port notes (index: [README.md](README.md)); units and wording as des
   the line between them, the bounding centre halfway between 8 and 9; `CollBody_Translate` moves it all;
   `CollBody_OverlapSpheres` 0x236a00: bounding spheres first, then the first overlapping pair (a's spheres in order,
   then b's) gives the push (unit a→b × overlap) and the touching point on a's sphere.
-- Body set-up (proven, F1c): `CollBody_Construct` 0x235fc8 only runs the 18 sphere constructors (empty; from `cBoarder`
-  on rider+0x470 and `cWorldBoarder` on +0x60); `CollBody_ConstructCopy` 0x236000 constructs then `CollBody_Copy`s
-  (no direct callers). Body+0 is the skeleton's bone matrices (`CollBody_UpdateFromBones` reads bone k at +0x30 + 0x40·k):
-  `CollBody_SetSkeleton` 0x236128 stores it (`cBoarder` passes rider+0x4ae0, `cBoarder::vf8` the pointer at +4 of
-  the object at rider+0x4494).
+- Body set-up (proven, F1c / E8u, `tricky_game::collbody`, checked in `tests/wipeout_rest.rs`):
+  `CollBody_Construct` 0x235fc8 only runs 18 empty sphere constructors and returns `this` without touching memory;
+  `CollBody_ConstructCopy` 0x236000 runs those 18 empty constructors then calls `CollBody_Copy` 0x236130 (copies
+  `+0x0` skeleton ptr, `+0x10..+0x20` center, `+0x20` radius, `+0x24` mask, `+0x28` count, and `+0x30..+0x270`
+  via `EAMem_Copy`, leaving `+0x04..+0x10` and `+0x2c..+0x30` untouched, returning `dst`). Body+0 is the
+  skeleton's bone matrices (`CollBody_UpdateFromBones` reads bone k at +0x30 + 0x40·k): `CollBody_SetSkeleton`
+  0x236128 stores it (`cBoarder` passes rider+0x4ae0, `cBoarder::vf8` the pointer at +4 of the object at
+  rider+0x4494). `CollBody_GetSphereBounds` 0x236758 initializes `(min, max)` to `(+0x10, +0x10)` (including `w`),
+  returns immediately if `count <= 0`, else expands `min`/`max` by `c ± r` per axis across all `count` spheres.
+- Node hit & empty contact callback (proven, E8u, `tricky_game::ragdoll`, checked in `tests/wipeout_rest.rs`):
+  `Ragdoll_OnContact` 0x10ebc8 is empty (`jr ra; nop`). `Ragdoll_HitNode` 0x10ebd0 builds a `cWorldBoarder`
+  (flag `1`) from `rider+0x470`, casts it against `node` via `WorldNode_RayCast` 0x13aad0, and when `0.0 < t`
+  and the contact point velocity closes on `out.normal`, calls `RigidBody_ContactImpulse` (`e = 0.9`, `mu = 0.0`);
+  if `node` virtual `+0x60/+0x64` returns non-zero, delivers `Contact { pos: out.pos, dir: out.normal, normal:
+  out.normal, speed_in: |rb.v| }` (post-impulse speed) and `out` to `node` virtual `+0x98/+0x9c`. Always destroys
+  the `cWorldBoarder` (`vf10` 0x257ca0, `how = 2`).
 - The pair records (rider+0x40 + 0x20 × the other's index), written every tick by `Race_UpdatePairDistances`
   0x115a80: [0] the flat distance between the riders (rider+0x480, x and y), [1] the bearing to the other (the later
   rider of a pair keeps atan2 of the difference as is, the earlier one + π wrapped to −π..π); +8 and +0xc the ticks

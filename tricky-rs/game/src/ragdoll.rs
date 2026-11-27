@@ -89,6 +89,21 @@ pub trait RagEnv: RollerEnv {
     }
 }
 
+/// What `Ragdoll_HitNode` 0x10ebd0 asks of the world node it casts against.
+pub trait NodeHitEnv {
+    /// `WorldNode_RayCast` 0x13aad0(node, shape, out)
+    fn ray_cast(&mut self, node: u32, shape: &WorldBoarder) -> (f32, CastOut);
+    /// the node's virtual `+0x60/+0x64` (non-zero to deliver contact)
+    fn can_contact(&mut self, node: u32) -> u32;
+    /// the node's virtual `+0x98/+0x9c`(node, contact, out)
+    fn on_contact(&mut self, node: u32, c: &Contact, out: &CastOut);
+    /// `cWorldBoarder::vf10` 0x257ca0(shape, 2) on exit
+    fn destroy_shape(&mut self, _shape: &WorldBoarder, _how: u32) {}
+}
+
+/// `Ragdoll_OnContact` 0x10ebc8: empty callback (`jr ra; nop`).
+pub fn on_contact() {}
+
 /// v times 1/√(v·v) (`vrsqrt`)
 fn unit(v: [F; 4]) -> [F; 4] {
     scale(v, F(1.0) / dot(v, v).sqrt())
@@ -304,6 +319,28 @@ impl Ragdoll {
         self.rb.add_impulse(st(ra), st(jn));
         roller.rb.add_impulse(st(rb), st(scale(jn, F(-1.0))));
         roller.on_hit(object, None, env);
+    }
+
+    /// `Ragdoll_HitNode` 0x10ebd0(node): builds a `cWorldBoarder` (flag 1) from `r.body` and casts it against
+    /// `node` (`WorldNode_RayCast` 0x13aad0). When `0.0 < t` and the contact point closes on `out.normal`,
+    /// applies `RigidBody_ContactImpulse` (`e = 0.9`, `mu = 0.0`) and, if `node` virtual `+0x60/+0x64` returns
+    /// non-zero, delivers `Contact { pos: out.pos, dir: out.normal, normal: out.normal, speed_in: |rb.v| }` and
+    /// `out` to `node` virtual `+0x98/+0x9c`. Always destroys the `cWorldBoarder` (`vf10` 0x257ca0, `how = 2`).
+    pub fn hit_node<E: NodeHitEnv>(&mut self, r: &RagRider, node: u32, env: &mut E) {
+        let shape = WorldBoarder::new(&r.body, 1);
+        let (t, out) = env.ray_cast(node, &shape);
+        if 0.0 < t {
+            if dot(self.point_velocity(out.pos), ld(out.normal)) < F(0.0) {
+                self.rb.contact_impulse(f32::from_bits(0x3f66_6666), 0.0, out.pos, out.normal);
+                if env.can_contact(node) != 0 {
+                    let v = ld(self.rb.v);
+                    let speed = dot(v, v).sqrt().0;
+                    let c = Contact { pos: out.pos, dir: out.normal, normal: out.normal, speed_in: speed };
+                    env.on_contact(node, &c, &out);
+                }
+            }
+        }
+        env.destroy_shape(&shape, 2);
     }
 }
 

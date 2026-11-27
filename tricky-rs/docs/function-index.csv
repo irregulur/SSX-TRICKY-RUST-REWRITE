@@ -118,8 +118,8 @@ address,size,name,system,status
 0x10dad8,460,Ragdoll_InitFromBoarder,wipeout,checked
 0x10dca8,1252,Ragdoll_Step,wipeout,checked
 0x10e190,2616,Ragdoll_Contacts,wipeout,checked
-0x10ebc8,8,Ragdoll_OnContact,wipeout,not started
-0x10ebd0,408,Ragdoll_HitNode,wipeout,not started
+0x10ebc8,8,Ragdoll_OnContact,wipeout,checked
+0x10ebd0,408,Ragdoll_HitNode,wipeout,checked
 0x10ed68,1040,Ragdoll_HitRoller,wipeout,ported
 0x10f178,2088,Wipeout_StartGetUp,wipeout,checked
 0x10f9a0,740,Wipeout_PlayImpactClip,wipeout,checked
@@ -4207,17 +4207,17 @@ address,size,name,system,status
 0x235ba8,432,Speech_OnBigScore,audio,checked
 0x235d58,112,Speech_RollChance,audio,checked
 0x235e70,88,OwnedBuf_Delete2,render,not started
-0x235fc8,52,CollBody_Construct,wipeout,not started
-0x236000,80,CollBody_ConstructCopy,wipeout,not started
+0x235fc8,52,CollBody_Construct,wipeout,checked
+0x236000,80,CollBody_ConstructCopy,wipeout,checked
 0x236050,212,CollBody_InitRider,wipeout,checked
-0x236128,8,CollBody_SetSkeleton,wipeout,not started
-0x236130,96,CollBody_Copy,wipeout,not started
+0x236128,8,CollBody_SetSkeleton,wipeout,checked
+0x236130,96,CollBody_Copy,wipeout,checked
 0x236190,28,CollBody_Destruct,wipeout,checked
 0x2361b0,660,CollBody_UpdateFromBones,wipeout,checked
 0x236448,80,CollBody_Translate,wipeout,checked
 0x236498,152,CollBody_Transform,wipeout,checked
 0x236530,548,CollBody_PointMassInertia,wipeout,checked
-0x236758,216,CollBody_GetSphereBounds,wipeout,not started
+0x236758,216,CollBody_GetSphereBounds,wipeout,checked
 0x236830,460,CollBody_GetActiveBounds,wipeout,ported
 0x236a00,440,CollBody_OverlapSpheres,wipeout,checked
 0x236bb8,2240,Collide_SphereTriangle,world,ported
