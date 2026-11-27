@@ -669,30 +669,30 @@ address,size,name,system,status
 0x13dbe8,344,RollerNode_PushWithVelocity,world,checked
 0x13dd40,424,RollerNode_PushFromContact,world,checked
 0x13dee8,464,cRollerNode::cRollerNode,world,checked
-0x13e0b8,136,cRollerNode::~cRollerNode,world,not started
+0x13e0b8,136,cRollerNode::~cRollerNode,world,checked
 0x13e140,1372,RollerNode_UpdateTransform,world,checked
 0x13e6a0,448,RollerNode_PlaceFromBody,world,checked
 0x13e860,72,cRollerNode::Finish,world,ported
 0x13e8a8,1156,cRollerNode::Update,world,checked
 0x13ed30,116,RollerNode_Translate,world,ported
 0x13eda8,1412,RollerNode_Collide,world,checked
-0x13f330,280,RollerNode_HitNode,world,not started
+0x13f330,280,RollerNode_HitNode,world,checked
 0x13f448,380,Roller_OnHit,world,checked
 0x13f5c8,1072,Roller_CheckCollision,world,checked
 0x13f9f8,404,cRollerNode::Draw,world,checked
 0x13fb90,92,cRollerNode::SaveSnapshot,world,checked
-0x13fbf0,104,cDebounceNode::cDebounceNode,world,not started
+0x13fbf0,104,cDebounceNode::cDebounceNode,world,checked
 0x13fc58,80,cDebounceNode::cDebounceNode,world,checked
-0x13fca8,68,cDebounceNode::Update,world,not started
-0x13fcf0,64,cDebounceNode::Kill,world,not started
-0x13fd30,92,cDebounceNode::Finish,world,not started
+0x13fca8,68,cDebounceNode::Update,world,checked
+0x13fcf0,64,cDebounceNode::Kill,world,checked
+0x13fd30,92,cDebounceNode::Finish,world,checked
 0x13fd90,60,cDebounceNode::SaveSnapshot,world,checked
-0x13fdd0,124,cTimerNode::cTimerNode,world,not started
+0x13fdd0,124,cTimerNode::cTimerNode,world,checked
 0x13fe50,80,cTimerNode::cTimerNode,world,checked
-0x13fea0,264,cTimerNode::Update,world,not started
-0x13ffa8,64,cTimerNode::Kill,world,not started
-0x13ffe8,92,cTimerNode::Finish,world,not started
-0x140048,52,cTimerNode::OnMessage,world,not started
+0x13fea0,264,cTimerNode::Update,world,checked
+0x13ffa8,64,cTimerNode::Kill,world,checked
+0x13ffe8,92,cTimerNode::Finish,world,checked
+0x140048,52,cTimerNode::OnMessage,world,checked
 0x140080,84,cTimerNode::SaveSnapshot,world,checked
 0x1400d8,196,cRailNode::cRailNode,world,checked
 0x1401a0,116,cRailNode::cRailNode,world,checked
@@ -706,34 +706,34 @@ address,size,name,system,status
 0x140440,84,cRailNode::SaveSnapshot,world,checked
 0x140498,248,cBoostNode::cBoostNode,world,ported
 0x140590,160,cBoostNode::cBoostNode,world,checked
-0x140630,88,cBoostNode::~cBoostNode,world,not started
+0x140630,88,cBoostNode::~cBoostNode,world,checked
 0x140688,428,cTubeEndBoostNode::Update,world,ported
 0x140838,148,cBoostNode::vf27_140838,world,ported
 0x1408d0,28,cTubeEndBoostNode::OnMessage,world,checked
 0x1408f0,84,cBoostNode::SaveSnapshot,world,checked
 0x140948,336,cLapBoostNode::cLapBoostNode,world,checked
 0x140a98,160,cLapBoostNode::cLapBoostNode,world,checked
-0x140b38,88,cLapBoostNode::~cLapBoostNode,world,not started
+0x140b38,88,cLapBoostNode::~cLapBoostNode,world,checked
 0x140b90,1528,cLapBoostNode::Update,world,checked
-0x141188,8,cLapBoostNode::Draw,world,not started
-0x141190,8,cLapBoostNode::Kill,world,not started
-0x141198,24,cLapBoostNode::Finish,world,not started
+0x141188,8,cLapBoostNode::Draw,world,checked
+0x141190,8,cLapBoostNode::Kill,world,checked
+0x141198,24,cLapBoostNode::Finish,world,checked
 0x1411b0,84,cLapBoostNode::SaveSnapshot,world,checked
-0x141208,220,cRandomBoostNode::cRandomBoostNode,world,not started
+0x141208,220,cRandomBoostNode::cRandomBoostNode,world,checked
 0x1412e8,116,cRandomBoostNode::cRandomBoostNode,world,checked
 0x141360,572,cRandomBoostNode::vf27_141360,world,ported
-0x1415a0,16,cRandomBoostNode::vf28_1415a0,world,not started
-0x1415b0,124,cRandomBoostNode::vf29_1415b0,world,not started
+0x1415a0,16,cRandomBoostNode::vf28_1415a0,world,checked
+0x1415b0,124,cRandomBoostNode::vf29_1415b0,world,checked
 0x141630,84,cRandomBoostNode::SaveSnapshot,world,checked
-0x141688,372,cTubeEndBoostNode::cTubeEndBoostNode,world,not started
+0x141688,372,cTubeEndBoostNode::cTubeEndBoostNode,world,checked
 0x141800,168,cTubeEndBoostNode::cTubeEndBoostNode,world,checked
 0x1418a8,336,cTubeEndBoostNode::BoostRider,world,ported
-0x1419f8,16,cTubeEndBoostNode::vf28_1419f8,world,not started
-0x141a08,124,cTubeEndBoostNode::vf29_141a08,world,not started
+0x1419f8,16,cTubeEndBoostNode::vf28_1419f8,world,checked
+0x141a08,124,cTubeEndBoostNode::vf29_141a08,world,checked
 0x141a88,104,cTubeEndBoostNode::SaveSnapshot,world,checked
 0x141af0,236,cZBoostNode::cZBoostNode,world,ported
 0x141be0,160,cZBoostNode::cZBoostNode,world,checked
-0x141c80,88,cZBoostNode::~cZBoostNode,world,not started
+0x141c80,88,cZBoostNode::~cZBoostNode,world,checked
 0x141cd8,700,cZBoostNode::Update,world,ported
 0x141f98,84,cZBoostNode::SaveSnapshot,world,checked
 0x141ff0,196,cUVScrollNode::cUVScrollNode,world,checked
@@ -863,38 +863,38 @@ address,size,name,system,status
 0x1494f8,84,cEmitterNode::__tf,runtime,host
 0x149550,92,cTrickTriggerNode::__tf,runtime,host
 0x1495b0,92,cMeshAnimNode::__tf,runtime,host
-0x149610,20,cCrowdBoxNode::~cCrowdBoxNode,world,not started
+0x149610,20,cCrowdBoxNode::~cCrowdBoxNode,world,checked
 0x149628,92,cCrowdBoxNode::__tf,runtime,host
-0x149688,20,cDebounceNode::~cDebounceNode,world,not started
+0x149688,20,cDebounceNode::~cDebounceNode,world,checked
 0x1496a0,84,cDebounceNode::__tf,runtime,host
-0x1496f8,76,cCrackedNode::~cCrackedNode,world,not started
+0x1496f8,76,cCrackedNode::~cCrackedNode,world,checked
 0x149748,92,cCrackedNode::__tf,runtime,host
 0x1497a8,92,cFlagNode::__tf,runtime,host
 0x149808,92,cFenceNode::__tf,runtime,host
-0x149868,108,cUVScrollTexFlipNode::~cUVScrollTexFlipNode,world,not started
+0x149868,108,cUVScrollTexFlipNode::~cUVScrollTexFlipNode,world,checked
 0x1498d8,92,cUVScrollTexFlipNode::__tf,runtime,host
-0x149938,76,cTexFlipNode::~cTexFlipNode,world,not started
+0x149938,76,cTexFlipNode::~cTexFlipNode,world,checked
 0x149988,92,cTexFlipNode::__tf,runtime,host
 0x1499e8,36,cTexFlip::~cTexFlip,render,not started
 0x149a10,64,cTexFlip::__tf,runtime,host
 0x149a88,20,UVScroll_ClearRegistry,world,ported
 0x149aa0,92,cUVScrollNode::__tf,runtime,host
 0x149b00,92,cZBoostNode::__tf,runtime,host
-0x149b78,20,cTubeEndBoostNode::~cTubeEndBoostNode,world,not started
+0x149b78,20,cTubeEndBoostNode::~cTubeEndBoostNode,world,checked
 0x149b90,92,cTubeEndBoostNode::__tf,runtime,host
-0x149bf0,20,cRandomBoostNode::~cRandomBoostNode,world,not started
+0x149bf0,20,cRandomBoostNode::~cRandomBoostNode,world,checked
 0x149c08,92,cRandomBoostNode::__tf,runtime,host
 0x149c68,92,cLapBoostNode::__tf,runtime,host
-0x149cc8,8,cBoostNode::vf29_149cc8,world,not started
-0x149cd0,8,cBoostNode::vf28_149cd0,world,not started
+0x149cc8,8,cBoostNode::vf29_149cc8,world,checked
+0x149cd0,8,cBoostNode::vf28_149cd0,world,checked
 0x149cd8,92,cBoostNode::__tf,runtime,host
 0x149d38,92,cRailNode::__tf,runtime,host
-0x149d98,20,cTimerNode::~cTimerNode,world,not started
+0x149d98,20,cTimerNode::~cTimerNode,world,checked
 0x149db0,92,cTimerNode::__tf,runtime,host
 0x149e10,8,cRollerNode::vf13_149e10,world,ported
-0x149e18,12,cRollerNode::vf12_149e18,world,not started
+0x149e18,12,cRollerNode::vf12_149e18,world,checked
 0x149e28,8,cRollerNode::vf11_149e28,world,ported
-0x149e48,52,cRollerNode::Kill,world,not started
+0x149e48,52,cRollerNode::Kill,world,checked
 0x149e80,100,cRollerNode::__tf,runtime,host
 0x149fd8,44,Vec4_ScaleCopy16,common,checked
 0x14a040,60,Mem_Free,common,checked

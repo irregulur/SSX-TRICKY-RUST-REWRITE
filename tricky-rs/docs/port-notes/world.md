@@ -3014,3 +3014,24 @@ Proven (`SLUS_203.26` disassembly + runner):
   tail-calls `Instance_DrawVisibleCells(0x346488)` (`0x200390`).
 - Checked bit-for-bit across all 42 functions in `tests/world_base_nodes_tail.rs` (reducing `world` `not started`
   from 138 to 96).
+
+## Roller, debounce, timer, boost & node destructors (row E9m, `controllers.rs`, checked: `tests/world_controllers_tail.rs`)
+
+Proven (`SLUS_203.26` disassembly + runner):
+
+- **`cRollerNode` (`0x13e0b8`, `0x13f330`, `0x149e18`, `0x149e48`)**: destructor removes contacts for `+0x2c0`,
+  restores instance flags with mask `0xffff_0100`, destructs embedded `bxSphereTree` at `+0x150`, and chains to
+  `cControllerNode`; `RollerNode_HitNode` builds a temporary `cWorldSphTree`, ray-casts `other`, notifies via
+  virtuals `+0x60`/`+0x98` with the 4D length of `this+0xa0`, and calls `RigidBody_ContactImpulse(..., 0.9, 0.0)`.
+- **`cDebounceNode` (`0x13fbf0..0x13fd30`, `0x149688`) & `cTimerNode` (`0x13fdd0..0x140048`, `0x149d98`)**:
+  exact engine-memory ports of constructor (`secs * 60.0`), `Update` (timer spawns a `0xf0`-byte `cScriptNode` on
+  `gScriptPool` `0x345e48` with `0xdeadc0de` fill for event 4), `Kill`, `Finish` (`Controller_RunFinishScript`),
+  and `cTimerNode::OnMessage` (`kind == 1` resets `+0x38`).
+- **Boost nodes & remaining controller destructors (`0x140630..0x141c80`, `0x149610..0x149cd0`)**: `cBoostNode`,
+  `cLapBoostNode`, `cZBoostNode`, `cRandomBoostNode`, and `cTubeEndBoostNode` remove contacts for `+0x70`;
+  `RandomBoost` / `TubeEndBoost` ctors initialize 6 rider vectors to `1e10` (`0x5015_02f9`) and zero 6 flag bytes,
+  with `vf28` clearing the flags and `vf29` resetting unused rider X slots to `1e10` when `*(+0x5c) <= 0`.
+  `cCrackedNode`, `cTexFlipNode`, and `cUVScrollTexFlipNode` (`+0x2c` vtable `0x36ce78`) destruct their embedded
+  `cTexFlip` / `cUVScrollNode`.
+- Checked bit-for-bit across all 35 functions in `tests/world_controllers_tail.rs` (reducing `world` `not started`
+  from 96 to 61).
