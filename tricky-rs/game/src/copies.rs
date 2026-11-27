@@ -116,3 +116,6 @@ pub fn ptr_array_free_all(m: &mut Mem, e: &mut dyn FeEnv, arr: u32) {
     }
     m.w32(arr, 0);
 }
+
+/// `Misc_EmptyStubA` 0x256100(...): varargs empty stub (spills `$a1..$t3` into its own stack frame and returns)
+pub fn empty_stub() {}

@@ -850,6 +850,126 @@ pub fn draw_anchored(m: &mut Mem, env: &mut dyn SpritesEnv, rect: u32, flags: u3
     env.call(m, func, &[FONT_COLOR], &[x.0, y.0, sw.0, sh.0, a.0, b.0, c.0, d.0]);
 }
 
+fn read16(m: &Mem, addr: u32) -> [u8; 16] {
+    std::array::from_fn(|i| m.r8(addr.wrapping_add(i as u32)))
+}
+
+fn write16(m: &mut Mem, addr: u32, bytes: &[u8; 16]) {
+    for (i, &b) in bytes.iter().enumerate() {
+        m.w8(addr.wrapping_add(i as u32), b);
+    }
+}
+
+/// `Sprite_DrawAnchoredGradient` 0x1fc330 (the rectangle, the flags, four 16-byte colour pointers `c0..c3`,
+/// caller's `sp`; x, y, w, h): binds the rectangle's texture (+0, renderer +0x1f4), copies the four 16-byte colours
+/// into the 0xe0-byte stack frame (`frame+0x00..+0x30`), flips `b`/`c` along with `(c0,c1)` and `(c2,c3)` on bit 0
+/// and `a`/`d` along with `(c0,c2)` and `(c1,c3)` on bit 1, applies the same anchor/centre/quarter-turn rules as
+/// [`draw_anchored`], and submits to `Sprite_SubmitGradientQuad` 0x19b4d8 (unturned) or
+/// `Sprite_SubmitGradientQuadRotated` 0x19bf90 (turned, bit 4; `w` and `h` swapped)
+#[allow(clippy::too_many_arguments)]
+pub fn draw_anchored_gradient(
+    m: &mut Mem,
+    env: &mut dyn SpritesEnv,
+    rect: u32,
+    flags: u32,
+    c0: u32,
+    c1: u32,
+    c2: u32,
+    c3: u32,
+    sp: u32,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+) {
+    let frame = sp.wrapping_sub(0xe0);
+    let (mut x, mut y, w, h) = (F(x), F(y), F(w), F(h));
+    env.renderer(m, 0x1f4, &[m.r32(rect), 0], &[]);
+    let mut col = [read16(m, c0), read16(m, c1), read16(m, c2), read16(m, c3)];
+    let (mut a, mut b, mut c, mut d) = (fl(m, rect + 12), fl(m, rect + 16), fl(m, rect + 20), fl(m, rect + 24));
+    if flags & 1 != 0 {
+        col.swap(0, 1);
+        std::mem::swap(&mut b, &mut c);
+        col.swap(2, 3);
+    }
+    if flags & 2 != 0 {
+        col.swap(0, 2);
+        std::mem::swap(&mut a, &mut d);
+        col.swap(1, 3);
+    }
+    for (i, bytes) in col.iter().enumerate() {
+        write16(m, frame.wrapping_add((i as u32) * 0x10), bytes);
+    }
+    let turned = flags & 16 != 0;
+    if flags & 4 != 0 {
+        y = y - if turned { w } else { h };
+    }
+    if flags & 8 != 0 {
+        x = x - if turned { h } else { w };
+    }
+    if flags & 0x60 != 0 {
+        let (across, down) = if turned { (h, w) } else { (w, h) };
+        if flags & 0x20 != 0 {
+            x = x - across * F(0.5);
+        }
+        if flags & 0x40 != 0 {
+            y = y - down * F(0.5);
+        }
+    }
+    let (sw, sh) = if turned { (h, w) } else { (w, h) };
+    let func = if turned { 0x19bf90 } else { 0x19b4d8 };
+    env.call(
+        m,
+        func,
+        &[FONT_COLOR, frame, frame.wrapping_add(0x10), frame.wrapping_add(0x20), frame.wrapping_add(0x30)],
+        &[x.0, y.0, sw.0, sh.0, a.0, b.0, c.0, d.0],
+    );
+}
+
+/// `HUD_DrawSpriteAnchored` 0x1feaf0 (the rectangle, the flags; angle, x, y, w, h): binds the rectangle's texture
+/// (+0, renderer +0x1f4), flips the UV pairs on bits 0 / 1, applies the same bottom/right/centre offsets (using
+/// bit 4 to choose `w` vs `h` for the anchor offsets), and submits to `Sprite_DrawRotatedTexQuad` 0x19bb48 with
+/// `(FONT_COLOR; angle, x, y, w, h, a, b, c, d)` (note: `w` and `h` themselves are not swapped when bit 4 is set)
+#[allow(clippy::too_many_arguments)]
+pub fn hud_draw_sprite_anchored(
+    m: &mut Mem,
+    env: &mut dyn SpritesEnv,
+    rect: u32,
+    flags: u32,
+    angle: f32,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+) {
+    let (mut x, mut y, w, h) = (F(x), F(y), F(w), F(h));
+    env.renderer(m, 0x1f4, &[m.r32(rect), 0], &[]);
+    let (mut a, mut b, mut c, mut d) = (fl(m, rect + 12), fl(m, rect + 16), fl(m, rect + 20), fl(m, rect + 24));
+    if flags & 1 != 0 {
+        std::mem::swap(&mut b, &mut c);
+    }
+    if flags & 2 != 0 {
+        std::mem::swap(&mut a, &mut d);
+    }
+    let turned = flags & 16 != 0;
+    if flags & 4 != 0 {
+        y = y - if turned { w } else { h };
+    }
+    if flags & 8 != 0 {
+        x = x - if turned { h } else { w };
+    }
+    if flags & 0x60 != 0 {
+        let (across, down) = if turned { (h, w) } else { (w, h) };
+        if flags & 0x20 != 0 {
+            x = x - across * F(0.5);
+        }
+        if flags & 0x40 != 0 {
+            y = y - down * F(0.5);
+        }
+    }
+    env.call(m, 0x19bb48, &[FONT_COLOR], &[angle, x.0, y.0, w.0, h.0, a.0, b.0, c.0, d.0]);
+}
+
 /// `Sprite_DrawTiled` 0x1fc728 (the rectangle, the flags; x, y, w, h, the columns, the rows): the rectangle's texture
 /// repeated over w × h, `cols` × `rows` times. Whole tiles first, row by row; a last part column and a last part row
 /// take the fraction left of the texture's coordinates. Flags 1 / 2 flip the coordinates; 4 / 8 anchor the whole by

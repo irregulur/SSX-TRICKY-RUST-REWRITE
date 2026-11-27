@@ -1181,3 +1181,24 @@ Proven (from the disassembly; Ghidra was not running):
   the buffer, 0) into the run's records 0..9 and +0xeb0, the buffer `Mem_Free`d when there.
 - Checked in the runner: 1,500 shape files, 18,000 steps (5,990 binds, 16,095 renderer calls from the binders),
   memory, answers and the calls out equal; 19 mutants, all killed.
+
+## Anchored gradient and rotated HUD sprites (row G8o; `tricky_game::hudsprites`, `tricky_game::copies`, checked: `tests/hud_other_tail.rs`)
+
+Proven (`SLUS_203.26` disassembly + runner):
+
+- **`Sprite_DrawAnchoredGradient` 0x1fc330** (`hudsprites::draw_anchored_gradient`): binds `*(u32*)rect` via renderer
+  `+0x1f4`, copies the four 16-byte corner colours (`a2..t1`) via unaligned `ldl/ldr/sdl/sdr` into its `0xe0`-byte
+  stack frame at `frame+0x00, +0x10, +0x20, +0x30`, swaps `b/c` with `(c0,c1)` and `(c2,c3)` when `flags & 1 != 0`,
+  swaps `a/d` with `(c0,c2)` and `(c1,c3)` when `flags & 2 != 0`, applies the same bottom/right/centre/quarter-turn
+  (`flags & 0x10`) anchor rules as `Sprite_DrawAnchored` 0x1fc178, and submits `(FONT_COLOR, frame, frame+0x10,
+  frame+0x20, frame+0x30; x, y, sw, sh, a, b, c, d)` to `Sprite_SubmitGradientQuad` 0x19b4d8 (unturned) or
+  `Sprite_SubmitGradientQuadRotated` 0x19bf90 (turned, `w` and `h` swapped).
+- **`HUD_DrawSpriteAnchored` 0x1feaf0** (`hudsprites::hud_draw_sprite_anchored`): binds `*(u32*)rect` via renderer
+  `+0x1f4`, flips `b/c` (bit 0) and `a/d` (bit 1), applies the same bottom/right/centre anchor offsets (where bit 4
+  chooses `w` vs `h` for the offsets), and submits `(FONT_COLOR; angle, x, y, w, h, a, b, c, d)` to
+  `Sprite_DrawRotatedTexQuad` 0x19bb48 — **without** swapping `w` and `h` on bit 4 (and passing the 9th float `d` at
+  `0($sp)`).
+- **`Misc_EmptyStubA` 0x256100** (`copies::empty_stub`): GCC varargs empty stub (spills `$a1..$t3` to its own
+  `0x80`-byte stack frame and returns immediately with no side effects).
+- Checked bit-for-bit in `tests/hud_other_tail.rs` (10,000 cases for `0x1fc330`, 10,000 cases for `0x1feaf0`, 500
+  cases for `0x256100`). Both `hud` and `other` are now at 0 `not started`.
