@@ -1999,3 +1999,30 @@ Proven (`SLUS_203.26` disassembly + runner):
 - **`SpeechLib_RegisterEventBank0` 0x2bada0** (`speechlib.rs`): calls `SpeechLib_RegisterEventBank(bank, 0)`.
 - Checked bit-for-bit across 7,520 cases in `tests/stream_speech_tail.rs` (reducing `audio` `not started` from 110
   to 80).
+
+## `AudioTGroups` & `WorldTriggerMgr` tail (row G10r, `worldemitter.rs`, checked: `tests/worldtrigger_tail.rs`)
+
+Proven (`SLUS_203.26` disassembly + runner):
+
+- **`AudioTGroups_*` (`0x22a470..0x22a6d8`) & `AudioTGroup_GetShapeBounds` (`0x22acc0`)**: `Init` zeros `+0x00..=+0x30`;
+  `Free` releases `+0` via `EAMem_Free`, `+0x18` and `+0x2c` via `Mem_Free`; `Delete` calls `Free` and conditionally
+  `Mem_Delete`; `Load` checks `FileSys_Exists`, records `File_GetSize` / `File_Load` + `AudioTGroups_Bind`, and
+  always runs `BuildGrid`. `BuildGrid` reads grid dimensions/origin/cell size from `gWorldGrid` (`0x346488`), fills
+  each `0x14`-byte cell's `(min_x, min_y, max_x, max_y, head)` (using `iy` for X and `ix` for Y), allocates a
+  temporary `count * 32`-byte node pool (`"TEMP GRID NODES"`, flags `0x10`), populates via `AudioTGroups_AddToGrid`
+  (`0x22b008`), compacts into `"GRID NODES"` (`used * 8` bytes), rebases node `next` and cell head pointers, and
+  deletes the temp pool. `GetShapeBounds` handles sphere/cylinder/cone (`0, 2, 3`: `center ± radius`) and oriented
+  box (`1`: right-handed basis from `u` and `(0, 0, 1)`, un-absoluted `center ∓ (u*hx + v*hy + w*hz)`).
+- **`WorldInstance_GetSoundKeys` (`0x22baf8`)**: walks up to 4 shapes at `inst->+0xf4->+4` (strides `0x1c`, `0x30`,
+  `0x30`, `0x18` for kinds `0..=3`), zeros all four out words, and copies each shape's `+4` key while checking
+  `ptrs[0]`'s kind on every iteration (preserving the original's un-incremented `$t3`).
+- **`WorldTriggerMgr_*` / `WorldEmitter_*` / `SoundId_IsAmbient*` (`0x22be88..0x22e3f0`)**: `Init` allocates the
+  `0xc90`-byte array (`"m_aWorldTriggerInstances"`, cookie `40` at `+0`, 40 `0x50`-byte emitters from `+0x10` built
+  with `WorldEmitter_Construct`); `Destroy` destructs `gWorldTriggerMgr` (`0x34370c`) with flags `3` and clears it;
+  `Acquire` updates an active matching emitter or populates the first free slot (`still_wanted = 1`, `pos.w = 1.0`);
+  `StopKey` clears and stops every `state == 1` emitter matching `+0xc`; `MarkPlayed` checks the cached played list
+  (`WorldEmitter_WasPlayed` `0x22e270`), appends up to 200 IDs at `+0x410c`, and invalidates `+0x4434 = -1`; `Reset`
+  resets `+0x442c..=+0x4444`; `SoundId_IsAmbient` / `SoundId_IsAmbientExtra` match `[0x4f..=0x60]`, `0x66`,
+  `[0x67..=0x93]`, `[0x9f..=0xb2]`, and `[0xb7..=0xb9]`.
+- Checked bit-for-bit across ~3,100 cases in `tests/worldtrigger_tail.rs` (reducing `audio` `not started` from 80
+  to 63).

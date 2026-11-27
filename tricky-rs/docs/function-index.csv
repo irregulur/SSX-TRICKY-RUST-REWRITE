@@ -3994,23 +3994,23 @@ address,size,name,system,status
 0x22a2b8,20,StreamSys_GetStream,audio,checked
 0x22a2d0,36,SndEvent_ClearStreamPrebuffer,audio,checked
 0x22a2f8,80,cStreamSys::__tf,runtime,host
-0x22a470,84,AudioTGroups_Init,audio,not started
-0x22a4c8,76,AudioTGroups_Delete,audio,not started
-0x22a518,108,AudioTGroups_Load,audio,not started
-0x22a588,104,AudioTGroups_Free,audio,not started
+0x22a470,84,AudioTGroups_Init,audio,checked
+0x22a4c8,76,AudioTGroups_Delete,audio,checked
+0x22a518,108,AudioTGroups_Load,audio,checked
+0x22a588,104,AudioTGroups_Free,audio,checked
 0x22a5f0,228,AudioTGroups_Bind,audio,checked
-0x22a6d8,968,AudioTGroups_BuildGrid,audio,not started
+0x22a6d8,968,AudioTGroups_BuildGrid,audio,checked
 0x22aaa0,544,AudioTGroup_GetBounds,audio,checked
-0x22acc0,836,AudioTGroup_GetShapeBounds,audio,not started
+0x22acc0,836,AudioTGroup_GetShapeBounds,audio,checked
 0x22b008,568,AudioTGroups_AddToGrid,audio,ported
 0x22b240,124,StaticInit_AudioTGroups,audio,checked
 0x22b370,1928,WorldEmitter_GatherForListener,audio,checked
-0x22baf8,324,WorldInstance_GetSoundKeys,audio,not started
+0x22baf8,324,WorldInstance_GetSoundKeys,audio,checked
 0x22bc40,296,WorldEmitter_Falloff,audio,checked
 0x22bd68,124,StaticInit_WorldEmitter,audio,checked
 0x22be18,108,WorldTriggerMgr_Create,audio,ported
-0x22be88,56,WorldTriggerMgr_Destroy,audio,not started
-0x22bec0,76,WorldEmitter_Construct,audio,not started
+0x22be88,56,WorldTriggerMgr_Destroy,audio,checked
+0x22bec0,76,WorldEmitter_Construct,audio,checked
 0x22bf30,44,WorldEmitter_Matches,audio,checked
 0x22bf60,1600,WorldEmitter_Update,audio,checked
 0x22c5a0,108,WorldEmitter_Stop,audio,checked
@@ -4018,14 +4018,14 @@ address,size,name,system,status
 0x22c638,12,WorldEmitter_IsSpecialKey,audio,ported
 0x22c648,2616,Audio_LoadWorldTriggerBanks,audio,ported
 0x22d080,24,WorldEmitter_Clear,audio,checked
-0x22d098,204,WorldTriggerMgr_Init,audio,not started
-0x22d168,28,WorldTriggerMgr_Destruct,audio,not started
+0x22d098,204,WorldTriggerMgr_Init,audio,checked
+0x22d168,28,WorldTriggerMgr_Destruct,audio,checked
 0x22d188,48,WorldEmitter_FindFree,audio,checked
 0x22d1b8,164,WorldEmitter_Find,audio,checked
-0x22d260,272,WorldEmitter_Acquire,audio,not started
+0x22d260,272,WorldEmitter_Acquire,audio,checked
 0x22d370,152,WorldEmitter_UpdateAll,audio,ported
 0x22d408,116,WorldEmitter_StopAll,audio,ported
-0x22d480,136,WorldTriggerMgr_StopKey,audio,not started
+0x22d480,136,WorldTriggerMgr_StopKey,audio,checked
 0x22d508,928,Sfx_PlayInstanceHit,audio,ported
 0x22d8a8,912,SoundId_ToBankProgram,audio,ported
 0x22dc38,80,WorldTriggerMgr_OtherKeyPlaying,audio,ported
@@ -4034,11 +4034,11 @@ address,size,name,system,status
 0x22e1b8,136,WorldInstance_HasHitOnlyKey,world,not started
 0x22e240,44,WorldEmitter_IsHitOnlyKey,audio,ported
 0x22e270,92,WorldEmitter_WasPlayed,audio,ported
-0x22e2d0,100,WorldEmitter_MarkPlayed,audio,not started
+0x22e2d0,100,WorldEmitter_MarkPlayed,audio,checked
 0x22e338,40,World_ResetAudio,audio,ported
-0x22e360,36,WorldTriggerMgr_Reset,audio,not started
-0x22e388,100,SoundId_IsAmbient,audio,not started
-0x22e3f0,12,SoundId_IsAmbientExtra,audio,not started
+0x22e360,36,WorldTriggerMgr_Reset,audio,checked
+0x22e388,100,SoundId_IsAmbient,audio,checked
+0x22e3f0,12,SoundId_IsAmbientExtra,audio,checked
 0x22e400,32,WorldTriggerMgr_SetActive,audio,ported
 0x22e420,124,StaticInit_WorldTriggerMgr,audio,checked
 0x22e4e0,108,Speech_PostFEEvent,audio,checked
