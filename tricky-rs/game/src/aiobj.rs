@@ -928,3 +928,239 @@ pub fn computer_destruct(m: &mut Mem, e: &mut dyn FeEnv, o: u32, how: u32, sp: u
         e.call(m, DELETE, &[o]);
     }
 }
+
+/// Constants and callees for row G11f (the last 15 `race` functions):
+/// `cPlayer` virtual-base table (`0x36f168`, 0xb0 bytes), own table (`0x36f218`), globals (`gCareer` 0x32b390,
+/// `gPreRaceSel` 0x32ecf0, `gRaceScene` 0x32edc0, `gCharTable` 0x331ea8, `gRelTablePtr` 0x3352b4), and callees
+pub const PLAYER_VBASE_VT: u32 = 0x36f168;
+pub const PLAYER_VT: u32 = 0x36f218;
+pub const G_CAREER: u32 = 0x32b390;
+pub const G_PRERACE_SEL: u32 = 0x32ecf0;
+pub const G_RACE_SCENE: u32 = 0x32edc0;
+pub const G_CHAR_TABLE: u32 = 0x331ea8;
+pub const G_REL_TABLE_PTR: u32 = 0x3352b4;
+pub const RACE_GET_RIDER: u32 = 0x1814a8;
+pub const BOARDER_FIND_NEAREST_LINE: u32 = 0x119d30;
+pub const REPLAY_ADD_INPUT_STREAM: u32 = 0x191ca0;
+pub const REPLAY_ADD_PIN: u32 = 0x191a18;
+pub const RIVALS_INIT_PAIRS: u32 = 0x167ea0;
+pub const PRERACE_SEL_CLEAR: u32 = 0x1686a8;
+pub const PRERACE_SEL_CHOOSE: u32 = 0x168720;
+pub const CAREER_FINALIZE_ROSTER: u32 = 0x168b88;
+pub const CAREER_SETUP_PLAYER_RIDER: u32 = 0x16a9d8;
+pub const CAREER_SETUP_AI_RIDER: u32 = 0x16ae68;
+pub const CIRCUIT_GET_MEDAL_THRESHOLDS: u32 = 0x16ba60;
+
+const PLAYER_VBASE_ADJ: [u32; 10] = [0x08, 0x40, 0x50, 0x60, 0x68, 0x78, 0x80, 0x88, 0x98, 0xa0];
+
+/// `Race_FindLineAhead` 0x11a020(out; delta, f13): fetches `Race_GetRider(gApp+0x730)` (`0x1814a8`), adds `delta`
+/// to `rider+0x374` (clamping below 0.0 to +0.0), and tail-calls `Boarder_FindNearestLine(out, 1; clamped, f13)`
+/// (`0x119d30`, float bits passed as args 2 and 3)
+pub fn race_find_line_ahead(m: &mut Mem, e: &mut dyn FeEnv, out: u32, delta: f32, f13: f32) -> u32 {
+    use crate::ps2f::F;
+    let game = m.r32(m.r32(GAPP) + 0x730);
+    let rider = e.call(m, RACE_GET_RIDER, &[game]);
+    let d = F(f32::from_bits(m.r32(rider + 0x374))) + F(delta);
+    let clamped = if d.0 < 0.0 { 0.0f32 } else { d.0 };
+    e.call(m, BOARDER_FIND_NEAREST_LINE, &[out, 1, clamped.to_bits(), f13.to_bits()])
+}
+
+/// `Race_CreateBoarders` 0x150e38 (`cPlayer::cPlayer`: o, in_charge, rider_idx; sp on entry): fills the 29
+/// virtual-base pointers with `o + 0x880` and constructs `cBoarder` (`0x116828`) when `in_charge != 0`; constructs
+/// `cBoarderHandler` (`0x11b348`, `0`, sign-extended `rider_idx`); installs `PLAYER_VBASE_VT` (or its 10-entry
+/// adjusted 0xb0-byte stack copy at `sp - 0x120` when `in_charge == 0`) and `PLAYER_VT` at `+0x834`; zeroes `+0x878`
+/// and `+0x87c`, registers replay input stream (`0x191ca0`) and pin (`0x191a18`) when `gApp+0x730 -> +0x40` is set;
+/// sets `(*o)+0x41c = 1` and returns `o`
+pub fn player_construct(m: &mut Mem, e: &mut dyn FeEnv, o: u32, in_charge: u32, rider_idx: i16, sp: u32) -> u32 {
+    if in_charge != 0 {
+        let vb = o.wrapping_add(0x880);
+        for off in COMPUTER_VBASE_SLOTS {
+            m.w32(o.wrapping_add(off), vb);
+        }
+        e.call(m, BOARDER_CTOR, &[vb]);
+    }
+    e.call(m, BOARDER_HANDLER_CTOR, &[o, 0, rider_idx as i32 as u32]);
+    let b = m.r32(o);
+    m.w32(b, PLAYER_VBASE_VT);
+    if in_charge == 0 {
+        let copy = sp.wrapping_sub(0x120);
+        for k in 0..0xb0 / 4 {
+            let w = m.r32(PLAYER_VBASE_VT + 4 * k);
+            m.w32(copy + 4 * k, w);
+        }
+        let delta = o.wrapping_sub(b.wrapping_sub(0x880)) as u16;
+        for off in PLAYER_VBASE_ADJ {
+            let adj = m.r16(PLAYER_VBASE_VT + off).wrapping_add(delta);
+            m.w16(copy + off, adj);
+        }
+        m.w32(b, copy);
+    }
+    m.w32(o.wrapping_add(0x834), PLAYER_VT);
+    m.w32(o.wrapping_add(0x878), 0);
+    m.w32(o.wrapping_add(0x87c), 0);
+    let replay = m.r32(m.r32(m.r32(GAPP) + 0x730) + 0x40);
+    let b_final = if replay != 0 {
+        let inp = e.call(m, REPLAY_ADD_INPUT_STREAM, &[replay]);
+        m.w32(o.wrapping_add(0x878), inp);
+        let game = m.r32(m.r32(GAPP) + 0x730);
+        let ai = m.r32(game + 0x1c);
+        let rep2 = m.r32(game + 0x40);
+        let nplayers = m.r32(ai + 0x7c);
+        let pin = e.call(m, REPLAY_ADD_PIN, &[rep2, nplayers]);
+        m.w32(o.wrapping_add(0x87c), pin);
+        m.r32(o)
+    } else {
+        b
+    };
+    m.w32(b_final.wrapping_add(0x41c), 1);
+    o
+}
+
+/// `Circuit_Destruct` 0x16a978(o, how): calls `Mem_Delete(o)` (`0x114f80`) when `how` has bit 0
+pub fn circuit_destruct(m: &mut Mem, e: &mut dyn FeEnv, o: u32, how: u32) {
+    if how & 1 != 0 {
+        e.call(m, DELETE, &[o]);
+    }
+}
+
+/// `Career_Destruct` 0x161760(o, how): destroys embedded circuit at `o + 0x320c` (`2`), then tail-calls
+/// [`circuit_destruct`] on `(o, how)`
+pub fn career_destruct(m: &mut Mem, e: &mut dyn FeEnv, o: u32, how: u32) {
+    circuit_destruct(m, e, o.wrapping_add(0x320c), 2);
+    circuit_destruct(m, e, o, how);
+}
+
+/// `StaticDtor_Career` 0x167170(): tail-calls [`career_destruct`] on `(0x32b390, 2)`
+pub fn static_dtor_career(m: &mut Mem, e: &mut dyn FeEnv) {
+    career_destruct(m, e, G_CAREER, 2);
+}
+
+/// `Career_InitShortRecord` 0x165660(_, src, dst): copies `src[0], src[0x28], src[0x30]` to `dst[0..=8]` and
+/// zeroes `dst[0xc]` and `dst[0x10]`
+pub fn career_init_short_record(m: &mut Mem, src: u32, dst: u32) {
+    let w0 = m.r32(src);
+    let w1 = m.r32(src + 0x28);
+    let w2 = m.r32(src + 0x30);
+    m.w32(dst, w0);
+    m.w32(dst + 4, w1);
+    m.w32(dst + 8, w2);
+    m.w32(dst + 0xc, 0);
+    m.w32(dst + 0x10, 0);
+}
+
+/// `Career_SetupSoloRider` 0x165688(c): sets `c+0x2b0c = 3`, finds the first non-negative player slot among the
+/// four 0x44-byte slots at `c+0x30fc` (copying `c+0x168c+4*ch` to `slot+4`, calling `Career_SetupPlayerRider`, and
+/// setting `c+0x27dc = 1`), then runs `Rivals_InitPairs`, `PreRaceSel_Choose(..., 3)`, and `Career_FinalizeRoster`
+pub fn career_setup_solo_rider(m: &mut Mem, e: &mut dyn FeEnv, c: u32) {
+    m.w32(c.wrapping_add(0x2b0c), 3);
+    for slot in 0..4u32 {
+        let off = slot * 0x44;
+        let ch = m.r8(c.wrapping_add(0x30fc + off)) as i8;
+        if ch >= 0 {
+            let v = m.r32(c.wrapping_add(0x168c + (ch as u32) * 4));
+            m.w32(c.wrapping_add(0x3100 + off), v);
+            e.call(m, CAREER_SETUP_PLAYER_RIDER, &[c, c.wrapping_add(0x30fc + off), c.wrapping_add(0x27e0)]);
+            m.w32(c.wrapping_add(0x27dc), 1);
+            break;
+        }
+    }
+    let rel = m.r32(G_REL_TABLE_PTR);
+    let n = m.r32(c.wrapping_add(0x27dc));
+    e.call(m, RIVALS_INIT_PAIRS, &[rel, n, c.wrapping_add(0x27e0), c.wrapping_add(0x30fc)]);
+    let r0 = m.r32(c.wrapping_add(0x2818));
+    let course = m.r32(c.wrapping_add(0x2af8));
+    let mode = m.r32(c.wrapping_add(0x2afc));
+    e.call(m, PRERACE_SEL_CHOOSE, &[G_PRERACE_SEL, r0, course, mode, 3]);
+    e.call(m, CAREER_FINALIZE_ROSTER, &[G_PRERACE_SEL, c.wrapping_add(0x27dc)]);
+}
+
+/// `PreRaceSel_Destruct` 0x168688(o, how): calls `Mem_Delete(o)` (`0x114f80`) when `how` has bit 0
+pub fn pre_race_sel_destruct(m: &mut Mem, e: &mut dyn FeEnv, o: u32, how: u32) {
+    if how & 1 != 0 {
+        e.call(m, DELETE, &[o]);
+    }
+}
+
+/// `PreRaceSel_GetPicks` 0x168b80(o): returns `o`
+pub fn pre_race_sel_get_picks(o: u32) -> u32 {
+    o
+}
+
+/// `RaceScene_Destruct` 0x169668(o, how): calls `Mem_Delete(o)` (`0x114f80`) when `how` has bit 0
+pub fn race_scene_destruct(m: &mut Mem, e: &mut dyn FeEnv, o: u32, how: u32) {
+    if how & 1 != 0 {
+        e.call(m, DELETE, &[o]);
+    }
+}
+
+/// `StaticDtor_RaceScene` 0x169d28(): destroys `gRaceScene` (`0x32edc0`, `2`), then `gPreRaceSel` (`0x32ecf0`, `2`)
+pub fn static_dtor_race_scene(m: &mut Mem, e: &mut dyn FeEnv) {
+    race_scene_destruct(m, e, G_RACE_SCENE, 2);
+    pre_race_sel_destruct(m, e, G_PRERACE_SEL, 2);
+}
+
+/// `Circuit_ResetHeat` 0x16bca8(o): zeroes `o + 0x14`
+pub fn circuit_reset_heat(m: &mut Mem, o: u32) {
+    m.w32(o + 0x14, 0);
+}
+
+/// `Circuit_OnEventOver` 0x16d0a8(): no-op
+pub fn circuit_on_event_over() {}
+
+/// `Circuit_SetupRider` 0x16cfd8(o, slot, rider): if `rider` matches the player's character (`*(*(o+0x10)+0x14)`),
+/// copies `career+0x1684+4*ch` to `player_slot+4`, calls `Career_SetupPlayerRider`, and writes `o+0x18` into
+/// `roster[slot]+0x74`; otherwise tail-calls `Career_SetupAIRider` with `gCharTable+rider*0x38` and the player's
+/// attitude slot at `*(player_slot+0x18)+0x164+8*rider`
+pub fn circuit_setup_rider(m: &mut Mem, e: &mut dyn FeEnv, o: u32, slot: u32, rider: u32) {
+    let ps = m.r32(o + 0x10);
+    let p_ch = m.r32(m.r32(ps + 0x14));
+    let entry_off = slot.wrapping_mul(0x84);
+    if p_ch == rider {
+        let ch = m.r8(ps) as i8 as i32 as u32;
+        let career = m.r32(o + 4);
+        let v = m.r32(career.wrapping_add(ch << 2).wrapping_add(0x1684));
+        m.w32(ps + 4, v);
+        let roster = m.r32(o + 8);
+        e.call(m, CAREER_SETUP_PLAYER_RIDER, &[o, ps, roster.wrapping_add(entry_off).wrapping_add(4)]);
+        let roster2 = m.r32(o + 8);
+        let bonus = m.r32(o + 0x18);
+        m.w32(roster2.wrapping_add(entry_off).wrapping_add(0x74), bonus);
+    } else {
+        let char_entry = G_CHAR_TABLE.wrapping_add(rider.wrapping_mul(0x38));
+        let att_ptr = m.r32(ps + 0x18).wrapping_add(rider << 3).wrapping_add(0x164);
+        let roster_entry = m.r32(o + 8).wrapping_add(entry_off).wrapping_add(4);
+        e.call(m, CAREER_SETUP_AI_RIDER, &[o, char_entry, att_ptr, roster_entry]);
+    }
+}
+
+/// `Circuit_SetupRace` 0x16d230(o; sp on entry): sets roster count `= 1`, sets up the player rider via
+/// `Career_SetupPlayerRider`, sets heat `o+0x14 = 2`, looks up `Circuit_GetMedalThresholds(course, sp - 0x40)` to
+/// write `heat + (idx << 16)` at `roster+0x330`, clears and populates `gPreRaceSel` (`0x32ecf0`), and calls
+/// `Career_FinalizeRoster`
+pub fn circuit_setup_race(m: &mut Mem, e: &mut dyn FeEnv, o: u32, sp: u32) {
+    let out_idx = sp.wrapping_sub(0x40);
+    let roster = m.r32(o + 8);
+    let ps = m.r32(o + 0x10);
+    m.w32(roster, 1);
+    let ch = m.r8(ps) as i8 as i32 as u32;
+    let career = m.r32(o + 4);
+    let v = m.r32(career.wrapping_add(ch << 2).wrapping_add(0x1684));
+    m.w32(ps + 4, v);
+    e.call(m, CAREER_SETUP_PLAYER_RIDER, &[o, ps, roster.wrapping_add(4)]);
+    m.w32(o + 0x14, 2);
+    let course = m.r32(m.r32(o + 8) + 0x31c);
+    e.call(m, CIRCUIT_GET_MEDAL_THRESHOLDS, &[course, out_idx]);
+    let idx = m.r32(out_idx);
+    let heat = m.r32(o + 0x14);
+    let roster2 = m.r32(o + 8);
+    m.w32(roster2 + 0x330, heat.wrapping_add(idx << 16));
+    e.call(m, PRERACE_SEL_CLEAR, &[G_PRERACE_SEL]);
+    let ps2 = m.r32(o + 0x10);
+    let roster3 = m.r32(o + 8);
+    let rider = m.r32(m.r32(ps2 + 0x14));
+    let course2 = m.r32(roster3 + 0x31c);
+    let mode = m.r32(roster3 + 0x320);
+    e.call(m, PRERACE_SEL_CHOOSE, &[G_PRERACE_SEL, rider, course2, mode, 3]);
+    let roster4 = m.r32(o + 8);
+    e.call(m, CAREER_FINALIZE_ROSTER, &[G_PRERACE_SEL, roster4]);
+}

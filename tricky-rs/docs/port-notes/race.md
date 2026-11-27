@@ -583,3 +583,36 @@ count 0x3353f8, the riders out 0x335664 + 0x10 · character). The heats' rider s
   and `race_final`/`showoff_final` using `cUnlockedOverlay`'s exact string IDs (`0x1b58c0` `AWARD_SINGLE`/`AWARD_PLURAL`,
   `0xdf6`/`0xdf7`, `0xc9c`/`0xc9d`), per-slot aggregation (`0x1b5ef8`), and kind order `[5, 9, 8, 4, 3, 2, 1, 0, 6]`
   (`0x1b5bf8`).
+
+## Remaining `race` setup, player constructor, and destructors (row G11f; `tricky_game::aiobj`, checked: `tests/race_tail.rs`)
+
+Proven (`SLUS_203.26` disassembly + runner):
+
+- **`Race_FindLineAhead` 0x11a020** (`aiobj::race_find_line_ahead`): reads `rider = Race_GetRider(gApp+0x730)`
+  (`0x1814a8`), computes `d = rider+0x374 + delta` (clamped `< 0.0` to `+0.0`), and tail-calls
+  `Boarder_FindNearestLine(out, 1; d, f13)` (`0x119d30`).
+- **`Race_CreateBoarders` 0x150e38** (`cPlayer::cPlayer`, `aiobj::player_construct`): fills the 29 virtual-base
+  pointers with `o + 0x880` and constructs `cBoarder` (`0x116828`) when `in_charge != 0`; constructs
+  `cBoarderHandler` (`0x11b348`, `0`, sign-extended `i16` rider index); installs `0x36f168` (or a `0xb0`-byte
+  stack copy at `sp - 0x120` adjusting 10 halfwords `+0x08,+0x40,+0x50,+0x60,+0x68,+0x78,+0x80,+0x88,+0x98,+0xa0`
+  by `o - (*o - 0x880)` when `in_charge == 0`) at `*o` and `0x36f218` at `o+0x834`; zeroes `+0x878/+0x87c`, calls
+  `Replay_AddInputStream` (`0x191ca0`) and `Replay_AddPin` (`0x191a18`) when `gApp+0x730 -> +0x40` is non-null,
+  sets `(*o)+0x41c = 1`, and returns `o`.
+- **Career, PreRaceSel, RaceScene, and Circuit helpers** (`aiobj.rs`):
+  - `Career_InitShortRecord` 0x165660: copies `src[0], src[0x28], src[0x30]` to `dst[0..=8]` and zeroes `+0xc/+0x10`.
+  - `Career_SetupSoloRider` 0x165688: sets `c+0x2b0c = 3`, configures the first non-negative slot of the four
+    `0x44`-byte player slots at `c+0x30fc` via `Career_SetupPlayerRider` (`c+0x27dc = 1`), then runs
+    `Rivals_InitPairs`, `PreRaceSel_Choose(..., 3)`, and `Career_FinalizeRoster`.
+  - `Circuit_SetupRider` 0x16cfd8: dispatches the matching player character to `Career_SetupPlayerRider` (writing
+    heat bonus `o+0x18` to `roster[slot]+0x74`) and all other riders to `Career_SetupAIRider` (`0x331ea8 + 0x38*r`,
+    player attitude slot `*(ps+0x18)+0x164+8*r`).
+  - `Circuit_SetupRace` 0x16d230: sets roster count `= 1`, configures the player rider, sets heat `o+0x14 = 2`,
+    writes `heat + (medal_idx << 16)` at `roster+0x330` from `Circuit_GetMedalThresholds(course, sp - 0x40)`,
+    clears/populates `gPreRaceSel` (`0x32ecf0`), and calls `Career_FinalizeRoster`.
+  - Destructors & small helpers: `Career_Destruct` 0x161760 (calls `0x16bb98` → `Circuit_Destruct` on `o+0x320c`
+    and `o`), `StaticDtor_Career` 0x167170 (`0x32b390, 2`), `PreRaceSel_Destruct` 0x168688, `PreRaceSel_GetPicks`
+    0x168b80 (identity), `RaceScene_Destruct` 0x169668, `StaticDtor_RaceScene` 0x169d28 (`0x32edc0` then
+    `0x32ecf0`), `Circuit_Destruct` 0x16a978, `Circuit_ResetHeat` 0x16bca8 (`o+0x14 = 0`), `Circuit_OnEventOver`
+    0x16d0a8 (no-op).
+- Checked bit-for-bit in `tests/race_tail.rs` (1,000 player-ctor/find-line-ahead cases + 1,300 career/prerace/
+  scene/circuit cases); `race` is now at 0 `not started`.
