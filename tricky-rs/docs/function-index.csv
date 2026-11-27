@@ -3622,15 +3622,15 @@ address,size,name,system,status
 0x2154e0,372,SndSys_IsQueued,audio,checked
 0x215658,828,SndSys_UpdateQueuedSounds,audio,checked
 0x215998,652,SndSys_QueueSounds,audio,checked
-0x215c28,752,Audio_StopQueuedSounds,audio,not started
-0x215f18,984,Sfx_PlayRiderBump,audio,not started
+0x215c28,752,Audio_StopQueuedSounds,audio,checked
+0x215f18,984,Sfx_PlayRiderBump,audio,checked
 0x2162f0,728,Sfx_OnWallHit,audio,checked
 0x2165c8,816,Sfx_ScriptSoundPlay,audio,checked
 0x2168f8,52,Sfx_InstanceControllerVf26,audio,checked
 0x216930,48,Audio_PlayCountdownBeep,audio,ported
 0x216960,748,Sfx_OnRiderCollision,audio,checked
 0x216c50,260,Sfx_InstanceCollision,audio,checked
-0x216d58,1952,Sfx_PlayTakeoff,audio,not started
+0x216d58,1952,Sfx_PlayTakeoff,audio,checked
 0x2174f8,2132,Sfx_OnAirEnter,audio,checked
 0x217d50,1172,Sfx_UpdateAir,audio,checked
 0x2181e8,300,Sfx_OnWipeout,audio,checked
@@ -3681,7 +3681,7 @@ address,size,name,system,status
 0x21c510,224,Audio_LoadGlobalBankList,audio,checked
 0x21c610,176,Audio_TrickyTrigger,audio,checked
 0x21c6c0,12,Music_CancelTricky,audio,checked
-0x21c6d0,308,Music_UpdateMeterCues,audio,not started
+0x21c6d0,308,Music_UpdateMeterCues,audio,checked
 0x21c808,92,Audio_PlayFEHeld20And00,audio,ported
 0x21c868,64,Audio_PlayFEHeld01,audio,ported
 0x21c8a8,64,Audio_PlayFEHeld02,audio,ported
@@ -3698,12 +3698,12 @@ address,size,name,system,status
 0x21d0c0,1284,Audio_PlayEventSound,audio,checked
 0x21d5c8,72,Audio_StopEventSound,audio,checked
 0x21d610,112,Audio_SetMusicState,audio,checked
-0x21d680,812,Sfx_PlayClipBoardSound51,audio,not started
-0x21d9b0,812,Sfx_PlayClipBoardSound50,audio,not started
+0x21d680,812,Sfx_PlayClipBoardSound51,audio,checked
+0x21d9b0,812,Sfx_PlayClipBoardSound50,audio,checked
 0x21dce0,224,Sfx_OnMeterFilled,audio,ported
-0x21ddc0,552,Music_PlayMeterCue1,audio,not started
-0x21dfe8,604,Music_PlayMeterCue2,audio,not started
-0x21e248,592,Music_RestartMeterCue,audio,not started
+0x21ddc0,552,Music_PlayMeterCue1,audio,checked
+0x21dfe8,604,Music_PlayMeterCue2,audio,checked
+0x21e248,592,Music_RestartMeterCue,audio,checked
 0x21e498,40,Audio_ScheduleWorldTriggersOn,audio,checked
 0x21e4f0,44,Audio_ResumeAfterSpeech,audio,ported
 0x21e528,108,Audio_CheerForRider,audio,checked

@@ -1985,3 +1985,324 @@ pub fn audio_schedule_world_triggers_on(m: &mut Mem, env: &mut dyn SoundMgrEnv, 
 pub fn audio_get_music_fx_thunk(m: &Mem, this: u32) -> u32 {
     m.r32(this + 0x3844)
 }
+
+// ---- Final 9 audio functions (row G10v, bringing `audio` to 0 `not started`) ----
+
+pub const SND_SYS_STOP_BANK_SOUND: u32 = 0x20c2a0;
+pub const SFX_EVAL_CURVE: u32 = 0x20d928;
+pub const SFX_SURFACE_SOUND_TYPE: u32 = 0x20f908;
+pub const AUDIO_FIND_RIDER_NEAR: u32 = 0x20f9b0;
+pub const AUDIO_ANY_RIDER_NEAR_AHEAD: u32 = 0x20fa80;
+pub const AUDIO_IS_NEARER_PLAYER2: u32 = 0x20fb68;
+pub const AUDIO_GET_RIDER_LISTENER: u32 = 0x20fc60;
+pub const SND_SYS_IS_QUEUED: u32 = 0x2154e0;
+pub const SND_SYS_QUEUE_SOUNDS: u32 = 0x215998;
+pub const SFX_IMPACT_SPEED: u32 = 0x21a6a8;
+pub const MUSIC_CANCEL_TRICKY: u32 = 0x21c6c0;
+pub const SND_SYS_SET_PENDING_VOLUME: u32 = 0x226dd8;
+pub const SND_LOCK: u32 = 0x2d0908;
+pub const SND_UNLOCK: u32 = 0x2d0938;
+pub const SND_HANDLE_IS_DEAD: u32 = 0x2d3338;
+
+fn ring_pop_word(m: &mut Mem, q: u32) -> u32 {
+    let w = m.r32(q + 8);
+    let r = m.r32(q + 0xc);
+    if w == r {
+        return 0xffff_ffff;
+    }
+    let buf = m.r32(q + 4);
+    let val = m.r32(buf.wrapping_add(r << 2));
+    let mut nr = (r as i32).wrapping_add(1);
+    m.w32(q + 0xc, nr as u32);
+    let cap = m.r32(q) as i32;
+    if nr >= cap {
+        nr = 0;
+        m.w32(q + 0xc, 0);
+    }
+    let _ = nr;
+    val
+}
+
+fn ring_push_word(m: &mut Mem, q: u32, val: u32) {
+    let w = m.r32(q + 8) as i32;
+    let cap = m.r32(q) as i32;
+    let r = m.r32(q + 0xc) as i32;
+    if (w.wrapping_add(1)) % cap == r {
+        return;
+    }
+    let buf = m.r32(q + 4);
+    m.w32(buf.wrapping_add((w as u32) << 2), val);
+    let nw = (m.r32(q + 8) as i32).wrapping_add(1);
+    m.w32(q + 8, nw as u32);
+    let cap2 = m.r32(q) as i32;
+    if nw >= cap2 {
+        m.w32(q + 8, 0);
+    }
+}
+
+/// `Audio_StopQueuedSounds` 0x215c28(this, key): drain the `+0x6e24` ring queue for `count = (w - r + cap) % cap`
+/// iterations, popping 4 words `(k, handle, expiry, flag)` per iteration; entries with `k == key` stop `handle`
+/// (`SndSys_StopBankSound(this, handle, 1, 0.0)`) when `flag != 0`, and non-matching entries are re-enqueued.
+pub fn audio_stop_queued_sounds(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32, key: u32) {
+    let q = this.wrapping_add(0x6e24);
+    let w = m.r32(q + 8);
+    let r = m.r32(q + 0xc);
+    let cap = m.r32(q) as i32;
+    let n = (w.wrapping_sub(r).wrapping_add(cap as u32) as i32) % cap;
+    if n <= 0 {
+        return;
+    }
+    for _ in 0..n {
+        let w0 = ring_pop_word(m, q);
+        let w1 = ring_pop_word(m, q);
+        let w2 = ring_pop_word(m, q);
+        let w3 = ring_pop_word(m, q);
+        if w0 == key {
+            if w3 != 0 {
+                env.call(m, SND_SYS_STOP_BANK_SOUND, &[this, w1, 1, 0.0f32.to_bits()]);
+            }
+        } else {
+            ring_push_word(m, q, w0);
+            ring_push_word(m, q, w1);
+            ring_push_word(m, q, w2);
+            ring_push_word(m, q, w3);
+        }
+    }
+}
+
+fn clamp_slot_vol_byte(m: &mut Mem, this: u32, vol: i32) {
+    let idx = m.r32(this + 0x20);
+    let v3c = m.r32(this + 0x3c);
+    m.w32(v3c.wrapping_add(idx << 2), vol as u32);
+    let stored = m.r32(v3c.wrapping_add(idx << 2)) as i32;
+    let clamped = stored.clamp(0, 0x7f) as u8;
+    let rec = m.r32(this + 0x24).wrapping_add(idx.wrapping_mul(0x18));
+    m.w8(rec, clamped);
+}
+
+/// `Sfx_PlayRiderBump` 0x215f18(this, rider1, rider2): if `rider1+0x140` is near (<40), ahead, and not already
+/// queued, compute the 4D length of `rider1+0x150 + rider2+0x150`, evaluate `Sfx_EvalCurve(3, speed)`, push sound
+/// `(0, 0x32)` with 40 m pending volume, play it, and queue `(rider1, handle, tick+0x32, 0)`.
+pub fn sfx_play_rider_bump(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32, rider1: u32, rider2: u32) {
+    let pos1 = rider1.wrapping_add(0x140);
+    let forty = 40.0f32.to_bits();
+    if (env.call(m, AUDIO_FIND_RIDER_NEAR, &[this, pos1, forty]) as i32) < 0 {
+        return;
+    }
+    if env.call(m, AUDIO_ANY_RIDER_NEAR_AHEAD, &[this, pos1, forty]) == 0 {
+        return;
+    }
+    if env.call(m, SND_SYS_IS_QUEUED, &[this, rider1]) != 0 {
+        return;
+    }
+    let mut sum = [F(0.0); 4];
+    for (k, s) in sum.iter_mut().enumerate() {
+        let a = F(f32::from_bits(m.r32(rider1 + 0x150 + (k as u32) * 4)));
+        let b = F(f32::from_bits(m.r32(rider2 + 0x150 + (k as u32) * 4)));
+        *s = a + b;
+    }
+    let sq0 = sum[0] * sum[0];
+    let sq1 = sum[1] * sum[1];
+    let sq2 = sum[2] * sum[2];
+    let sq3 = sum[3] * sum[3];
+    let len = (((sq0 + sq1) + sq2) + sq3).sqrt();
+    let speed = len.ee() as i32 as u32;
+    let vol = env.call(m, SFX_EVAL_CURVE, &[3, speed]) as i32;
+
+    snd_sys_push_entry_copy2(m, this);
+    let idx = m.r32(this + 0x20);
+    let a40 = m.r32(this + 0xa40);
+    m.w32(a40.wrapping_add(idx << 2), 0);
+    let a44 = m.r32(this + 0xa44);
+    m.w32(a44.wrapping_add(idx << 2), 0x32);
+    clamp_slot_vol_byte(m, this, vol);
+    let slot = env.call(m, SND_MGR_GET_SLOT, &[this, 4]);
+    let idx2 = m.r32(this + 0x20);
+    let v40 = m.r32(this + 0x40);
+    m.w32(v40.wrapping_add(idx2 << 2), slot);
+    env.call(m, SND_SYS_SET_PENDING_VOLUME, &[this, forty, (-1.0f32).to_bits()]);
+    let nearer = env.call(m, AUDIO_IS_NEARER_PLAYER2, &[this, pos1]);
+    let idx3 = m.r32(this + 0x20);
+    let v68 = m.r32(this + 0x68);
+    m.w32(v68.wrapping_add(idx3 << 2), nearer);
+    m.w32(this + 0x28 + (idx3 << 2), pos1);
+    let handle = env.call(m, SND_SYS_PLAY_PENDING, &[this]);
+    let expiry = m.r32(this + 0x80).wrapping_add(0x32);
+    env.call(m, SND_SYS_QUEUE_SOUNDS, &[this, rider1, handle, expiry, 0]);
+}
+
+fn eval_takeoff_speed(m: &mut Mem, env: &mut dyn SoundMgrEnv, rider: u32) -> i32 {
+    let v = env.call(m, SFX_IMPACT_SPEED, &[rider]) as i32;
+    let q = v.wrapping_mul(127) / 1000;
+    F(q as f32).ee() as i32
+}
+
+fn clamp_takeoff_inner(m: &mut Mem, env: &mut dyn SoundMgrEnv, rider: u32) -> i32 {
+    if eval_takeoff_speed(m, env, rider) < 0x7f && eval_takeoff_speed(m, env, rider) < 0 {
+        return 0;
+    }
+    if eval_takeoff_speed(m, env, rider) < 0x7f {
+        eval_takeoff_speed(m, env, rider)
+    } else {
+        0x7f
+    }
+}
+
+/// `Sfx_PlayTakeoff` 0x216d58(this, rider): for the player's rider (`+0x41c == 1`), evaluate the nested clamp of
+/// `Sfx_ImpactSpeed(rider) * 127 / 1000` into `[64, 127]` (preserving every macro re-evaluation of
+/// `Sfx_ImpactSpeed`), push sound `(1, surface * 8 + 2)` with volume/slot/emitter/listener, and play pending.
+pub fn sfx_play_takeoff(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32, rider: u32) -> u32 {
+    if m.r32(rider + 0x41c) != 1 {
+        return 0;
+    }
+    let vol = if clamp_takeoff_inner(m, env, rider) < 0x7f && clamp_takeoff_inner(m, env, rider) < 0x40 {
+        0x40
+    } else if clamp_takeoff_inner(m, env, rider) < 0x7f {
+        clamp_takeoff_inner(m, env, rider)
+    } else {
+        0x7f
+    };
+    let surf = env.call(m, SFX_SURFACE_SOUND_TYPE, &[this, rider]);
+    let snd_id = (surf << 3).wrapping_add(2);
+    snd_sys_push_entry_copy2(m, this);
+    let idx = m.r32(this + 0x20);
+    let a40 = m.r32(this + 0xa40);
+    m.w32(a40.wrapping_add(idx << 2), 1);
+    let a44 = m.r32(this + 0xa44);
+    m.w32(a44.wrapping_add(idx << 2), snd_id);
+    clamp_slot_vol_byte(m, this, vol);
+    let slot = env.call(m, SND_MGR_GET_SLOT, &[this, 4]);
+    let idx2 = m.r32(this + 0x20);
+    let v40 = m.r32(this + 0x40);
+    m.w32(v40.wrapping_add(idx2 << 2), slot);
+    m.w32(this + 0x28 + (idx2 << 2), rider.wrapping_add(0x140));
+    let listener = env.call(m, AUDIO_GET_RIDER_LISTENER, &[this, rider]);
+    let idx3 = m.r32(this + 0x20);
+    let v68 = m.r32(this + 0x68);
+    m.w32(v68.wrapping_add(idx3 << 2), listener);
+    env.call(m, SND_SYS_PLAY_PENDING, &[this])
+}
+
+fn sfx_play_clipboard_sound(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32, rider: u32, id: u32) -> u32 {
+    if m.r32(rider + 0x41c) != 1 {
+        return 0;
+    }
+    snd_sys_push_entry_copy2(m, this);
+    let idx = m.r32(this + 0x20);
+    let a40 = m.r32(this + 0xa40);
+    m.w32(a40.wrapping_add(idx << 2), 1);
+    let a44 = m.r32(this + 0xa44);
+    m.w32(a44.wrapping_add(idx << 2), id);
+    clamp_slot_vol_byte(m, this, 0x7f);
+    let slot = env.call(m, SND_MGR_GET_SLOT, &[this, 4]);
+    let idx2 = m.r32(this + 0x20);
+    let v40 = m.r32(this + 0x40);
+    m.w32(v40.wrapping_add(idx2 << 2), slot);
+    m.w32(this + 0x28 + (idx2 << 2), rider.wrapping_add(0x140));
+    let listener = env.call(m, AUDIO_GET_RIDER_LISTENER, &[this, rider]);
+    let idx3 = m.r32(this + 0x20);
+    let v68 = m.r32(this + 0x68);
+    m.w32(v68.wrapping_add(idx3 << 2), listener);
+    env.call(m, SND_SYS_PLAY_PENDING, &[this])
+}
+
+/// `Sfx_PlayClipBoardSound51` 0x21d680(this, rider): for player rider (`+0x41c == 1`), play sound `(1, 0x51)` at
+/// volume `0x7f` on slot 4 with emitter `rider+0x140` and `Audio_GetRiderListener`.
+pub fn sfx_play_clipboard_sound_51(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32, rider: u32) -> u32 {
+    sfx_play_clipboard_sound(m, env, this, rider, 0x51)
+}
+
+/// `Sfx_PlayClipBoardSound50` 0x21d9b0(this, rider): for player rider (`+0x41c == 1`), play sound `(1, 0x50)` at
+/// volume `0x7f` on slot 4 with emitter `rider+0x140` and `Audio_GetRiderListener`.
+pub fn sfx_play_clipboard_sound_50(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32, rider: u32) -> u32 {
+    sfx_play_clipboard_sound(m, env, this, rider, 0x50)
+}
+
+fn stop_meter_cue_if_alive(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32) {
+    env.call(m, SND_LOCK, &[]);
+    let h = m.r32(this + 0x7458);
+    let dead = env.call(m, SND_HANDLE_IS_DEAD, &[h]);
+    env.call(m, SND_UNLOCK, &[]);
+    if dead == 0 {
+        let h2 = m.r32(this + 0x7458);
+        env.call(m, SND_SYS_STOP_BANK_SOUND, &[this, h2, 1, 0.0f32.to_bits()]);
+    }
+}
+
+fn play_meter_cue_entry(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32, id: u32) -> u32 {
+    snd_sys_push_entry_copy2(m, this);
+    let idx = m.r32(this + 0x20);
+    let a40 = m.r32(this + 0xa40);
+    m.w32(a40.wrapping_add(idx << 2), 5);
+    let a44 = m.r32(this + 0xa44);
+    m.w32(a44.wrapping_add(idx << 2), id);
+    let slot = env.call(m, SND_MGR_GET_SLOT, &[this, 6]);
+    let idx2 = m.r32(this + 0x20);
+    let v40 = m.r32(this + 0x40);
+    m.w32(v40.wrapping_add(idx2 << 2), slot);
+    env.call(m, SND_SYS_PLAY_PENDING, &[this])
+}
+
+/// `Music_PlayMeterCue1` 0x21ddc0(this): play bank-5 cue `1` on volume slot 6 and store its handle at `+0x7458`.
+pub fn music_play_meter_cue1(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32) {
+    let h = play_meter_cue_entry(m, env, this, 1);
+    m.w32(this + 0x7458, h);
+}
+
+/// `Music_PlayMeterCue2` 0x21dfe8(this): stop the active `+0x7458` handle if alive, then play bank-5 cue `2` on slot 6.
+pub fn music_play_meter_cue2(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32) -> u32 {
+    stop_meter_cue_if_alive(m, env, this);
+    play_meter_cue_entry(m, env, this, 2)
+}
+
+/// `Music_RestartMeterCue` 0x21e248(this): stop the active `+0x7458` handle if alive, then play bank-5 cue `0` on slot 6.
+pub fn music_restart_meter_cue(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32) -> u32 {
+    stop_meter_cue_if_alive(m, env, this);
+    play_meter_cue_entry(m, env, this, 0)
+}
+
+/// `Music_UpdateMeterCues` 0x21c6d0(this): cancel Tricky music if `+0x3708 != 0` and `*(+0x6e7c)->+0x24 <= 0.0`,
+/// then advance the `+0x6e80` rider's meter cue flags (`+0x6e90` restart on `+0x58a8 > +0x6e94`, `+0x6e88` cue 2 on
+/// `+0x24 <= 0.0`, `+0x6e8c` cue 1 on `+0x24 < 2.7`).
+pub fn music_update_meter_cues(m: &mut Mem, env: &mut dyn SoundMgrEnv, this: u32) {
+    if m.r32(this + 0x3708) != 0 {
+        let obj = m.r32(this + 0x6e7c);
+        if F(f32::from_bits(m.r32(obj + 0x24))).ee() <= 0.0 {
+            env.call(m, MUSIC_CANCEL_TRICKY, &[this]);
+        }
+    }
+    let rider = m.r32(this + 0x6e80);
+    if rider == 0 {
+        return;
+    }
+    if m.r32(this + 0x6e90) != 0 {
+        let cnt = m.r32(rider + 0x58a8) as i32;
+        if (m.r32(this + 0x6e94) as i32) < cnt {
+            env.call(m, MUSIC_CANCEL_TRICKY, &[this]);
+            music_restart_meter_cue(m, env, this);
+            let r2 = m.r32(this + 0x6e80);
+            m.w32(this + 0x6e8c, 0);
+            m.w32(this + 0x6e88, 0);
+            m.w32(this + 0x6e94, m.r32(r2 + 0x58a8));
+            m.w32(this + 0x6e90, 0);
+            m.w32(this + 0x6e80, 0);
+        }
+    }
+    if m.r32(this + 0x6e88) != 0 {
+        let r2 = m.r32(this + 0x6e80);
+        if F(f32::from_bits(m.r32(r2 + 0x24))).ee() <= 0.0 {
+            music_play_meter_cue2(m, env, this);
+            m.w32(this + 0x6e8c, 0);
+            m.w32(this + 0x6e88, 0);
+            m.w32(this + 0x6e80, 0);
+        }
+    }
+    if m.r32(this + 0x6e8c) != 0 {
+        let r2 = m.r32(this + 0x6e80);
+        if F(f32::from_bits(m.r32(r2 + 0x24))).ee() < f32::from_bits(0x402c_cccd) {
+            env.call(m, MUSIC_CANCEL_TRICKY, &[this]);
+            music_play_meter_cue1(m, env, this);
+            m.w32(this + 0x6e8c, 0);
+        }
+    }
+}

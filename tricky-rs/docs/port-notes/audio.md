@@ -2095,3 +2095,25 @@ Proven (`SLUS_203.26` disassembly + runner):
   from the INI into `+0x6e9c` (count `+0x6e98`); `ScheduleWorldTriggersOn` schedules `0x0021_e4c0_ffff_0000` in
   250 ms; `GetMusicFxThunk` returns `*(this+0x3844)`.
 - Checked bit-for-bit across `tests/bxaudio_tail.rs` (reducing `audio` `not started` from 27 to 9).
+
+## Final 9 `audio` functions (`Audio_StopQueuedSounds`, `Sfx_PlayRiderBump`, `Sfx_PlayTakeoff`, `Sfx_PlayClipBoardSound50`/`51`, `Music_*MeterCue*`; row G10v, `sndqueue.rs`, checked: `tests/audio_final_tail.rs`)
+
+Proven (`SLUS_203.26` disassembly + runner):
+
+- **`Audio_StopQueuedSounds` (`0x215c28`)**: iterates `(write - read + cap) % cap` times on the `+0x6e24` ring queue,
+  popping 4 words `(key, handle, expiry, flag)` per step; matching `key` stops `handle` via `SndSys_StopBankSound`
+  when `flag != 0`, while non-matching entries are pushed back.
+- **`Sfx_PlayRiderBump` (`0x215f18`)**: gates on `Audio_FindRiderNear` (`40.0`), `Audio_AnyRiderNearAhead` (`40.0`),
+  and `!SndSys_IsQueued`, sums 4D velocities at `+0x150` and takes their VU0 4D length into `Sfx_EvalCurve(3, len)`,
+  plays sound `(0, 0x32)` with 40 m pending volume on slot 4, and queues `(rider1, handle, tick + 0x32, 0)`.
+- **`Sfx_PlayTakeoff` (`0x216d58`), `Sfx_PlayClipBoardSound51` (`0x21d680`), `Sfx_PlayClipBoardSound50` (`0x21d9b0`)**:
+  player-only (`rider+0x41c == 1`) bank-1 sounds on slot 4 (`rider+0x140` emitter, `Audio_GetRiderListener`).
+  `Sfx_PlayTakeoff` evaluates the nested macro clamp of `Sfx_ImpactSpeed(rider) * 127 / 1000` into `[64, 127]`
+  (preserving every re-evaluation of `Sfx_ImpactSpeed`) and plays `surface * 8 + 2`; `ClipBoardSound51`/`50` play
+  `0x51`/`0x50` at volume `0x7f`.
+- **`Music_UpdateMeterCues` (`0x21c6d0`), `Music_PlayMeterCue1` (`0x21ddc0`), `Music_PlayMeterCue2` (`0x21dfe8`),
+  `Music_RestartMeterCue` (`0x21e248`)**: cancels Tricky music when `+0x3708 != 0 && *(+0x6e7c)->+0x24 <= 0`, then
+  drives the `+0x6e80` rider's bank-5 cues (`0` restart on `+0x58a8 > +0x6e94`, `2` on `+0x24 <= 0.0`, `1` on
+  `+0x24 < 2.7`) on volume slot 6, stopping the live `+0x7458` handle under `SND_Lock`/`SND_Unlock` before cues `0`/`2`.
+- Checked bit-for-bit across `tests/audio_final_tail.rs` (**bringing the entire 791-function `audio` system to 0
+  `not started`!**).
