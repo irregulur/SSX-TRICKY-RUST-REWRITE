@@ -1665,3 +1665,37 @@ random values; 1,952 domain/singularity errors), checking both raw bits and `err
 - Checked in the runner: 20,000 random sets (counts negative too, record pointers 0, events touching the range's
   ends exactly), answers, memory and the frees compared; `tests/snapshot_riders.rs` now runs the original two
   index functions on a set with a few paths. 16 mutants, all killed.
+
+## The async file layer (row E2t; `tricky_game::asyncfile`, `tests/asyncfile.rs`)
+
+Proven (from the disassembly; Ghidra was not running):
+
+- `AsyncFile_Init` 0x2c5c60(count, flags): nothing when the table (0x3bb92c) is set or count > 0x100; else
+  count × 0x30 bytes ("ASYNCFILE", through the allocate pointer at 0x3bb958 = `EAMem_Alloc`), every slot's id its
+  index, all on the free list (first 0x3bbb20, last 0x3bbb24) in order. A slot's id is its index or-ed with a
+  generation (0x3bbb28, +0x100 for each new load, never 0), so a stale id is not found (`AsyncFile_FindSlot`
+  0x2c5760: below 0x100, an index past the count or another generation give 0).
+- Slot: +8 bytes read, +0xc being finished, +0x10 cancelled, +0x14 its own buffer (1 until allocated, 0: the
+  caller's), +0x18 the caller's callback, +0x1c the file system operation pending, +0x20 the handle, +0x24 the
+  offset, +0x28 bytes left (`AsyncFile_Load`: the buffer's flags until the size is known), +0x2c the next read's
+  address.
+- `AsyncFile_Load` 0x2c5e20(path, flags): open (tag 0x64), then size ("ASYNCFILEBUF" buffer of that size), then
+  reads; `AsyncFile_LoadInto` 0x2c5ed0(path, buffer, size; ≤ 0 = no limit): open, then reads;
+  `AsyncFile_StartRead` 0x2c5f98(handle, offset, buffer, size): reads on an open file, no close. Reads are at most
+  0x8000 bytes; a read that brings more than 0x7fff bytes reads on (even with 0 bytes left: the next read asks 0),
+  anything less ends the load (the file closed, tag 0x63, except for `StartRead`). If the first operation is not
+  queued the id is not given and the slot is lost (never put back on the free list).
+- The file system's callbacks (third argument the slot): `AsyncFile_OnOpened` 0x2c5a98 (handle 0 completes),
+  `AsyncFile_OnSized` 0x2c59c0, `AsyncFile_OnChunkThenClose` 0x2c58d0, `AsyncFile_OnChunk` 0x2c5b98,
+  `AsyncFile_OnClosed` 0x2c5898; a cancelled load closes instead of going on. `AsyncFile_Complete` 0x2c5808:
+  nothing pending; cancelled and not being finished → freed; else the caller's callback gets the id.
+- `AsyncFile_SetCallback` 0x2c6070 (only the first; called at once if done), `AsyncFile_IsDone` 0x2c6108 (1, 0,
+  −1 unknown), `AsyncFile_Finish` 0x2c6160(id, &buffer, &size): waits (`FileSys_WaitOp`) until nothing is
+  pending, gives the buffer (+0x2c − +8) and the size, frees the slot, 1; −1 (and 0, 0) when cancelled.
+  `AsyncFile_Cancel` 0x2c6278: cancels the pending operation, or frees an idle slot; `AsyncFile_FreeSlot`
+  0x2c57a8 frees a cancelled load's own buffer. `AsyncFile_CancelAll` 0x2c5d30 cancels all, then runs the poll
+  tasks (when on that thread) and sleeps until nothing is pending, and frees the table.
+- Host: the mutex at 0x4039d8 (single-threaded port), the file system queue (`FileSys_*`), the threads.
+- Checked in the runner: 300 tables, 45,000 steps (10,344 file system callbacks, 2,423 loads finished, 3,015
+  waits, 243 tables cancelled; slots another thread is finishing simulated); 46 mutants, 45 killed, 1 equivalent
+  (`Cancel`'s free of a slot being finished is unreachable: such a slot is not marked cancelled).

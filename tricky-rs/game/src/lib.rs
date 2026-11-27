@@ -9,6 +9,7 @@ pub mod aiobj;
 pub mod aipad;
 pub mod aipath;
 pub mod aipathset;
+pub mod asyncfile;
 pub mod boarder;
 pub mod boarder_misc;
 pub mod boarder_tick;
