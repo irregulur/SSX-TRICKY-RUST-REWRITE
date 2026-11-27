@@ -299,6 +299,14 @@ block has +0xc the count and from +0x10 the strings' offsets; strings are 16-bit
   `kOvCombo` 0xe41, `kOVInvalidCard` 0x16e, ...). Use it to read which text a `Loc_GetString` call asks for.
 - `LETTER.LOC`: the English text with a few strings changed (a variant, unused).
 
+### The string tables' lookups checked (row E5g; `tricky_data::loc`, `tests/loc.rs`)
+
+- `Loc_GetString` 0x2c5160 and `Loc_MapId` 0x2c50b0 as `LocFile::get_raw` reads them, proven equal in the runner
+  on 5,000 made-up files (with and without an id map, up to 3 blocks, sorted maps with repeated keys and keys from
+  0x8000, 54,916 strings found, 82,836 ids with none). The map's comparison 0x2c5070 (not a Ghidra function):
+  the key's u16 less the entry's u16 (both unsigned); the id is cut to 16 bits before the map; with no map, an id
+  of 0x80000000 and up finds nothing. 9 mutants, all killed.
+
 ### EA's text library (row E5f; `tricky_game::wstr`, checked: `tests/wstr.rs`)
 
 Proven (16-bit strings, `lib-text`):

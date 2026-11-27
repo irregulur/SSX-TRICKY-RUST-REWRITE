@@ -6198,8 +6198,8 @@ address,size,name,system,status
 0x2c45e0,772,Fmt_WriteNumber,lib-text,checked
 0x2c48e8,716,WStr_VFormat,lib-text,checked
 0x2c4e90,68,WStr_Sprintf,lib-text,checked
-0x2c50b0,172,Loc_MapId,lib-text,ported
-0x2c5160,404,Loc_GetString,lib-text,ported
+0x2c50b0,172,Loc_MapId,lib-text,checked
+0x2c5160,404,Loc_GetString,lib-text,checked
 0x2c52f8,52,WStr_Len,lib-text,checked
 0x2c5380,148,WStr_Find,lib-text,checked
 0x2c5418,32,WStr_Cmp,lib-text,checked
