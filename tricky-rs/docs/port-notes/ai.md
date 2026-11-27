@@ -439,3 +439,37 @@ folder without one is a STANDIN with the first line as main). The first tick is 
   a type 0xe event on some line: Garibaldi and Elysium (none on a main line); the main lines' events are the
   checkpoints (0xc), 0 and the forks (0x1f), plus 0x16 on Untracked (`tests/raceline.rs`
   `app_race_lines_are_the_games`).
+
+## `cComputer` lifecycle and `SplinePathNode`/`SplineModel` helpers (row G4m; `tricky_game::aiobj`, `tricky_game::snapshot`, checked: `tests/ai_tail.rs`)
+
+Proven (`SLUS_203.26` disassembly + runner):
+
+- **`cComputer::cComputer` 0x138210** (`aiobj::computer_construct`): when `in_charge != 0`, initializes all 29
+  virtual-base pointers inside `o` to `o + 0x8b0` and calls `cBoarder::cBoarder` `0x116828`; constructs
+  `cBoarderHandler` `0x11b348` (`0`, sign-extended `i16` rider index); installs `cComputer`'s virtual-base vtable
+  `0x36a910` on `*o` (or an adjusted `0xb0`-byte stack copy at `sp - 0xf0` adjusting halfwords `+0x08/+0x40/+0x48/+0x50/+0x70`
+  by `o - (*o - 0x8b0)` when `in_charge == 0`) and `0x36a9c0` at `o+0x834`; calls `AIComputer_Reset` `0x1383b0`; returns `o`.
+- **`cComputer::vf8_138438` 0x138438** (`aiobj::computer_vf8`): calls `AIComputer_Reset` `0x1383b0` on `o`, then
+  tail-calls `cBoarder::vf8` `0x116ab8` on `*o`.
+- **`cComputer::~cComputer` 0x13a628** (`aiobj::computer_destruct`): restores `0x36a9c0` at `o+0x834` and `0x36a910`
+  (or the adjusted `sp - 0xf0` stack copy when `how == 0`) at `*o`, destroys `cBoarderHandler` `0x11f770`, destroys
+  `cBoarder` `0x116990` on `how & 2`, and deletes `o` (`Mem_Delete` `0x114f80`) on `how & 1`.
+- **`SplinePathNode_PlaceAll` 0x1fa838** / **`SplinePathNode_PlaceOne` 0x1fa8d8** / **`SplinePathNode_FreeMem` 0x1fb3c8**
+  (`snapshot::spline_path_place_all` / `_place_one` / `_free_mem`): `PlaceAll` iterates `i = 0..node+0x30` starting
+  at `dist = node+0x50`, stepping by `node+0x48` and wrapping by subtracting `node+0x74` whenever `dist >= length`.
+  `PlaceOne` calls `Spline_Evaluate` `0x2515c8` into entry `idx * 0x20` of `*(node+0x7c)` and `tan_buf`, computes
+  `yaw = node+0x44 + π/2 (+ π if node+0x34 == 2 && node+0x4c < 0) - atan2(ty, tx)` (via `Math_Atan` `0x2510f8`;
+  tangent yaw skipped when `node+0x38` is 2 or 3) and `pitch = (node+0x4c < 0 ? +tz : -tz)` (skipped when `node+0x38`
+  is 1 or 3), writing `[pitch, 0, yaw]` to entry `+0x10`. `FreeMem` calls `Mem_Delete` `0x114f80` on `how & 1`.
+- **`SplineModel_Init` 0x2514c0** (`snapshot::spline_model_init`): stores `idx` at `+8`, fetches
+  `Course_GetSplineSegment(0x346488, idx)` `0x254b20`, stores `seg+0x20` at `+0xc`, and stores
+  `Spline_GetLength(sm)` `0x251968` at `+0x10`.
+- **`SplinePathNode_IsVisible` 0x251a98** / **`SplinePathNode_DrawPath` 0x251748** (`snapshot::spline_path_is_visible` /
+  `_draw_path`): `IsVisible` passes `(seg+0x5c..+0x64, 1.0)` as both box corners to renderer `+0x284` (`CullBox`)
+  and returns `(res != 1) as u32`. `DrawPath` unbinds texture (renderer `+0x1f4`, `-1, 0`) and calls `+0x1e4` (`0`),
+  then for each visible segment in the `+0x54` linked list samples 10 cubic points (`t += 1/9` = `0x3de38e39`) via
+  VU0 matrix-vector multiply with `color[1,2,3,0] * 128` (`cvt.w.s`) into 10 × `0x30`-byte vertices at `frame+0x10`
+  and submits via renderer `+0x23c` (`10, frame+0x10, 0`).
+- Checked bit-for-bit in `tests/ai_tail.rs` (1,000 `cComputer` lifecycle cases, 4,000 `PlaceAll`/`PlaceOne`/`FreeMem`
+  cases against real ELF `Math_Atan`, 1,500 `SplineModel_Init`/`IsVisible`/`DrawPath` cases); `ai` is now at 0
+  `not started`.

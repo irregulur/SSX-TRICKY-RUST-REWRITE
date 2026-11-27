@@ -1155,3 +1155,190 @@ pub fn anim_tex_flip_load(m: &mut Mem, env: &mut dyn LoadEnv2, node: u32, l: u32
     let (a, b) = (m.r32(node + 0x70), m.r32(node + 0x10));
     env.call(m, 0x142af0, &[node + 0x80, a, b]);
 }
+
+/// `SplinePathNode_PlaceAll` 0x1fa838(node, tan_buf): places each of the `node+0x30` instances along the spline
+/// starting at distance `node+0x50`, stepping by `node+0x48` and wrapping by subtracting `node+0x74` (spline length)
+/// whenever `dist >= length`, calling [`spline_path_place_one`] for each index
+pub fn spline_path_place_all(m: &mut Mem, env: &mut dyn LoadEnv, node: u32, tan_buf: u32) {
+    use crate::ps2f::F;
+    let count = m.r32(node + 0x30) as i32;
+    if count <= 0 {
+        return;
+    }
+    let mut dist = F(f32::from_bits(m.r32(node + 0x50)));
+    let mut i = 0i32;
+    loop {
+        spline_path_place_one(m, env, node, i as u32, tan_buf, dist.0);
+        let step = F(f32::from_bits(m.r32(node + 0x48)));
+        let total = F(f32::from_bits(m.r32(node + 0x74)));
+        dist = dist + step;
+        if total.0 <= dist.0 {
+            dist = dist - total;
+        }
+        i += 1;
+        if i >= m.r32(node + 0x30) as i32 {
+            break;
+        }
+    }
+}
+
+/// `SplinePathNode_PlaceOne` 0x1fa8d8(node, idx, tan_buf; dist): evaluates `Spline_Evaluate` 0x2515c8 into the
+/// `idx`th 32-byte entry of `*(node+0x7c)` and tangent `tan_buf`, then writes `[pitch, 0, yaw]` at entry `+0x10`
+/// using `node+0x44` + π/2 (+ π when `node+0x34 == 2 && node+0x4c < 0`), inline `atan2(ty, tx)` via `Math_Atan`
+/// (skipped when `node+0x38` is 2 or 3), and `±tz` (skipped when `node+0x38` is 1 or 3)
+pub fn spline_path_place_one(m: &mut Mem, env: &mut dyn LoadEnv, node: u32, idx: u32, tan_buf: u32, dist: f32) {
+    use crate::ps2f::F;
+    let off = idx << 5;
+    let pos_dst = m.r32(node + 0x7c).wrapping_add(off);
+    env.call(m, 0x2515c8, &[node + 0x64, pos_dst, tan_buf, dist.to_bits()]);
+    let half_pi = F(f32::from_bits(0x3fc9_0fdb));
+    let neg_half_pi = F(f32::from_bits(0xbfc9_0fdb));
+    let pi = F(f32::from_bits(0x4049_0fdb));
+    let mut yaw = F(f32::from_bits(m.r32(node + 0x44))) + half_pi;
+    if m.r32(node + 0x34) == 2 && f32::from_bits(m.r32(node + 0x4c)) < 0.0 {
+        yaw = yaw + pi;
+    }
+    let mut mode38 = m.r32(node + 0x38);
+    if mode38.wrapping_sub(2) >= 2 {
+        let tx = F(f32::from_bits(m.r32(tan_buf)));
+        let ty = F(f32::from_bits(m.r32(tan_buf + 4)));
+        if tx.0 == 0.0 {
+            if ty.0 == 0.0 {
+                yaw = yaw - ty;
+            } else if 0.0 <= ty.0 {
+                yaw = yaw - half_pi;
+            } else {
+                yaw = yaw - neg_half_pi;
+            }
+        } else {
+            let mut ang = F(crate::math::atan((ty / tx).0));
+            if tx.0 < 0.0 {
+                if 0.0 < ty.0 {
+                    ang = ang + pi;
+                } else {
+                    ang = ang - pi;
+                }
+            }
+            mode38 = m.r32(node + 0x38);
+            yaw = yaw - ang;
+        }
+    }
+    let mut pitch = F(0.0);
+    if mode38 != 1 && mode38 != 3 {
+        let spd = f32::from_bits(m.r32(node + 0x4c));
+        let tz = F(f32::from_bits(m.r32(tan_buf + 8)));
+        pitch = if spd < 0.0 { F(0.0) + tz } else { F(0.0) - tz };
+    }
+    let dst = m.r32(node + 0x7c).wrapping_add(off).wrapping_add(0x10);
+    m.w32(dst, pitch.0.to_bits());
+    m.w32(dst + 4, 0);
+    m.w32(dst + 8, yaw.0.to_bits());
+}
+
+/// `SplinePathNode_FreeMem` 0x1fb3c8(p, how): calls `Mem_Delete` 0x114f80 when `how` has bit 0
+pub fn spline_path_free_mem(m: &mut Mem, env: &mut dyn LoadEnv, p: u32, how: u32) {
+    if how & 1 != 0 {
+        env.call(m, 0x114f80, &[p]);
+    }
+}
+
+/// `SplineModel_Init` 0x2514c0(sm, idx): stores `idx` at `+8`, fetches `Course_GetSplineSegment(0x346488, idx)`
+/// (`0x254b20`), copies `seg+0x20` to `sm+0xc`, and stores `Spline_GetLength(sm)` (`0x251968`) at `sm+0x10`
+pub fn spline_model_init(m: &mut Mem, env: &mut dyn LoadEnv, sm: u32, idx: u32) {
+    m.w32(sm + 8, idx);
+    let seg = env.call(m, 0x254b20, &[0x346488, idx]);
+    let ptr = m.r32(seg + 0x20);
+    m.w32(sm + 0xc, ptr);
+    let len = env.call(m, 0x251968, &[sm]);
+    m.w32(sm + 0x10, len);
+}
+
+/// `SplinePathNode_IsVisible` 0x251a98(seg; sp on entry): writes `(seg+0x5c..+0x64, 1.0)` twice on the stack at
+/// `sp - 0x30` and `sp - 0x20`, calls renderer virtual `+0x284` (`CullBox`), and returns `1` iff the result is not `1`
+pub fn spline_path_is_visible(m: &mut Mem, env: &mut dyn LoadEnv, seg: u32, sp: u32) -> u32 {
+    let frame = sp.wrapping_sub(0x30);
+    let ren = m.r32(m.r32(crate::fe3dstate::GAPP) + 0x724);
+    let vt = m.r32(ren + 0x10);
+    let adj = m.r16(vt + 0x280) as i16 as u32;
+    let f = m.r32(vt + 0x284);
+    let (x, y, z) = (m.r32(seg + 0x5c), m.r32(seg + 0x60), m.r32(seg + 0x64));
+    for base in [frame, frame.wrapping_add(0x10)] {
+        m.w32(base, x);
+        m.w32(base + 4, y);
+        m.w32(base + 8, z);
+        m.w32(base + 0xc, 0x3f80_0000);
+    }
+    let res = env.call(m, f, &[ren.wrapping_add(adj), frame, frame.wrapping_add(0x10)]);
+    ((res ^ 1) != 0) as u32
+}
+
+/// `SplinePathNode_DrawPath` 0x251748(sm, color; sp on entry): unbinds texture (renderer `+0x1f4`, `-1, 0`) and
+/// calls renderer `+0x1e4` (`0`), then for each of the `count` segments linked through `+0x54` that passes
+/// [`spline_path_is_visible`], samples 10 cubic points (`t = 0, 1/9, ...`) via VU0 matrix-vector product with
+/// `color * 128` (`[r,g,b,a]` at `+0x10..+0x1c` from `color[1,2,3,0]`) into `frame+0x10` (`frame = sp - 0x280`) and
+/// submits via renderer `+0x23c` (`10, frame+0x10, 0`)
+pub fn spline_path_draw_path(m: &mut Mem, env: &mut dyn LoadEnv, sm: u32, color: u32, sp: u32) {
+    use crate::ps2f::F;
+    use crate::sndlib::cvt_w;
+    let frame = sp.wrapping_sub(0x280);
+    let seg_hdr = m.r32(m.r32(sm + 0xc) + 0x58);
+    let ren = m.r32(m.r32(crate::fe3dstate::GAPP) + 0x724);
+    let count = m.r32(seg_hdr + 0x1c) as i32;
+    let mut cur = m.r32(seg_hdr + 0x20);
+
+    let vt = m.r32(ren + 0x10);
+    let adj = m.r16(vt + 0x1f0) as i16 as u32;
+    let f = m.r32(vt + 0x1f4);
+    env.call(m, f, &[ren.wrapping_add(adj), 0xffff_ffff, 0]);
+
+    let vt = m.r32(ren + 0x10);
+    let adj = m.r16(vt + 0x1e0) as i16 as u32;
+    let f = m.r32(vt + 0x1e4);
+    env.call(m, f, &[ren.wrapping_add(adj), 0]);
+
+    if count <= 0 {
+        return;
+    }
+    let step = F(f32::from_bits(0x3de3_8e39));
+    let k128 = F(128.0);
+    let one = F(1.0);
+    for _ in 0..count {
+        if spline_path_is_visible(m, env, cur, frame) != 0 {
+            let mut t = F(0.0);
+            let mut t2 = F(0.0);
+            for k in 0..10u32 {
+                if k > 0 {
+                    t2 = t * t;
+                }
+                let c0 = F(f32::from_bits(m.r32(color)));
+                let c1 = F(f32::from_bits(m.r32(color + 4)));
+                let c2 = F(f32::from_bits(m.r32(color + 8)));
+                let c3 = F(f32::from_bits(m.r32(color + 12)));
+                let t3 = t2 * t;
+                let r: [[F; 4]; 4] = std::array::from_fn(|row| {
+                    std::array::from_fn(|col| F(f32::from_bits(m.r32(cur + (row as u32) * 0x10 + (col as u32) * 4))))
+                });
+                let pos: [F; 4] = std::array::from_fn(|i| {
+                    ((r[0][i] * t3 + r[1][i] * t2) + r[2][i] * t) + r[3][i] * one
+                });
+                let vtx = frame.wrapping_add(0x10 + k * 0x30);
+                m.w32(vtx, 0);
+                m.w32(vtx + 4, 0);
+                m.w32(vtx + 8, 0x3f80_0000);
+                m.w32(vtx + 0x10, cvt_w((c1 * k128).0) as u32);
+                m.w32(vtx + 0x14, cvt_w((c2 * k128).0) as u32);
+                m.w32(vtx + 0x18, cvt_w((c3 * k128).0) as u32);
+                m.w32(vtx + 0x1c, cvt_w((c0 * k128).0) as u32);
+                for c in 0..4u32 {
+                    m.w32(vtx + 0x20 + 4 * c, pos[c as usize].0.to_bits());
+                }
+                t = t + step;
+            }
+            let vt = m.r32(ren + 0x10);
+            let adj = m.r16(vt + 0x238) as i16 as u32;
+            let f = m.r32(vt + 0x23c);
+            env.call(m, f, &[ren.wrapping_add(adj), 10, frame.wrapping_add(0x10), 0]);
+        }
+        cur = m.r32(cur + 0x54);
+    }
+}

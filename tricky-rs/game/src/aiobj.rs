@@ -841,3 +841,90 @@ pub fn pad_cfg_destruct(m: &mut Mem, e: &mut dyn FeEnv, cfg: u32, how: u32) {
         e.call(m, DELETE, &[cfg]);
     }
 }
+
+/// `cComputer`'s virtual-base (`cBoarder`) table (0x36a910, 0xb0 bytes) and own table (0x36a9c0), plus callees
+/// `cBoarder::cBoarder` 0x116828, `cBoarderHandler::cBoarderHandler` 0x11b348, `AIComputer_Reset` 0x1383b0,
+/// `cBoarder::vf8` 0x116ab8, `cBoarderHandler::~cBoarderHandler` 0x11f770, `cBoarder::~cBoarder` 0x116990
+pub const COMPUTER_VBASE_VT: u32 = 0x36a910;
+pub const COMPUTER_VT: u32 = 0x36a9c0;
+pub const BOARDER_CTOR: u32 = 0x116828;
+pub const BOARDER_HANDLER_CTOR: u32 = 0x11b348;
+pub const COMPUTER_RESET: u32 = 0x1383b0;
+pub const BOARDER_VF8: u32 = 0x116ab8;
+pub const BOARDER_HANDLER_DTOR: u32 = 0x11f770;
+pub const BOARDER_DTOR: u32 = 0x116990;
+
+const COMPUTER_VBASE_SLOTS: [u32; 29] = [
+    0x828, 0x80c, 0x7f0, 0x7e0, 0x7d0, 0x7c0, 0x7b0, 0x734, 0x71c, 0x70c, 0x6fc, 0x6e0, 0x6d0, 0x6c0, 0x6b4,
+    0x690, 0x680, 0x660, 0x650, 0x644, 0x620, 0x600, 0x5fc, 0x550, 0x4e0, 0x4d0, 0x4bc, 0x4a0, 0x000,
+];
+const COMPUTER_VBASE_ADJ: [u32; 5] = [0x08, 0x40, 0x48, 0x50, 0x70];
+
+fn install_computer_vbase_vt(m: &mut Mem, o: u32, b: u32, copy: u32) {
+    for k in 0..0xb0 / 4 {
+        let w = m.r32(COMPUTER_VBASE_VT + 4 * k);
+        m.w32(copy + 4 * k, w);
+    }
+    let delta = o.wrapping_sub(b.wrapping_sub(0x8b0)) as u16;
+    for off in COMPUTER_VBASE_ADJ {
+        let adj = m.r16(COMPUTER_VBASE_VT + off).wrapping_add(delta);
+        m.w16(copy + off, adj);
+    }
+    m.w32(b, copy);
+}
+
+/// `cComputer::cComputer` 0x138210(o, in_charge, rider_idx; sp on entry): when `in_charge != 0`, fills the 29
+/// virtual-base pointers with `o + 0x8b0` and constructs `cBoarder` there (`0x116828`); then constructs
+/// `cBoarderHandler` (`0x11b348`, `0`, sign-extended `rider_idx`), installs `cComputer`'s virtual-base vtable
+/// (`0x36a910`, or its adjusted 0xb0-byte stack copy at `sp - 0xf0` when `in_charge == 0`) and own vtable at
+/// `+0x834` (`0x36a9c0`), runs `AIComputer_Reset` (`0x1383b0`), and returns `o`
+pub fn computer_construct(m: &mut Mem, e: &mut dyn FeEnv, o: u32, in_charge: u32, rider_idx: i16, sp: u32) -> u32 {
+    if in_charge != 0 {
+        let vb = o.wrapping_add(0x8b0);
+        for off in COMPUTER_VBASE_SLOTS {
+            m.w32(o.wrapping_add(off), vb);
+        }
+        e.call(m, BOARDER_CTOR, &[vb]);
+    }
+    e.call(m, BOARDER_HANDLER_CTOR, &[o, 0, rider_idx as i32 as u32]);
+    let b = m.r32(o);
+    m.w32(b, COMPUTER_VBASE_VT);
+    if in_charge == 0 {
+        install_computer_vbase_vt(m, o, b, sp.wrapping_sub(0xf0));
+    }
+    m.w32(o.wrapping_add(0x834), COMPUTER_VT);
+    e.call(m, COMPUTER_RESET, &[o]);
+    o
+}
+
+/// `cComputer::vf8_138438` 0x138438(o): calls `AIComputer_Reset` (`0x1383b0`) on `o`, then tail-calls
+/// `cBoarder::vf8` (`0x116ab8`) on `*(u32*)o`
+pub fn computer_vf8(m: &mut Mem, e: &mut dyn FeEnv, o: u32) {
+    e.call(m, COMPUTER_RESET, &[o]);
+    let b = m.r32(o);
+    e.call(m, BOARDER_VF8, &[b]);
+}
+
+/// `cComputer::~cComputer` 0x13a628(o, how; sp on entry): restores `cComputer`'s vtables (`0x36a9c0` at `+0x834`,
+/// `0x36a910` at `*o`, or an adjusted 0xb0-byte stack copy at `sp - 0xf0` when `how == 0`), destroys
+/// `cBoarderHandler` (`0x11f770`, `0`), destroys `cBoarder` (`0x116990`, `0`) when `how & 2 != 0`, and deletes
+/// `o` (`Mem_Delete` `0x114f80`) when `how & 1 != 0`
+pub fn computer_destruct(m: &mut Mem, e: &mut dyn FeEnv, o: u32, how: u32, sp: u32) {
+    m.w32(o.wrapping_add(0x834), COMPUTER_VT);
+    let b = m.r32(o);
+    m.w32(b, COMPUTER_VBASE_VT);
+    let (destroy_base, delete_self) = if how == 0 {
+        install_computer_vbase_vt(m, o, b, sp.wrapping_sub(0xf0));
+        (false, false)
+    } else {
+        (how & 2 != 0, how & 1 != 0)
+    };
+    e.call(m, BOARDER_HANDLER_DTOR, &[o, 0]);
+    if destroy_base {
+        let b = m.r32(o);
+        e.call(m, BOARDER_DTOR, &[b, 0]);
+    }
+    if delete_self {
+        e.call(m, DELETE, &[o]);
+    }
+}

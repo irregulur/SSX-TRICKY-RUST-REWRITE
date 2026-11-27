@@ -559,9 +559,9 @@ address,size,name,system,status
 0x137dc0,924,AIComputer_RideNearRider,ai,ported
 0x138160,124,StaticInit_AIComputer,ai,checked
 0x1381e0,44,Vec4_ScaleCopy7,common,checked
-0x138210,416,cComputer::cComputer,ai,not started
+0x138210,416,cComputer::cComputer,ai,checked
 0x1383b0,132,AIComputer_Reset,ai,checked
-0x138438,40,cComputer::vf8_138438,ai,not started
+0x138438,40,cComputer::vf8_138438,ai,checked
 0x1384b8,368,cComputer::GetControls,ai,checked
 0x138628,448,AIComputer_ControlsCountdown,ai,checked
 0x1387e8,468,AIComputer_ControlsRide,ai,checked
@@ -590,7 +590,7 @@ address,size,name,system,status
 0x13a4b8,104,cComputer::LoadSnapshot,ai,checked
 0x13a520,124,StaticInit_Computer,ai,checked
 0x13a5c8,92,cComputer::__tf,runtime,host
-0x13a628,304,cComputer::~cComputer,ai,not started
+0x13a628,304,cComputer::~cComputer,ai,checked
 0x13a7c8,116,cComputerState::__tf,runtime,host
 0x13a840,72,cControllerNode::cControllerNode,world,checked
 0x13a888,84,cControllerNode::cControllerNode,world,checked
@@ -3289,12 +3289,12 @@ address,size,name,system,status
 0x1fa480,448,cSplinePathNode::cSplinePathNode,world,checked
 0x1fa640,92,cSplinePathNode::~cSplinePathNode,world,not started
 0x1fa6a0,404,cSplinePathNode::Update,world,not started
-0x1fa838,160,SplinePathNode_PlaceAll,ai,not started
-0x1fa8d8,504,SplinePathNode_PlaceOne,ai,not started
+0x1fa838,160,SplinePathNode_PlaceAll,ai,checked
+0x1fa8d8,504,SplinePathNode_PlaceOne,ai,checked
 0x1fabc8,1504,cSplinePathNode::Draw,world,not started
 0x1fb1a8,132,cSplinePathNode::SaveSnapshot,world,checked
 0x1fb368,92,cSplinePathNode::__tf,runtime,host
-0x1fb3c8,28,SplinePathNode_FreeMem,ai,not started
+0x1fb3c8,28,SplinePathNode_FreeMem,ai,checked
 0x1fb468,116,cSplinePathNodeState::__tf,runtime,host
 0x1fb4e0,288,Tex_SwizzleBlock4,render,not started
 0x1fb600,140,Tex_SwizzleBlock8,render,not started
@@ -4547,15 +4547,15 @@ address,size,name,system,status
 0x250e98,312,Math_Cos,common,checked
 0x250fd0,296,Math_Asin,common,checked
 0x2510f8,320,Math_Atan,common,checked
-0x2514c0,72,SplineModel_Init,ai,not started
+0x2514c0,72,SplineModel_Init,ai,checked
 0x251508,96,Spline_FindSegmentForward,boarder,not started
 0x251568,96,Spline_FindSegmentBackward,boarder,not started
 0x2515c8,520,Spline_Evaluate,boarder,not started
-0x251748,540,SplinePathNode_DrawPath,ai,not started
+0x251748,540,SplinePathNode_DrawPath,ai,checked
 0x251968,68,Spline_GetLength,boarder,ported
 0x2519b0,120,Spline_SaveSnapshot,boarder,checked
 0x251a28,112,SplinePathNode_Load,ai,checked
-0x251a98,136,SplinePathNode_IsVisible,ai,not started
+0x251a98,136,SplinePathNode_IsVisible,ai,checked
 0x251b20,124,StaticInit_Spline,boarder,checked
 0x251ba0,36,cBxCache::cBxCache,world,checked
 0x251bc8,88,cBxCache::~cBxCache,world,checked
