@@ -52,6 +52,11 @@ pub struct BigEntry {
 ///
 /// Checked in the function runner (row E2h, `game/tests/big_lib.rs`).
 pub fn lookup(header: &[u8], name: Option<&str>, index: usize) -> Option<BigEntry> {
+    lookup_bytes(header, name.map(str::as_bytes), index)
+}
+
+/// [`lookup`] with the name as the game's bytes (up to a zero, if any).
+pub fn lookup_bytes(header: &[u8], name: Option<&[u8]>, index: usize) -> Option<BigEntry> {
     let kind = identify(header);
     let end = header_size(header);
     let (mut p, width) = match kind {
@@ -69,7 +74,7 @@ pub fn lookup(header: &[u8], name: Option<&str>, index: usize) -> Option<BigEntr
         let entry_name = &header[at..at + len];
         let hit = match name {
             None => i == index,
-            Some(n) => stricmp(entry_name, n.as_bytes()) == 0,
+            Some(n) => stricmp(entry_name, n) == 0,
         };
         if hit {
             let be = |at: usize| header[at..at + width].iter().fold(0u32, |v, &b| v << 8 | b as u32);

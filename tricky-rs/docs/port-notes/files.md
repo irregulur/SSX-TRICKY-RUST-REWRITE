@@ -1765,3 +1765,45 @@ Proven (`SLUS_203.26` disassembly + runner):
     `cMCOverlayManager::vf2_1d3b00` (returns `0`).
 - Checked bit-for-bit in `tests/save_tail.rs` (200 profile + 50 `StaticInit_MemCard` + 1,200 overlay dispatch
   cases covering every `DrawState` value `-2..=40` + all 10 virtual stubs); `save` is now at 0 `not started`.
+
+## The file system's queue (row E2v; `tricky_game::filesys`, `tests/filesys.rs`)
+
+Proven (from the disassembly; Ghidra was not running):
+
+- State at 0x34eec0: +0 operations (default 0x20), +4 handles (0x10), +8 the highest priority that may run
+  (0xff; `FileSys_SetHeap` 0x2cb1f0 sets it, `FileSys_RunWithHeap` 0x2cb190 for the length of its call), +0xc
+  queued, +0x10 callbacks running, +0x14 the lock, +0x20 the operation running, +0x24 / +0x28 the pools (0x30-byte
+  operations, then 0x10c-byte handles, then the disc's table), +0x2c the queue, +0x30 the mounted archives, +0x38 the
+  root path. `FileSys_Init` 0x2ca170 takes `FileSys_CalcMemSize` 0x2ca320 bytes ("File Sys", flags 0x10):
+  ops × 0x30 + handles × 0x10c + entries × (the word at 0x349d44 + 0xc) + 0x40; `CdFs_Mount` gets
+  `FileSys_CompleteCurrent` 0x2cb780 as its callback.
+- An operation id: bits 0..19 a number (0x3bb954, back to 1 after 0xfffff), 20..23 the kind (1 allocated, 2 open,
+  3 close, 4 read, 5 write, 6 size, 7 nothing, 8 test open, 9 mount, 10 unmount), 24..31 its place in the pool.
+  `GetStatus` checks the number (−3 if stale); `GetResult`, `SetCallback`, `GetOpState` / `GetOpContext` don't.
+- The queue is sorted by priority, a new operation after those of equal priority. `FileSys_RunQueue` 0x2cb328
+  starts the first only when nothing runs and no callback is running, and only if its priority is at most +8. A
+  cancelled operation ends at once (−1). Opens: "archive|name" looks in that archive only, "|name" in every
+  archive, a name with no '|' on the device and (mode bit 0) then in every archive, newest mount first; a file in
+  an archive keeps the archive's record in its handle (+0) and its offset (+8), reads of it go through the
+  archive's own handle. Writes go to the host. Size and the rest end at once.
+- `FileSys_CompleteCurrent`: status −1 cancelled, 1 or −2; the callback (id, status, context); the queue runs once
+  no callback is running. Called with nothing running it leaves the callback count one up, so nothing starts
+  again (a game bug, kept).
+- Mount (`QueueMountBig` 0x2cae70): an archive mounted already answers the operation's **address**, not its id
+  (kept). Else a 0x14-byte record and a 0x800-byte buffer from the heap, open (mode 1), first 0x800 bytes read,
+  read again whole if the directory is longer (`FileSys_OnBigOpened` 0x2cadc0, `OnBigHeaderRead` 0x2caca8), then
+  the record goes first in the list. A failed open fails the mount (error 4) and leaks the record; its result then
+  frees handle 0 (zeroes 0x10c bytes at address 0, kept). A buffer that is not an archive is freed and still read.
+- Unmount (`QueueUnmountBig` 0x2cafd8): error 1 for a file inside an archive; −2 while a file of the archive is
+  open, but it unmounts anyway; an archive not mounted reads near address 0 (the test avoids it).
+- `FileSys_AllocOp` 0x2cb9d0 / `AllocHandle` 0x2cbb68 spin forever when the pool is full (ours panics).
+- `FileSys_SetRootPath` 0x2cb218: "cd:" refused (1) when the devices word (0x3bba64) & 3 is 2, "host0:" refused
+  (2) without bit 1; sets 0x3bba60 to 1 / 2; a '/' added unless the path fills the 0x100 bytes.
+- Host: the lock, the devices (`FileSys_OpenOnDisc` 0x2cc4b8, `HostFs_Close` 0x2cc5a8, `FileSys_DevRead`
+  0x2cc600, `HostFs_Write` 0x2cc730, `FileSys_DevGetSize` 0x2cc7a0, `CdFs_Mount`, `HostFs_Init`), the poll
+  (`Sys_RunPollTasks`). `BIG_Lookup` is `tricky_data::big::lookup_bytes` (new: the name as bytes).
+- Checked in the runner: 1,500 runs of 100 calls of all 37 functions (the queue built up, archives mounted, some
+  inside others, closed, unmounted), memory (stack aside), answers and calls out equal; 61 mutants, 56 killed, 5
+  equivalent or out of the test's reach (a cancelled operation's `ok`; size operations are never queued; with one
+  operation queued the move in `SetPriority` changes nothing; the two walks that only differ on an operation or
+  archive that is not there, which the test keeps away from).
