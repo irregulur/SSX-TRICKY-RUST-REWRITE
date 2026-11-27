@@ -42,6 +42,7 @@ state machine and the renderer are ours. Nothing has been checked against the or
 | E8a | Air: `Air_IntegrateRK4` 0x12b340, `AirPredict_AtTakeoff` 0x123b10, landing `Air_MotionUpdate` 0x108378, `Landing_CheckAngles` 0x12ba78, `Landing_ChooseState` 0x109308 | any | F4a | | [repo] Ported, unchecked Split: E8a1, E8a2 |
 | E9 | Script machine: `TriggerScript_Run`, `TriggerScript_ExecOp` 0x13bfd0 with every op, controllers (`TriggerScript_Op0_SpawnController` 0x13c600), persistent cell scripts, run at runtime instead of read statically | unowned | E3c | | [repo] `logic.rs` reads SSFLogic.json statically today |
 | E11 | Camera: named cameras `cBxCamera_EvalNamedCam` 0x174888 (ported), director scripts `cBxCamera_RunDirectorScript`, replay and finish cameras, camera collision | any | | | [repo] Chase cam ported in `rider.rs`; free camera is ours (keep, tag) |
+| E12i | Split of E12: the last 21 `not started` `save` functions (`Profile_NumberCharacterRecords` 0x166c70, `MCOverlay_EndLoad` 0x1ce700, `MCOverlay_EndSave` 0x1ce880, `MCOverlay_DispatchByCount` 0x1cf648, `MCOverlay_DispatchByMode` 0x1cf698, `MCOverlay_DrawState` 0x1cf6e8, `MCOverlay_OpenSave` 0x1d1dd8, `MCOverlay_BeginSave` 0x1d1e30, `MCOverlay_ResetCard` 0x1d1e88, `cMCOverlayManager::vf17_1d22c8` 0x1d22c8, `vf53/52/49/26/23/16/15/13/2` 0x1d3a48..0x1d3b00, `cSaveOverlay::vf3_1d3af8` 0x1d3af8, `StaticInit_MemCard` 0x23d5f8 in `memcard.rs`), checked in the runner | any | F4a | irregulur/neon (2026-11-27) | Split of E12; brings `save` to 0 `not started` |
 
 ## P2 Gameplay systems
 
@@ -1967,3 +1968,4 @@ matches the original.
 - 2026-11-27 irregulur/neon: G5e done (ported and runner-checked all 14 remaining `animation` functions in `camera_misc.rs` and `objdraw.rs`; `animation` now at 0 `not started`).
 - 2026-11-27 irregulur/neon: added and claimed G11f (split of G11).
 - 2026-11-27 irregulur/neon: G11f done (ported and runner-checked all 15 remaining `race` functions in `aiobj.rs`; `race` now at 0 `not started`).
+- 2026-11-27 irregulur/neon: added and claimed E12i (split of E12).
