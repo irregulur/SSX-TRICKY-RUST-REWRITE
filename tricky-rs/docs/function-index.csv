@@ -6284,8 +6284,8 @@ address,size,name,system,status
 0x2c8508,352,File_OpenBigCb,lib-file,checked
 0x2c8668,80,File_OpenBig,lib-file,checked
 0x2c86b8,76,File_OpenBig0,lib-file,checked
-0x2c8708,220,Host_WriteFile,lib-file,host
-0x2c87e8,240,Host_WriteFileChecked,lib-file,host
+0x2c8708,220,Host_WriteFile,lib-file,checked
+0x2c87e8,240,Host_WriteFileChecked,lib-file,checked
 0x2c88d8,56,File_PeekUnpackedSize,lib-file,checked
 0x2c8910,40,File_PeekUnpackedSizeUnchecked,lib-file,checked
 0x2c8938,308,File_LoadAndUnpack,lib-file,checked

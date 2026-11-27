@@ -10,8 +10,8 @@
 //!
 //! Calls out (the file system's queue and waits, the heap through the pointers at 0x3bb958 / 0x3bb95c, the thread
 //! runner) go through [`LoadEnv`]. Proven from the disassembly of `SLUS_203.26` (read by hand: Ghidra was not
-//! running). Not ported: `Host_WriteFile` 0x2c8708 and `Host_WriteFileChecked` 0x2c87e8 (writes to the
-//! development host, through the kernel's file calls).
+//! running). `Host_WriteFile` 0x2c8708 and `Host_WriteFileChecked` 0x2c87e8 (writes to the development host,
+//! through the kernel's file calls) are row E2y.
 
 use crate::eamem;
 use crate::pf::Mem;
@@ -474,4 +474,55 @@ pub fn load_unpack_into(m: &mut Mem, e: &mut dyn LoadEnv, sp: u32, name: u32, ds
     eamem::copy(m, dst, buf, n);
     free(m, e, buf);
     m.r32(size_at)
+}
+
+pub const SCE_OPEN: u32 = 0x30a7f0;
+pub const SCE_CLOSE: u32 = 0x30aa78;
+pub const SCE_WRITE: u32 = 0x30b0a0;
+/// Points at "host0:" (gp − 0x7e98)
+pub const HOST_PREFIX_PTR: u32 = 0x3bba58;
+
+/// `Host_WriteFile` 0x2c8708 / `Host_WriteFileChecked` 0x2c87e8 (`checked`)(path, buffer, size): the path (with
+/// "host0:" put first unless it has it) opened on the development host (`sceOpen`, flags 0x602: write, create,
+/// truncate), written in pieces of at most 0x1000 bytes (one write even for no bytes), closed; 1 if opened. The
+/// checked form answers 0 if a write fails (the file is then left open) or the close fails. `sp` is the stack
+/// pointer on entry: the path is made on the game's frame.
+pub fn host_write_file(m: &mut Mem, e: &mut dyn LoadEnv, sp: u32, path: u32, buf: u32, size: u32, checked: bool) -> u32 {
+    let at = sp - 0x140;
+    m.w8(at, 0);
+    let host = m.r32(HOST_PREFIX_PTR);
+    let n = crate::libc::strlen(m, host);
+    if crate::libc::strncmp(m, path, host, n) != 0 {
+        crate::libc::strcpy(m, at, host);
+    }
+    let len = crate::libc::strlen(m, at);
+    crate::libc::strcpy(m, at + len, path);
+    let fd = e.call(m, SCE_OPEN, &[at, 0x602]);
+    if (fd as i32) < 0 {
+        return 0;
+    }
+    let (mut buf, mut left) = (buf, size as i32);
+    loop {
+        let r = if left > 0x1000 {
+            let r = e.call(m, SCE_WRITE, &[fd, buf, 0x1000]);
+            left -= 0x1000;
+            buf = buf.wrapping_add(0x1000);
+            r
+        } else {
+            let r = e.call(m, SCE_WRITE, &[fd, buf, left as u32]);
+            left = 0;
+            r
+        };
+        if checked && (r as i32) < 0 {
+            return 0;
+        }
+        if left <= 0 {
+            break;
+        }
+    }
+    let r = e.call(m, SCE_CLOSE, &[fd]);
+    if checked && (r as i32) < 0 {
+        return 0;
+    }
+    1
 }

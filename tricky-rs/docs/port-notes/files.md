@@ -1865,3 +1865,12 @@ Proven (from the disassembly; Ghidra was not running):
 - Host: `sceCd*`, the semaphores, `FlushCache`. Checked in the runner: 400 runs of 30 calls; 36 mutants, 34 killed,
   2 equivalent (a part that ends the sector exactly is the same both ways; the failed bit is set with bit 1 already
   set).
+
+## The host's file writes (row E2y; `tricky_game::fileload::host_write_file`, `tests/hostwrite.rs`)
+
+Proven (from the disassembly): `Host_WriteFile` 0x2c8708(path, buffer, size) makes the path on its frame
+("host0:" first unless the path starts with it), `sceOpen` with 0x602 (write, create, truncate), writes pieces of at
+most 0x1000 bytes (always at least one write, even of 0 or a negative size), closes; answers 1 if it opened.
+`Host_WriteFileChecked` 0x2c87e8 is the same but answers 0 when a write fails (returning at once, the file left
+open) or the close fails. Host: the kernel's calls. Checked in the runner: 3,000 calls; 10 mutants, 9 killed, 1
+equivalent (a last piece of exactly 0x1000 bytes is one write either way).
