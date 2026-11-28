@@ -86,3 +86,25 @@ Proven (`SLUS_203.26` disassembly + runner):
   `GridMesh_PackUV` / `GridMesh_PackNormal` quantize floats by `4096.0` and `32767.0` (`0x46ff_fe00`).
 - Checked bit-for-bit across all 32 functions in `tests/render_meshcache_tail.rs` (reducing `render` `not started`
   from 96 to 64).
+
+## VIF1 IRQ, vblank/buffer state, texture block swizzlers & `cPS2VideoPlayer` (row G7v, `rendertail.rs`, checked: `tests/render_irq_video_tail.rs`)
+
+Proven (`SLUS_203.26` disassembly + runner):
+
+- **VIF1 IRQ helpers (`0x1c08a8..0x1c09c8`)**: `Gfx_InstallVif1Handler` / `RemoveVif1Handler` manage INTC 5
+  with handler `Gfx_Vif1Interrupt` (`0x1c0c70`); `StartVif1Irq` / `StopVif1Irq` reset ids `+0/+4/+8` to `-1` and
+  zero the 3 counter pairs at `+0xc..+0x24` (`Gfx_ResetVif1IrqCounts`).
+- **Vblank, DMA & double-buffer state (`0x1e3fe0`, `0x1e4060`, `0x1e40a0`, `0x1e40f0`, `0x1e4120`)**:
+  `Gfx_OnVblankStart` increments `+0x6f4` and advances state `+0x6d8` `4 -> 5` (signaling `+0x700` via
+  `iSignalSema`) once `+0x6f4 >= +0x6f0`; `Gfx_OnVif1DmaDone` advances `1 -> 2` (signaling `+0x700`) or `3 -> 4`;
+  `Gfx_BeginBuffer` transitions slot `+0x6dc[*(+0x690)]` `0 -> 1` and returns `1` for `{0, 1}`, `0` otherwise;
+  `Gfx_FlushIfIdle` force-flushes the mesh cache when `+0x6d8 == 0`.
+- **Texture block swizzlers (`0x1fb4e0`, `0x1fb600`)**: `Tex_SwizzleBlock4` (4-bpp nibble packing via 256-entry
+  table `0x340b10`) and `Tex_SwizzleBlock8` (8-bpp byte scatter via 128-entry table `0x340f10`) swizzle 256-byte
+  PS2 GS blocks in 4×16×4 loops.
+- **`cPS2VideoPlayer` (`0x2ba098`, `0x2ba190`, `0x2ba9f8..0x2bab00`)**: `Init` / dtor save and restore the
+  previous 512×448 24-bit display mode, allocate/free a `0x5400`-byte 128-byte-aligned buffer, and clear the
+  screen color via `gfx` `+0x6c`; `vf2_2ba9f8` drains up to 10 playback events checking pad 0/1 keys `0xd` and
+  `0x64` to set skip flag `+8`, latching buttons on the 10th.
+- Checked bit-for-bit across all 18 functions in `tests/render_irq_video_tail.rs` (reducing `render` `not started`
+  from 64 to 46).

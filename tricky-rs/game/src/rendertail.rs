@@ -1592,3 +1592,256 @@ pub fn strip_packet_init(m: &mut Mem, this: u32, a1: u32) -> u32 {
     m.w32(this + 8, 0);
     this
 }
+
+// ---- Row G7v: VIF1 IRQ, vblank/buffer state, texture block swizzlers & cPS2VideoPlayer ----
+
+pub const G_SWIZZLE_TBL4: u32 = 0x0034_0b10;
+pub const G_SWIZZLE_TBL8: u32 = 0x0034_0f10;
+pub const STR_PS2_VIDEO_BUF: u32 = 0x003b_8c90;
+pub const VT_PS2_VIDEO_PLAYER: u32 = 0x003b_8d00;
+
+pub const PAD_LATCH_BUTTONS: u32 = 0x0017_a658;
+pub const INPUT_RECORDER_PLAYBACK: u32 = 0x0017_a740;
+pub const INPUT_GET_DEVICE: u32 = 0x0017_a830;
+pub const GFX_VIF1_INTERRUPT: u32 = 0x001c_0c70;
+pub const GFX_RENDER_THREAD: u32 = 0x001e_4140;
+pub const VIDEO_PLAYER_DTOR: u32 = 0x002b_ab58;
+pub const EAMEM_ALLOC_ALIGNED: u32 = 0x002c_cf50;
+pub const EAMEM_FREE: u32 = 0x002c_cfc0;
+pub const ADD_INTC_HANDLER: u32 = 0x0030_64c0;
+pub const I_SIGNAL_SEMA: u32 = 0x0030_6810;
+pub const ENABLE_INTC: u32 = 0x0030_7270;
+
+/// `Gfx_InstallVif1Handler` 0x1c08a8(this): disable INTC 5, register `Gfx_Vif1Interrupt` (`0x1c0c70`), store
+/// handler id at `*(this)`, and re-enable INTC 5.
+pub fn gfx_install_vif1_handler(m: &mut Mem, env: &mut dyn RenderEnv, this: u32) {
+    env.call(m, DISABLE_INTC, &[5]);
+    let id = env.call(m, ADD_INTC_HANDLER, &[5, GFX_VIF1_INTERRUPT, 0]);
+    m.w32(this, id);
+    env.call(m, ENABLE_INTC, &[5]);
+}
+
+/// `Gfx_RemoveVif1Handler` 0x1c08f0(this): disable INTC 5 and remove handler `*(this)`.
+pub fn gfx_remove_vif1_handler(m: &mut Mem, env: &mut dyn RenderEnv, this: u32) {
+    env.call(m, DISABLE_INTC, &[5]);
+    env.call(m, REMOVE_INTC_HANDLER, &[5, m.r32(this)]);
+}
+
+/// `Gfx_ResetVif1IrqCounts` 0x1c0990(this): zero the 3 pairs of counters at `this+0xc..+0x24`.
+pub fn gfx_reset_vif1_irq_counts(m: &mut Mem, this: u32) {
+    for i in 0..3u32 {
+        m.w32(this + 0xc + i * 8, 0);
+        m.w32(this + 0x10 + i * 8, 0);
+    }
+}
+
+/// `Gfx_StartVif1Irq` 0x1c0920(this): reset ids `+0/+4/+8` to `-1`, install VIF1 handler, and reset IRQ counts.
+pub fn gfx_start_vif1_irq(m: &mut Mem, env: &mut dyn RenderEnv, this: u32) {
+    m.w32(this + 4, 0xffff_ffff);
+    m.w32(this, 0xffff_ffff);
+    m.w32(this + 8, 0xffff_ffff);
+    gfx_install_vif1_handler(m, env, this);
+    gfx_reset_vif1_irq_counts(m, this);
+}
+
+/// `Gfx_StopVif1Irq` 0x1c0958(this): remove VIF1 handler and reset ids `+0/+4/+8` to `-1`.
+pub fn gfx_stop_vif1_irq(m: &mut Mem, env: &mut dyn RenderEnv, this: u32) {
+    gfx_remove_vif1_handler(m, env, this);
+    m.w32(this + 8, 0xffff_ffff);
+    m.w32(this + 4, 0xffff_ffff);
+    m.w32(this, 0xffff_ffff);
+}
+
+/// `Gfx_UpdateVif1Irq` 0x1c09c8: no-op.
+pub fn gfx_update_vif1_irq() {}
+
+/// `Gfx_OnVblankStart` 0x1e3fe0(this): increment vblank counter `+0x6f4`; if state `+0x6d8 == 4` and counter
+/// reaches `+0x6f0`, transition to state 5, clear `+0x6f4`, and `iSignalSema(*(this+0x700))`.
+pub fn gfx_on_vblank_start(m: &mut Mem, env: &mut dyn RenderEnv, this: u32) {
+    let cnt = (m.r32(this + 0x6f4) as i32).wrapping_add(1);
+    let state = m.r32(this + 0x6d8);
+    m.w32(this + 0x6f4, cnt as u32);
+    if state == 4 && cnt >= (m.r32(this + 0x6f0) as i32) {
+        m.w32(this + 0x6d8, 5);
+        m.w32(this + 0x6f4, 0);
+        env.call(m, I_SIGNAL_SEMA, &[m.r32(this + 0x700)]);
+    }
+}
+
+/// `Gfx_OnVif1DmaDone` 0x1e4060(this): if state `+0x6d8 == 1`, set state 2 and `iSignalSema(*(this+0x700))`;
+/// else if state == 3, set state 4.
+pub fn gfx_on_vif1_dma_done(m: &mut Mem, env: &mut dyn RenderEnv, this: u32) {
+    let state = m.r32(this + 0x6d8);
+    if state == 1 {
+        m.w32(this + 0x6d8, 2);
+        env.call(m, I_SIGNAL_SEMA, &[m.r32(this + 0x700)]);
+    } else if state == 3 {
+        m.w32(this + 0x6d8, 4);
+    }
+}
+
+/// `Gfx_BeginBuffer` 0x1e40a0(this): check buffer slot `+0x6dc[*(+0x690)]`; if 0 mark 1 and return 1, if 1
+/// return 1, else return 0.
+pub fn gfx_begin_buffer(m: &mut Mem, this: u32) -> u32 {
+    let slot = this
+        .wrapping_add(0x6dc)
+        .wrapping_add(m.r32(this + 0x690).wrapping_shl(2));
+    let v = m.r32(slot);
+    if v == 0 {
+        m.w32(slot, 1);
+        1
+    } else if v == 1 {
+        1
+    } else {
+        0
+    }
+}
+
+/// `Gfx_FlushIfIdle` 0x1e40f0(this): when state `+0x6d8 == 0`, force-flush mesh cache (`0x1dec38`) and return 1;
+/// else return 0.
+pub fn gfx_flush_if_idle(m: &mut Mem, env: &mut dyn RenderEnv, this: u32) -> u32 {
+    if m.r32(this + 0x6d8) != 0 {
+        return 0;
+    }
+    ps2_render_flush_mesh_cache(m, env, this, 1);
+    1
+}
+
+/// `Gfx_RenderThreadEntry` 0x1e4120(this): call `Gfx_RenderThread(this)`.
+pub fn gfx_render_thread_entry(m: &mut Mem, env: &mut dyn RenderEnv, this: u32) {
+    env.call(m, GFX_RENDER_THREAD, &[this]);
+}
+
+/// `Tex_SwizzleBlock4` 0x1fb4e0(_this, src, dst): swizzle a 4-bpp 256-byte block using lookup table `0x340b10`
+/// and return 0.
+pub fn tex_swizzle_block4(m: &mut Mem, src: u32, dst: u32) -> u32 {
+    let mut out_idx = 0u32;
+    let mut row_src = src;
+    for blk in 0..4u32 {
+        let mut t3 = (blk & 1) << 7;
+        for _ in 0..16u32 {
+            let mut p0 = G_SWIZZLE_TBL4.wrapping_add(t3 << 2);
+            let mut p1 = p0.wrapping_add(4);
+            for _ in 0..4u32 {
+                let idx0 = m.r32(p0);
+                let idx1 = m.r32(p1);
+                p0 = p0.wrapping_add(8);
+                p1 = p1.wrapping_add(8);
+                t3 = t3.wrapping_add(2);
+                let s0 = (idx0 & 1) << 2;
+                let s1 = (idx1 & 1) << 2;
+                let nib0 = ((m.r8(row_src.wrapping_add(idx0 >> 1)) as u32) & (0xf << s0)) >> s0;
+                let nib1 = ((m.r8(row_src.wrapping_add(idx1 >> 1)) as u32) & (0xf << s1)) >> s1;
+                m.w8(dst.wrapping_add(out_idx), (nib0 | (nib1 << 4)) as u8);
+                out_idx += 1;
+            }
+        }
+        row_src = row_src.wrapping_add(0x40);
+    }
+    0
+}
+
+/// `Tex_SwizzleBlock8` 0x1fb600(_this, src, dst): swizzle an 8-bpp 256-byte block using lookup table `0x340f10`
+/// and return 0.
+pub fn tex_swizzle_block8(m: &mut Mem, src: u32, dst: u32) -> u32 {
+    let mut out_idx = 0u32;
+    let mut row_src = src;
+    for blk in 0..4u32 {
+        let mut t1 = (blk & 1) << 6;
+        for _ in 0..16u32 {
+            let mut p = G_SWIZZLE_TBL8.wrapping_add(t1 << 2);
+            for _ in 0..4u32 {
+                let off = m.r32(p);
+                p = p.wrapping_add(4);
+                t1 = t1.wrapping_add(1);
+                let b = m.r8(row_src.wrapping_add(off));
+                m.w8(dst.wrapping_add(out_idx), b);
+                out_idx += 1;
+            }
+        }
+        row_src = row_src.wrapping_add(0x40);
+    }
+    0
+}
+
+/// `PS2VideoPlayer_Init` 0x2ba098(this, sp): set vtable `0x3b8d00`, clear screen color via `gfx` `+0x6c`, save
+/// previous display mode (`+0x44`), allocate `0x5400`-byte 128-aligned frame buffer, switch to 512×448 24-bit
+/// mode (`+0x3c`/`+0x2c`), and set `gfx+0x6f0 = 1`.
+pub fn ps2_video_player_init(m: &mut Mem, env: &mut dyn RenderEnv, this: u32, sp: u32) -> u32 {
+    let gfx = m.r32(m.r32(G_APP) + 0x724);
+    m.w32(this, VT_PS2_VIDEO_PLAYER);
+    m.w32(sp, 0);
+    m.w32(sp + 4, 0);
+    m.w32(sp + 8, 0);
+    call_gfx_vf(m, env, gfx, 0x68, &[sp]);
+    m.w32(gfx + 0x668, 0);
+    let old_mode = call_gfx_vf(m, env, gfx, 0x40, &[]);
+    m.w32(this + 4, old_mode);
+    m.w32(this + 0x18, 0x200);
+    m.w32(this + 0x1c, 0x1c0);
+    let buf = env.call(m, EAMEM_ALLOC_ALIGNED, &[STR_PS2_VIDEO_BUF, 0x5400, 0x80, 0, 0]);
+    m.w32(this + 0x20, buf);
+    let mode = call_gfx_vf(m, env, gfx, 0x38, &[m.r32(this + 0x18), m.r32(this + 0x1c), 0x18, 0x18]);
+    call_gfx_vf(m, env, gfx, 0x28, &[mode]);
+    m.w32(gfx + 0x6f0, 1);
+    this
+}
+
+/// `cPS2VideoPlayer::~cPS2VideoPlayer` 0x2ba190(this, flags, sp): restore vtable `0x3b8d00`, free `*(this+0x20)`,
+/// clear screen color via `gfx` `+0x6c`, restore previous display mode `*(this+4)` via `+0x2c`, set
+/// `gfx+0x668 = 1`, `gfx+0x6f0 = 1`, and call `cVideoPlayer::~cVideoPlayer`.
+pub fn ps2_video_player_dtor(m: &mut Mem, env: &mut dyn RenderEnv, this: u32, flags: u32, sp: u32) {
+    m.w32(this, VT_PS2_VIDEO_PLAYER);
+    env.call(m, EAMEM_FREE, &[m.r32(this + 0x20)]);
+    let gfx = m.r32(m.r32(G_APP) + 0x724);
+    m.w32(sp, 0);
+    m.w32(sp + 4, 0);
+    m.w32(sp + 8, 0);
+    call_gfx_vf(m, env, gfx, 0x68, &[sp]);
+    m.w32(gfx + 0x668, 1);
+    call_gfx_vf(m, env, gfx, 0x28, &[m.r32(this + 4)]);
+    m.w32(gfx + 0x6f0, 1);
+    env.call(m, VIDEO_PLAYER_DTOR, &[this, flags]);
+}
+
+/// `cPS2VideoPlayer::vf2_2ba9f8` 0x2ba9f8(this): poll up to 10 queued input events via `InputRecorder_Playback`;
+/// when skippable (`+0xc != 0`), set `+8 = 1` if pad 0 or pad 1 pressed key `0xd` or `0x64`; latch buttons on 10th.
+pub fn ps2_video_player_poll_input(m: &mut Mem, env: &mut dyn RenderEnv, this: u32) {
+    let mut count = 0i32;
+    loop {
+        let inp = m.r32(m.r32(G_APP) + 0x24);
+        if env.call(m, INPUT_RECORDER_PLAYBACK, &[inp]) == 0 {
+            break;
+        }
+        if m.r32(this + 0xc) != 0 {
+            let mut skip = false;
+            for &(pad, key) in &[(0u32, 0xd), (0, 0x64), (1, 0xd), (1, 0x64)] {
+                let inp2 = m.r32(m.r32(G_APP) + 0x24);
+                let dev = env.call(m, INPUT_GET_DEVICE, &[inp2, pad]);
+                if m.r32(dev + 0x2c) == key {
+                    skip = true;
+                    break;
+                }
+            }
+            if skip {
+                m.w32(this + 8, 1);
+            }
+        }
+        count += 1;
+        if count >= 10 {
+            let inp3 = m.r32(m.r32(G_APP) + 0x24);
+            env.call(m, PAD_LATCH_BUTTONS, &[inp3]);
+            break;
+        }
+    }
+}
+
+/// `cPS2VideoPlayer::vf4_2baaf8` 0x2baaf8(this): return `*(this+0x10)`.
+pub fn ps2_video_player_vf4(m: &Mem, this: u32) -> u32 {
+    m.r32(this + 0x10)
+}
+
+/// `cPS2VideoPlayer::vf5_2bab00` 0x2bab00(this): return `*(this+8)`.
+pub fn ps2_video_player_vf5(m: &Mem, this: u32) -> u32 {
+    m.r32(this + 8)
+}
