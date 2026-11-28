@@ -763,3 +763,307 @@ pub fn sphere_tree_buf_cache_dtor(m: &mut Mem, env: &mut dyn RenderEnv, this: u3
         env.call(m, MEM_DELETE, &[this]);
     }
 }
+
+// ---- Row G7t: cPS2GraphicsMan / cGraphicsMan / cPS2LightMan / cPS2GridMesh virtuals & matrix stack ----
+
+pub const G_IDENTITY_MAT4: u32 = 0x0034_6440;
+
+pub const VT_PS2_DRAW_STATE: u32 = 0x0039_0ad0;
+pub const VT_PS2_GRAPHICS_MAN: u32 = 0x0039_3610;
+pub const VT_GRAPHICS_MAN: u32 = 0x0039_3a20;
+
+pub const LIGHT_MAN_DTOR: u32 = 0x001c_e110;
+pub const GFX_BEGIN_BUFFER: u32 = 0x001e_40a0;
+pub const GFX_FLUSH_IF_IDLE: u32 = 0x001e_40f0;
+pub const GFX_PROGRAM_DISPLAY: u32 = 0x001e_4288;
+pub const PS2_RENDER_UPDATE_MODEL_MATRICES: u32 = 0x001e_85b0;
+pub const PS2_RENDER_FLUSH_STATE: u32 = 0x001e_88c8;
+
+fn transform_v4(mat: &[V4; 4], v: V4) -> V4 {
+    [0, 1, 2, 3].map(|i| ((mat[0][i] * v[0] + mat[1][i] * v[1]) + mat[2][i] * v[2]) + mat[3][i] * v[3])
+}
+
+fn read_m4(m: &Mem, at: u32) -> [V4; 4] {
+    [
+        read_v4(m, at),
+        read_v4(m, at + 0x10),
+        read_v4(m, at + 0x20),
+        read_v4(m, at + 0x30),
+    ]
+}
+
+fn write_m4(m: &mut Mem, at: u32, mat: [V4; 4]) {
+    for (r, row) in mat.iter().enumerate() {
+        write_v4(m, at + (r as u32) * 0x10, *row);
+    }
+}
+
+/// `cGraphicsMan::~cGraphicsMan` 0x1dbab0 and `cPS2GraphicsMan::~cPS2GraphicsMan` 0x1ea130(this, flags):
+/// restore `cGraphicsMan` vtable `0x393a20` at `this+0x10`, and `Mem_Delete(this)` when `flags & 1 != 0`.
+pub fn graphics_man_dtor(m: &mut Mem, env: &mut dyn RenderEnv, this: u32, flags: u32) {
+    m.w32(this + 0x10, VT_GRAPHICS_MAN);
+    if (flags & 1) != 0 {
+        env.call(m, MEM_DELETE, &[this]);
+    }
+}
+
+/// `cPS2GraphicsMan::vf36_1e8928` 0x1e8928(this, src): copy 20 bytes from `src` to `this+0x17d4`.
+pub fn ps2_gfx_set_x17d4(m: &mut Mem, this: u32, src: u32) {
+    for k in 0..5u32 {
+        m.w32(this + 0x17d4 + k * 4, m.r32(src + k * 4));
+    }
+}
+
+/// `cPS2GraphicsMan::vf23_1e8970` 0x1e8970(out, this): read active `0x34`-byte stack entry at
+/// `this + 0x14 + *(this+0xe4)*0x34`, convert its four floats at `+4..+0x14` via `cvt.w.s` into `out[0..4]`.
+pub fn ps2_gfx_get_viewport_i32(m: &mut Mem, out: u32, this: u32) -> u32 {
+    let idx = m.r32(this + 0xe4);
+    let entry = this.wrapping_add(0x14).wrapping_add(idx.wrapping_mul(0x34));
+    for k in 0..4u32 {
+        let f = f32::from_bits(m.r32(entry + 4 + k * 4));
+        m.w32(out + k * 4, (f as i32) as u32);
+    }
+    out
+}
+
+/// `cPS2GraphicsMan::vf16_1e8cd8` 0x1e8cd8(this): push a copy of the top `0x34`-byte stack entry
+/// (`this+0x14 + idx*0x34` -> `+0x48`) and increment `*(this+0xe4)`.
+pub fn ps2_gfx_push_viewport(m: &mut Mem, this: u32) {
+    let idx = m.r32(this + 0xe4);
+    let base = this.wrapping_add(idx.wrapping_mul(0x34));
+    for k in 0..13u32 {
+        let v = m.r32(base + 0x14 + k * 4);
+        m.w32(base + 0x48 + k * 4, v);
+    }
+    m.w32(this + 0xe4, idx.wrapping_add(1));
+}
+
+/// `cPS2GraphicsMan::vf11_1e8d60` 0x1e8d60(this): return `*(table + idx*0x94 + 0x84)` (`idx = +0x650`, `table = +0x654`).
+pub fn ps2_gfx_get_mode_x84(m: &Mem, this: u32) -> u32 {
+    let idx = m.r32(this + 0x650);
+    let tbl = m.r32(this + 0x654);
+    m.r32(tbl.wrapping_add(idx.wrapping_mul(0x94)).wrapping_add(0x84))
+}
+
+/// `cPS2GraphicsMan::vf10_1e8d80` 0x1e8d80(this): return `*(table + idx*0x94 + 0x80)`.
+pub fn ps2_gfx_get_mode_x80(m: &Mem, this: u32) -> u32 {
+    let idx = m.r32(this + 0x650);
+    let tbl = m.r32(this + 0x654);
+    m.r32(tbl.wrapping_add(idx.wrapping_mul(0x94)).wrapping_add(0x80))
+}
+
+/// `cPS2GraphicsMan::vf7_1e8da0` 0x1e8da0(this): return `*(this+0x650)`.
+pub fn ps2_gfx_get_mode_index(m: &Mem, this: u32) -> u32 {
+    m.r32(this + 0x650)
+}
+
+/// `cPS2GraphicsMan::vf8_1e8da8` 0x1e8da8(this, index): return `*(this+0x654) + index * 0x94`.
+pub fn ps2_gfx_get_mode_entry(m: &Mem, this: u32, index: u32) -> u32 {
+    m.r32(this + 0x654).wrapping_add(index.wrapping_mul(0x94))
+}
+
+/// `cPS2GraphicsMan::vf9_1e8dc0` 0x1e8dc0(this): return `*(this+0x64c)`.
+pub fn ps2_gfx_get_mode_count(m: &Mem, this: u32) -> u32 {
+    m.r32(this + 0x64c)
+}
+
+/// `cPS2GridMesh::vf1_1e8dc8` 0x1e8dc8(this): return `*(this+0x50)`.
+pub fn ps2_grid_mesh_vf1(m: &Mem, this: u32) -> u32 {
+    m.r32(this + 0x50)
+}
+
+/// `cPS2GraphicsMan::vf12_1e8e20` 0x1e8e20(this, rgb_ptr): pack `(u32)(r*255) | ((u32)(g*255) << 8) |
+/// ((u32)(b*255) << 16)` into `*(this+0x1724)`.
+pub fn ps2_gfx_set_clear_color(m: &mut Mem, this: u32, rgb_ptr: u32) {
+    let k = F(255.0);
+    let r = (F(f32::from_bits(m.r32(rgb_ptr))) * k).0 as u32;
+    let g = (F(f32::from_bits(m.r32(rgb_ptr + 4))) * k).0 as u32;
+    let b = (F(f32::from_bits(m.r32(rgb_ptr + 8))) * k).0 as u32;
+    m.w32(this + 0x1724, r | (g << 8) | (b << 16));
+}
+
+/// `Gfx_FlipDisplay` 0x1e8ea0(a0, a1): tail-call `Gfx_ProgramDisplay(a0, a1, 1)`.
+pub fn gfx_flip_display(m: &mut Mem, env: &mut dyn RenderEnv, a0: u32, a1: u32) -> u32 {
+    env.call(m, GFX_PROGRAM_DISPLAY, &[a0, a1, 1])
+}
+
+/// `cPS2GraphicsMan::vf88_1e9038` 0x1e9038(this): dispatch `(*(this+0x484))->vf_0x84(this)`.
+pub fn ps2_gfx_vf88(m: &mut Mem, env: &mut dyn RenderEnv, this: u32) -> u32 {
+    let obj = m.r32(this + 0x484);
+    let vt = m.r32(obj);
+    let adj = m.r16(vt + 0x80) as i16 as i32 as u32;
+    let f = m.r32(vt + 0x84);
+    env.call(m, f, &[obj.wrapping_add(adj), this])
+}
+
+/// `cPS2GraphicsMan::vf14_1e90e8` 0x1e90e8(this): call `Gfx_FlushIfIdle(this)`.
+pub fn ps2_gfx_vf14(m: &mut Mem, env: &mut dyn RenderEnv, this: u32) -> u32 {
+    env.call(m, GFX_FLUSH_IF_IDLE, &[this])
+}
+
+/// `cPS2GraphicsMan::vf13_1e9108` 0x1e9108(this): call `Gfx_BeginBuffer(this)`.
+pub fn ps2_gfx_vf13(m: &mut Mem, env: &mut dyn RenderEnv, this: u32) -> u32 {
+    env.call(m, GFX_BEGIN_BUFFER, &[this])
+}
+
+/// `PS2Render_CalcFog` 0x1e9128(this, pt): update model matrices (`0x1e85b0`), transform `pt` by matrix at
+/// `this+0x5b0`, multiply `.w` by `*(this+0x63c)`, clamp to `[0.0, *(this+0x630)]`, and return `u16` truncated int.
+pub fn ps2_render_calc_fog(m: &mut Mem, env: &mut dyn RenderEnv, this: u32, pt: u32) -> u32 {
+    env.call(m, PS2_RENDER_UPDATE_MODEL_MATRICES, &[this]);
+    let vf5 = read_v4(m, this + 0x630);
+    let v = read_v4(m, pt);
+    let mat = read_m4(m, this + 0x5b0);
+    let mut w = transform_v4(&mat, v)[3] * vf5[3];
+    if w.0 < 0.0 {
+        w = F(0.0);
+    }
+    if vf5[0].0 < w.0 {
+        w = vf5[0];
+    }
+    ((w.0 as i32) as u16) as u32
+}
+
+/// `cPS2GraphicsMan::vf53_1e9628` 0x1e9628(this): call virtual `+0xc` on `*(this+0x470)` (vtable at `+0x18`),
+/// set `this+0x474 = 1`, `this+0x478 = 1`, and tail-call `PS2Render_FlushState(this)`.
+pub fn ps2_gfx_vf53(m: &mut Mem, env: &mut dyn RenderEnv, this: u32) -> u32 {
+    let st = m.r32(this + 0x470);
+    let vt = m.r32(st + 0x18);
+    let adj = m.r16(vt + 8) as i16 as i32 as u32;
+    let f = m.r32(vt + 0xc);
+    env.call(m, f, &[st.wrapping_add(adj)]);
+    m.w32(this + 0x478, 1);
+    m.w32(this + 0x474, 1);
+    env.call(m, PS2_RENDER_FLUSH_STATE, &[this])
+}
+
+/// `cPS2GraphicsMan::vf33_1e9880` 0x1e9880(this, vec): translate current matrix `*(this+0x3f4)` (`row3 = M * vec`)
+/// and clear dirty cache flag `*(this+0x17d0)`.
+pub fn ps2_gfx_mat_translate(m: &mut Mem, this: u32, vec: u32) {
+    let mat_ptr = m.r32(this + 0x3f4);
+    let mat = read_m4(m, mat_ptr);
+    let v = read_v4(m, vec);
+    let r3 = transform_v4(&mat, v);
+    write_v4(m, mat_ptr + 0x30, r3);
+    m.w32(this + 0x17d0, 0);
+}
+
+/// `cPS2GraphicsMan::vf32_1e98b8` 0x1e98b8(this): load `G_IDENTITY_MAT4` (`0x346440`) into `*(this+0x3f4)` and
+/// clear `*(this+0x17d0)`.
+pub fn ps2_gfx_mat_load_identity(m: &mut Mem, this: u32) {
+    let mat_ptr = m.r32(this + 0x3f4);
+    for k in 0..16u32 {
+        m.w32(mat_ptr + k * 4, m.r32(G_IDENTITY_MAT4 + k * 4));
+    }
+    m.w32(this + 0x17d0, 0);
+}
+
+/// `cPS2GraphicsMan::vf31_1e98f0` 0x1e98f0(this, rhs): post-multiply `*(this+0x3f4)` by `rhs` in place and clear
+/// `*(this+0x17d0)`.
+pub fn ps2_gfx_mat_mul(m: &mut Mem, this: u32, rhs_ptr: u32) {
+    let mat_ptr = m.r32(this + 0x3f4);
+    let lhs = read_m4(m, mat_ptr);
+    let rhs = read_m4(m, rhs_ptr);
+    let out = [
+        transform_v4(&lhs, rhs[0]),
+        transform_v4(&lhs, rhs[1]),
+        transform_v4(&lhs, rhs[2]),
+        transform_v4(&lhs, rhs[3]),
+    ];
+    write_m4(m, mat_ptr, out);
+    m.w32(this + 0x17d0, 0);
+}
+
+/// `cPS2GraphicsMan::vf29_1e9978` 0x1e9978(this, src): copy 64-byte matrix `src` into `*(this+0x3f4)` and clear
+/// `*(this+0x17d0)`.
+pub fn ps2_gfx_mat_load(m: &mut Mem, this: u32, src: u32) {
+    let mat_ptr = m.r32(this + 0x3f4);
+    for k in 0..16u32 {
+        m.w32(mat_ptr + k * 4, m.r32(src + k * 4));
+    }
+    m.w32(this + 0x17d0, 0);
+}
+
+/// `cPS2GraphicsMan::vf27_1e9e88` 0x1e9e88(this): pop matrix stack (`+0x3f4 -= 0x40`, `+0x3f0 -= 1`) and clear
+/// `*(this+0x17d0)`.
+pub fn ps2_gfx_mat_pop(m: &mut Mem, this: u32) {
+    let p = m.r32(this + 0x3f4).wrapping_sub(0x40);
+    let d = m.r32(this + 0x3f0).wrapping_sub(1);
+    m.w32(this + 0x17d0, 0);
+    m.w32(this + 0x3f4, p);
+    m.w32(this + 0x3f0, d);
+}
+
+/// `cPS2GraphicsMan::vf26_1e9ea8` 0x1e9ea8(this): duplicate top matrix (`+0x3f4` -> `+0x3f4+0x40`) and increment
+/// `+0x3f4` by `0x40` and `+0x3f0` by `1`.
+pub fn ps2_gfx_mat_push(m: &mut Mem, this: u32) {
+    let p = m.r32(this + 0x3f4);
+    for k in 0..16u32 {
+        let v = m.r32(p + k * 4);
+        m.w32(p + 0x40 + k * 4, v);
+    }
+    let p2 = m.r32(this + 0x3f4).wrapping_add(0x40);
+    let d = m.r32(this + 0x3f0).wrapping_add(1);
+    m.w32(this + 0x3f4, p2);
+    m.w32(this + 0x3f0, d);
+}
+
+/// `cPS2GraphicsMan::vf96_1e9ff0` 0x1e9ff0(this): return `*(this+0x6c4)`.
+pub fn ps2_gfx_vf96(m: &Mem, this: u32) -> u32 {
+    m.r32(this + 0x6c4)
+}
+
+/// `cPS2GraphicsMan::vf65_1e9ff8` 0x1e9ff8(this): return `*(u8*)(*(this+0x470) + 0xe)`.
+pub fn ps2_gfx_vf65(m: &Mem, this: u32) -> u32 {
+    m.r8(m.r32(this + 0x470) + 0xe) as u32
+}
+
+/// `cPS2GraphicsMan::vf64_1ea008` 0x1ea008(this): return `*(u8*)(*(this+0x470) + 0x15)`.
+pub fn ps2_gfx_vf64(m: &Mem, this: u32) -> u32 {
+    m.r8(m.r32(this + 0x470) + 0x15) as u32
+}
+
+/// `cPS2GraphicsMan::vf37_1ea018` 0x1ea018(this): return `this + 0x17d4`.
+pub fn ps2_gfx_vf37(this: u32) -> u32 {
+    this.wrapping_add(0x17d4)
+}
+
+/// `cPS2GraphicsMan::vf19_1ea020` 0x1ea020(this, rect_i32_ptr): convert four `i32`s to `f32` and dispatch
+/// virtual `+0x9c` (`delta +0x98`) with `$f12..$f15`.
+pub fn ps2_gfx_vf19(m: &mut Mem, env: &mut dyn RenderEnv, this: u32, rect_ptr: u32) -> u32 {
+    let f12 = (m.r32(rect_ptr) as i32 as f32).to_bits();
+    let f13 = (m.r32(rect_ptr + 4) as i32 as f32).to_bits();
+    let f14 = (m.r32(rect_ptr + 8) as i32 as f32).to_bits();
+    let f15 = (m.r32(rect_ptr + 12) as i32 as f32).to_bits();
+    call_gfx_vf(m, env, this, 0x98, &[f12, f13, f14, f15])
+}
+
+/// `cPS2GraphicsMan::cPS2GraphicsMan` 0x1ea0c0(this): set vtable `0x393610` at `+0x10` and `tPS2DrawState` vtable
+/// `0x390ad0` on the 4 embedded draw states at `+0x3fc + i*0x1c + 0x18`.
+pub fn ps2_graphics_man_ctor(m: &mut Mem, this: u32) -> u32 {
+    m.w32(this + 0x10, VT_PS2_GRAPHICS_MAN);
+    for i in 0..4u32 {
+        m.w32(this + 0x3fc + i * 0x1c + 0x18, VT_PS2_DRAW_STATE);
+    }
+    this
+}
+
+/// `cPS2LightMan::~cPS2LightMan` 0x1ea290(this, flags): tail-call `cLightMan::~cLightMan(this, flags)`.
+pub fn ps2_light_man_dtor(m: &mut Mem, env: &mut dyn RenderEnv, this: u32, flags: u32) {
+    env.call(m, LIGHT_MAN_DTOR, &[this, flags]);
+}
+
+/// No-op virtual stubs (`cPS2LightMan::vf14_1ea1d8`, `vf13_1ea1e0`, `vf12_1ea1e8`, `vf11_1ea1f0`, `vf10_1ea1f8`,
+/// `vf9_1ea200`, `vf7_1ea208`, `vf5_1ea218`, `vf4_1ea220`, `vf3_1ea228`, `vf2_1ea230`,
+/// `cGraphicsMan::vf95_1ea2e0`, `vf92_1ea2e8`, `vf86_1ea2f0`).
+pub fn gfx_noop() {}
+
+/// Return-0 virtual stubs (`cPS2LightMan::vf6_1ea210`, `vf1_1ea238`, `cGraphicsMan::vf96_1ea2d8`,
+/// `vf83_1ea2f8`, `vf82_1ea300`).
+pub fn gfx_ret0() -> u32 {
+    0
+}
+
+/// Return-1 virtual stubs (`cGraphicsMan::vf14_1ea308`, `vf13_1ea310`).
+pub fn gfx_ret1() -> u32 {
+    1
+}

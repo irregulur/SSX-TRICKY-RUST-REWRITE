@@ -40,3 +40,25 @@ Proven (`SLUS_203.26` disassembly + runner):
     preserving the original end-of-buffer decrement when `v1 == end && run >= 2`.
 - Checked bit-for-bit across all 26 functions in `tests/render_misc_tail.rs` (reducing `render` `not started`
   from 174 to 148).
+
+## `cPS2GraphicsMan`, `cGraphicsMan`, `cPS2LightMan` & `cPS2GridMesh` virtuals & matrix stack (row G7t, `rendertail.rs`, checked: `tests/render_gfxman_tail.rs`)
+
+Proven (`SLUS_203.26` disassembly + runner):
+
+- **Lifecycle (`0x1dbab0`, `0x1ea0c0`, `0x1ea130`, `0x1ea290`)**: `cPS2GraphicsMan::cPS2GraphicsMan` sets
+  `+0x10 = 0x393610` and installs `tPS2DrawState` vtable `0x390ad0` on the 4 embedded state slots at
+  `+0x3fc + i*0x1c + 0x18`; `~cPS2GraphicsMan` tail-calls `~cGraphicsMan` (`+0x10 = 0x393a20`, `Mem_Delete` if
+  `flags & 1`); `~cPS2LightMan` tail-calls `cLightMan::~cLightMan` (`0x1ce110`).
+- **Viewport stack, display modes & clear color (`0x1e8928..0x1e9108`, `0x1e9628`, `0x1e9ff0..0x1ea020`)**:
+  `vf16_1e8cd8` pushes a `0x34`-byte stack entry at `+0x14 + idx*0x34` (`idx = +0xe4`); `vf23_1e8970` truncates
+  its 4 floats `+4..+0x14` via `cvt.w.s`; `vf7..vf11` query the `0x94`-byte display-mode table at `+0x654`
+  (index `+0x650`, count `+0x64c`); `vf12_1e8e20` packs `(u32)(rgb * 255.0)` into `+0x1724`; `vf19_1ea020`
+  converts four `i32`s to `$f12..$f15` and dispatches virtual `+0x9c`.
+- **Matrix stack & fog (`0x1e9128`, `0x1e9880..0x1e9ea8`)**: `vf26`/`vf27` push/pop `0x40`-byte matrices on
+  `+0x3f4` (`+0x3f0` depth); `vf29`/`vf31`/`vf32`/`vf33` load, post-multiply, load identity (`0x346440`), and
+  translate the top matrix while clearing dirty flag `+0x17d0`. `PS2Render_CalcFog` updates model matrices
+  (`0x1e85b0`), computes `clamp((M_5b0 * pt).w * *(+0x63c), 0.0, *(+0x630))`, and returns its truncated `u16`.
+- **Trivial virtual stubs (`0x1ea1d8..0x1ea310`)**: 14 no-op, 5 return-0, and 2 return-1 stubs on `cPS2LightMan`
+  and `cGraphicsMan`.
+- Checked bit-for-bit across all 52 functions in `tests/render_gfxman_tail.rs` (reducing `render` `not started`
+  from 148 to 96).
