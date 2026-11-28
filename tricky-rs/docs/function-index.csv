@@ -1545,7 +1545,7 @@ address,size,name,system,status
 0x1776f0,100,Camera_SetLookBack,camera,checked
 0x177758,120,Cam_Shake,camera,ported
 0x1777d0,488,Cam_StageAreaToWorld,camera,ported
-0x1779b8,660,World_GetStageAreaMarker,world,not started
+0x1779b8,660,World_GetStageAreaMarker,world,checked
 0x177d48,80,CamRegion::__tf,runtime,host
 0x177db0,28,Camera_Cut,camera,ported
 0x177dd8,232,cBxCamera::~cBxCamera,camera,checked
@@ -3287,11 +3287,11 @@ address,size,name,system,status
 0x1f9f38,340,HUD_CreateDummyTextures,hud,checked
 0x1fa108,884,SplineModelNode_Create,ai,ported
 0x1fa480,448,cSplinePathNode::cSplinePathNode,world,checked
-0x1fa640,92,cSplinePathNode::~cSplinePathNode,world,not started
-0x1fa6a0,404,cSplinePathNode::Update,world,not started
+0x1fa640,92,cSplinePathNode::~cSplinePathNode,world,checked
+0x1fa6a0,404,cSplinePathNode::Update,world,checked
 0x1fa838,160,SplinePathNode_PlaceAll,ai,checked
 0x1fa8d8,504,SplinePathNode_PlaceOne,ai,checked
-0x1fabc8,1504,cSplinePathNode::Draw,world,not started
+0x1fabc8,1504,cSplinePathNode::Draw,world,checked
 0x1fb1a8,132,cSplinePathNode::SaveSnapshot,world,checked
 0x1fb368,92,cSplinePathNode::__tf,runtime,host
 0x1fb3c8,28,SplinePathNode_FreeMem,ai,checked
@@ -3728,7 +3728,7 @@ address,size,name,system,status
 0x21ed98,84,List_PickRandom,common,ported
 0x21edf0,124,PtrArray_FreeAll,common,checked
 0x21ee70,232,CrowdBox_Init,world,ported
-0x21ef58,88,CrowdBox_Destruct,world,not started
+0x21ef58,88,CrowdBox_Destruct,world,checked
 0x21efb0,3252,CrowdBox_Update,world,ported
 0x21fc68,44,VoiceTable_SetSlotVolume,audio,ported
 0x21fc98,1368,CrowdBox_StartSound,audio,ported
@@ -3743,7 +3743,7 @@ address,size,name,system,status
 0x2208e0,136,cCrowdSys::~cCrowdSys,audio,checked
 0x220968,96,CrowdSys_UpdateBoxes,world,ported
 0x2209c8,496,Audio_LoadCrowd,audio,checked
-0x220bb8,300,CrowdSys_Free,world,not started
+0x220bb8,300,CrowdSys_Free,world,checked
 0x220ce8,656,Sfx_LoadTrickConfig,audio,ported
 0x220f80,20,SoundId_Split,audio,checked
 0x220f98,100,WorldEmitter_StopById,audio,ported
@@ -3754,7 +3754,7 @@ address,size,name,system,status
 0x2210c8,32,Audio_StopCrowdBox,audio,ported
 0x2210e8,440,SndSys_PushEntry,audio,ported
 0x2212a0,144,SndQueue_StartLastVoice,audio,ported
-0x221330,152,CrowdSys_StopAll,world,not started
+0x221330,152,CrowdSys_StopAll,world,checked
 0x2213c8,40,cCrowdSys::vf5_2213c8,audio,checked
 0x2213f8,44,CrowdSys_GetBoxState,world,ported
 0x221428,124,StaticInit_CrowdSys,world,checked
@@ -4031,7 +4031,7 @@ address,size,name,system,status
 0x22dc38,80,WorldTriggerMgr_OtherKeyPlaying,audio,ported
 0x22dc88,88,WorldTriggerMgr_HasSameSound,audio,ported
 0x22dce0,1228,Audio_LoadChantBanks,audio,ported
-0x22e1b8,136,WorldInstance_HasHitOnlyKey,world,not started
+0x22e1b8,136,WorldInstance_HasHitOnlyKey,world,checked
 0x22e240,44,WorldEmitter_IsHitOnlyKey,audio,ported
 0x22e270,92,WorldEmitter_WasPlayed,audio,ported
 0x22e2d0,100,WorldEmitter_MarkPlayed,audio,checked
@@ -4229,34 +4229,34 @@ address,size,name,system,status
 0x238af0,736,SphereTreeCache_Init,render,not started
 0x238dd0,384,SphereTreeBufCache_FreeAll,render,not started
 0x238f50,568,SphereTreeCache_Get,render,ported
-0x2391c8,8,SphTree_Assert,world,not started
-0x2391d0,20,bxSphereTree::~bxSphereTree,world,not started
+0x2391c8,8,SphTree_Assert,world,checked
+0x2391d0,20,bxSphereTree::~bxSphereTree,world,checked
 0x2391e8,344,SphTree_Copy,world,checked
 0x239340,360,SphTree_Load,world,ported
 0x2394a8,280,Collide_BoarderSphTree,world,checked
 0x2395c0,308,SphTree_TouchesTriangle,world,ported
-0x2396f8,84,SphTree_ForEachLeaf,world,not started
-0x239750,400,SphTree_ForEachLeafRecurse,world,not started
+0x2396f8,84,SphTree_ForEachLeaf,world,checked
+0x239750,400,SphTree_ForEachLeafRecurse,world,checked
 0x2398e0,80,bxSphereTree::__tf,runtime,host
 0x239930,44,Vec4_ScaleCopy18,common,checked
 0x239960,448,Rle_Encode,render,not started
 0x239b20,136,SphTree_RleDecode,world,checked
 0x239ba8,144,SphereTree::SphereTree,world,ported
-0x239c38,20,SphereTree::~SphereTree,world,not started
+0x239c38,20,SphereTree::~SphereTree,world,checked
 0x239c50,72,SphTree_GetRadius,world,ported
-0x239c98,128,SphTree_SetPosition,world,not started
-0x239d18,72,SphTree_Translate,world,not started
+0x239c98,128,SphTree_SetPosition,world,checked
+0x239d18,72,SphTree_Translate,world,checked
 0x239d60,548,SphTree_SetTransform,world,checked
 0x239f88,472,SphTree_Transform,world,checked
-0x23a160,172,Collide_SphereSphTree,world,not started
+0x23a160,172,Collide_SphereSphTree,world,checked
 0x23a210,172,SphTree_IntersectBox,world,ported
-0x23a2c0,204,SphTree_IntersectPlane,world,not started
+0x23a2c0,204,SphTree_IntersectPlane,world,checked
 0x23a390,252,SphTree_IntersectTriangle,world,ported
 0x23a490,224,SphTree_IntersectTree,world,ported
 0x23a570,440,SphTree_TreeRecurse,world,ported
 0x23a728,632,SphTree_SphereRecurse,world,ported
 0x23a9a0,468,SphTree_BoxRecurse,world,ported
-0x23ab78,548,SphTree_PlaneRecurse,world,not started
+0x23ab78,548,SphTree_PlaneRecurse,world,checked
 0x23ada0,1528,SphTree_TriangleRecurse,world,ported
 0x23b398,192,SphTree_SortOctants,world,ported
 0x23b4c8,84,SphereTree::__tf,runtime,host
@@ -4672,12 +4672,12 @@ address,size,name,system,status
 0x257af8,176,cWorldBoarder::vf6_257af8,world,checked
 0x257ba8,168,cWorldBoarder::vf7_257ba8,world,checked
 0x257c50,44,cWorldBoarder::vf2_257c50,world,checked
-0x257ca0,96,cWorldBoarder::vf10_257ca0,world,not started
+0x257ca0,96,cWorldBoarder::vf10_257ca0,world,checked
 0x257d00,80,cWorldBoarder::__tf,runtime,host
 0x257d50,44,Vec4_ScaleCopy9,common,checked
 0x257dc0,4712,Game_InitVenueTable,game,ported
 0x259028,8,Game_EmptyHook,game,ported
-0x259030,768,World_ProbeGround,world,not started
+0x259030,768,World_ProbeGround,world,checked
 0x259330,3320,Rail_ClosestPoint,boarder,checked
 0x25a028,312,Lights_InsertStrongest,render,checked
 0x25a160,3600,World_GetLightsAt,world,checked
@@ -4689,18 +4689,18 @@ address,size,name,system,status
 0x25c798,44,Vec4_ScaleCopy10,common,checked
 0x25c7c8,3084,cWorldIntersectType::vf8_25c7c8,world,checked
 0x25d3d8,476,World_RayCastMeshTris,world,checked
-0x25d7a0,8,cWorldIntersectType::vf9_25d7a0,world,not started
-0x25d7a8,8,cWorldIntersectType::vf3_25d7a8,world,not started
+0x25d7a0,8,cWorldIntersectType::vf9_25d7a0,world,checked
+0x25d7a8,8,cWorldIntersectType::vf3_25d7a8,world,checked
 0x25d7b0,64,cWorldIntersectType::__tf,runtime,host
 0x25d7f0,344,cWorldLine::cWorldLine,world,checked
 0x25d948,124,cWorldLine::vf0_25d948,world,checked
 0x25d9c8,24,cWorldLine::vf1_25d9c8,world,checked
 0x25d9e0,308,cWorldLine::vf4_25d9e0,world,ported
 0x25db18,292,cWorldLine::vf5_25db18,world,ported
-0x25dc40,8,cWorldLine::vf6_25dc40,world,not started
+0x25dc40,8,cWorldLine::vf6_25dc40,world,checked
 0x25dc48,776,cWorldLine::vf7_25dc48,world,checked
 0x25df50,3208,cWorldLine::vf9_25df50,world,checked
-0x25ebd8,8,cWorldLine::vf2_25ebd8,world,not started
+0x25ebd8,8,cWorldLine::vf2_25ebd8,world,checked
 0x25ebe0,80,cWorldLine::__tf,runtime,host
 0x25ec30,44,Vec4_ScaleCopy11,common,checked
 0x25ec60,40,VisList_Construct,world,checked
@@ -4733,16 +4733,16 @@ address,size,name,system,status
 0x260f90,8,CellList_Clear,world,checked
 0x260f98,8,CellList_Add,world,checked
 0x260fa0,28,Mem_DeleteIfFlag9,common,checked
-0x260fc0,28,CellList_Destruct,world,not started
+0x260fc0,28,CellList_Destruct,world,checked
 0x260fe0,80,cCourseResolve::__tf,runtime,host
 0x261060,64,SphereTreeBufCache::__tf,runtime,host
-0x2611b0,72,cWorldSphere::vf0_2611b0,world,not started
-0x2611f8,16,cWorldSphere::vf1_2611f8,world,not started
-0x261208,288,cWorldSphere::vf4_261208,world,not started
-0x261328,384,cWorldSphere::vf5_261328,world,not started
-0x2614a8,180,cWorldSphere::vf6_2614a8,world,not started
-0x261560,44,cWorldSphere::vf7_261560,world,not started
-0x261590,40,cWorldSphere::vf2_261590,world,not started
+0x2611b0,72,cWorldSphere::vf0_2611b0,world,checked
+0x2611f8,16,cWorldSphere::vf1_2611f8,world,checked
+0x261208,288,cWorldSphere::vf4_261208,world,checked
+0x261328,384,cWorldSphere::vf5_261328,world,checked
+0x2614a8,180,cWorldSphere::vf6_2614a8,world,checked
+0x261560,44,cWorldSphere::vf7_261560,world,checked
+0x261590,40,cWorldSphere::vf2_261590,world,checked
 0x2615b8,80,cWorldSphere::__tf,runtime,host
 0x261608,44,Vec4_ScaleCopy12,common,checked
 0x261638,196,cWorldSphTree::cWorldSphTree,world,checked
@@ -4753,7 +4753,7 @@ address,size,name,system,status
 0x2618c0,168,cWorldSphTree::vf6_2618c0,world,checked
 0x261968,168,cWorldSphTree::vf7_261968,world,checked
 0x261a10,56,cWorldSphTree::vf2_261a10,world,ported
-0x261a48,96,cWorldSphTree::vf10_261a48,world,not started
+0x261a48,96,cWorldSphTree::vf10_261a48,world,checked
 0x261aa8,80,cWorldSphTree::__tf,runtime,host
 0x261b38,864,FE3DCharSel_SetSelected,frontend,checked
 0x261e98,72,VenueSel_ClearVenue,frontend,checked

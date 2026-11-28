@@ -3065,3 +3065,42 @@ Proven (`SLUS_203.26` disassembly + runner):
   active spline's low-16 flags from its upper-16 defaults on destruction.
 - Checked bit-for-bit across all 28 functions in `tests/world_visual_nodes_tail.rs` (reducing `world` `not started`
   from 61 to 33).
+
+## Stage-area markers, spline-path nodes, crowd teardown, sphere trees & world shapes (row E9o, `worldtail.rs`, checked: `tests/world_final_tail.rs`)
+
+Proven (`SLUS_203.26` disassembly + runner):
+
+- **`World_GetStageAreaMarker` (`0x1779b8`)**: hashes `"Mdl_StageArea_Start_0"` (`0x383068`) for `kind == 1` or
+  `"Mdl_StageArea_Finish_0"` (`0x383080`) for `kind == 2`, looks up the instance via `Course_FindInstanceByHash(gWorld, hash)`,
+  transposes its upper 3×3 and computes `inv[3] = (inv3x3 * (-inst[3])).with_w(1.0)`, transforms `*out_pos` through `inv`
+  (zeroing `w`), transforms `[1, 0, 0, 0]` through `inst` to `(x, y)`, and writes `-atan2(y, x)` (via `Math_Atan` `0x2510f8`
+  with exact quadrant constants `±0x3fc9_0fdb` / `±0x4049_0fdb`) to `*out_yaw`.
+- **`cSplinePathNode` (`0x1fa640`, `0x1fa6a0`, `0x1fabc8`)**: destructor sets vtable `0x39a710` at `+8`, frees `+0x7c`,
+  calls `SplinePathNode_FreeMem(+0x64, 2)` and `cBxSortObjNode::~cBxSortObjNode`. `Update` self-deletes via `+8/+0xc(3)`
+  when `inst+0xe4 == 0` or `(inst+0xe8 & 0x800) != 0`; otherwise calls `SplinePathNode_PlaceAll`, steps `+0x50 += +0x4c`
+  (handling clamp/ping-pong/wrap modes `0..3` and calling `0x1faad0` for mode `3` with `flags & 0x80`), and updates
+  single-entry controllers via `+0xc8/+0xcc`. `Draw` optionally calls `SplinePathNode_DrawPath`, frustum-culls each
+  32-byte entry (`+0x80 + pos`, `+0x90 + pos`) via `gfx +0x284`, composes Z/Y/X axis-angle rotations (`Math_SinCos` + VU0
+  matrix products) onto `gIdentityMat4` (`0x346440`) with row 3 = `pos`, and submits through `BxObjNode_FromLink` virtual
+  `+0xec` (when `ctl+0x14 & 0x100`) or `Lights_Clear` + `gfx +0x2ac`.
+- **Crowd teardown & sound keys (`0x21ef58`, `0x220bb8`, `0x221330`, `0x22e1b8`)**: `CrowdBox_Destruct` calls
+  `Crowd_StopCheer` and `CrowdBox_StopAll(0.0)` and deletes on `how & 1`; `CrowdSys_StopAll` stops each `0x190`-byte box
+  and dispatches virtual `+0x38/+0x3c` with the 8-byte member pointer at `0x39fbd8`; `CrowdSys_Free` stops all, destructs
+  the box array in reverse, frees `arr - 0x10`, and clears/frees the three `0x54`-byte triple-array slots at `+0x3730`;
+  `WorldInstance_HasHitOnlyKey` queries 4 sound keys via `WorldInstance_GetSoundKeys(*0x346f58, ...)` and short-circuits on
+  the first `WorldEmitter_IsHitOnlyKey` match.
+- **SphereTree & bxSphereTree (`0x2391c8..0x23ab78`)**: `SphTree_Assert` (no-op), `bxSphereTree::~bxSphereTree` (`0x3a4018`)
+  and `SphereTree::~SphereTree` (`0x3a40b8`), `SphTree_SetPosition` (`home + pos`, `w = 1.0`), `SphTree_Translate`,
+  `SphTree_ForEachLeaf` / `SphTree_ForEachLeafRecurse` (cache-unpacking when `hdr+8 != 0`, recursing set octant bits and
+  drawing leaf spheres via `gfx +0x26c` with color `[1, 0, 1, 0]`, arg `4`, `f12 = radius`), `Collide_SphereSphTree`, and
+  `SphTree_IntersectPlane` / `SphTree_PlaneRecurse` (sorting octants via `0x23b398`, tracking deepest negative penetration
+  at `+0xa4`, writing `pn * pen` and `node - pn * d`).
+- **Ground probe & world shapes (`0x257ca0..0x261a48`)**: `World_ProbeGround` scans the `[cx-2..cx] × [cy-2..cy]` cell
+  window around `pos` in `*gWorld` (`0x346488`), expands `[z_min, z_max]` across cells whose 2D AABB contains `(x, y)`,
+  casts a `cWorldLine` (`kind = 2`, `target = (p.z - z_min)/(z_max - z_min)`) via `World_RayCast`, and writes `hit.pos.z`,
+  surface (`hit+0x34` if `hit.kind == 0` else `1`), and optional `hit.normal`. Also ports `cWorldBoarder::vf10_257ca0`
+  (`0x3a77d8`), `cWorldSphTree::vf10_261a48` (`0x3a85f8`), `CellList_Destruct`, the 4 `cWorldIntersectType`/`cWorldLine`
+  stubs (`0x25d7a0`, `0x25d7a8`, `0x25dc40`, `0x25ebd8`), and all 7 `cWorldSphere` virtuals (`0x2611b0..0x261590`, noting
+  `vf4` tests `|d| < r` whereas `vf5` tests `|d| <= r` and flips `n` via `Vec4_Scale(-1.0)` when `d < 0`, and `vf6`
+  normalizes penetration via VU0 `vsqrt`/`vdiv`/`vmulq`).
+- Checked bit-for-bit across all 33 functions in `tests/world_final_tail.rs` (**`world` is now at 0 `not started`**).
