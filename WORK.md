@@ -42,6 +42,7 @@ state machine and the renderer are ours. Nothing has been checked against the or
 | E8a | Air: `Air_IntegrateRK4` 0x12b340, `AirPredict_AtTakeoff` 0x123b10, landing `Air_MotionUpdate` 0x108378, `Landing_CheckAngles` 0x12ba78, `Landing_ChooseState` 0x109308 | any | F4a | | [repo] Ported, unchecked Split: E8a1, E8a2 |
 | E9 | Script machine: `TriggerScript_Run`, `TriggerScript_ExecOp` 0x13bfd0 with every op, controllers (`TriggerScript_Op0_SpawnController` 0x13c600), persistent cell scripts, run at runtime instead of read statically | unowned | E3c | | [repo] `logic.rs` reads SSFLogic.json statically today |
 | E11 | Camera: named cameras `cBxCamera_EvalNamedCam` 0x174888 (ported), director scripts `cBxCamera_RunDirectorScript`, replay and finish cameras, camera collision | any | | | [repo] Chase cam ported in `rider.rs`; free camera is ours (keep, tag) |
+| E12j | Split of E12: the 68 `ported` `save` functions (memory card overlay and operations, `tricky_game::mcoverlay` / `saveexit` / `replayui` / `career`): marked `checked` in the index where a runner test already compares them with the game's code (G9m's `tests/mcoverlay.rs`, ...), and the rest (`cMCOverlayManager::cMCOverlayManager` 0x1ce490, `MCSlot_GetLabel` 0x1d2d50, `MemCardUI_GetSlotCount` 0x1d1eb8, `MemCard_Create` 0x23d6e0, ...) checked bit-for-bit in the runner | any | | irregulur/lynx (2026-11-28) | Split of E12 |
 
 ## P2 Gameplay systems
 
@@ -2054,3 +2055,4 @@ matches the original.
 - 2026-11-28 irregulur/neon: added and claimed G7w (split of G7).
 - 2026-11-28 irregulur/neon: G7w done (ported and runner-checked 12 `render` `cPS2GraphicsMan`/`Render_FormatVramStats`/`Gfx_LoadImageToFrame`/`StripPacket` functions in `rendertail.rs`; `render` down to 34 `not started`, total `not started` down to 298).
 - 2026-11-28 irregulur/neon: added and claimed G7x (split of G7).
+- 2026-11-28 irregulur/lynx: added and claimed E12j (split of E12).
