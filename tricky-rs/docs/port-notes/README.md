@@ -18,6 +18,7 @@ One file per system (board row F6, split from the former `original-rules.md`):
 - [world.md](world.md): World objects (World objects; World controllers; Object collision; Keyframed objects; World animations)
 - [scripts.md](scripts.md): Level scripts (Level scripts)
 - [effects.md](effects.md): Board and particle effects (Board effects; Particle emitters)
+- [render.md](render.md): Rendering engine (Boarder effects, tex-flip, model/mesh-anim, particles, mesh scaling, sphere-tree cache)
 - [audio.md](audio.md): Sound and music (Sound and music; Rider sounds; Sound banks; Level sounds; Music)
 - [hud.md](hud.md): HUD and fonts (HUD; HUD sprites; Fonts)
 - [frontend.md](frontend.md): World Circuit and unlocks (World Circuit; Unlocks)

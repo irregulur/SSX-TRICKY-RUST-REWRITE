@@ -406,7 +406,7 @@ address,size,name,system,status
 0x122ff0,8,cBoarder::vf1_122ff0,boarder,checked
 0x122ff8,36,cBoarderCache::~cBoarderCache,boarder,checked
 0x123020,64,cBoarderCache::__tf,runtime,host
-0x123060,56,RiderSkin_InitMem,render,not started
+0x123060,56,RiderSkin_InitMem,render,checked
 0x123098,8,BroadphaseProxy_SetBoxFromMinMax,world,ported
 0x1230a0,28,Score_Destruct,scoring,checked
 0x1230c0,28,AirPredict_Destruct,boarder,checked
@@ -531,22 +531,22 @@ address,size,name,system,status
 0x134830,2192,AttitudeIcon_Draw,boarder,checked
 0x1350c0,176,Boarder_UpdateEffects,boarder,checked
 0x135170,140,BoarderRender_DrawEffects,render,checked
-0x135200,84,BoarderRender_ResetEffects,render,not started
+0x135200,84,BoarderRender_ResetEffects,render,checked
 0x135258,12,BoarderRender_EmitBrakeSpray,render,ported
-0x135268,12,BoarderRender_SpawnLandingPuffs,render,not started
+0x135268,12,BoarderRender_SpawnLandingPuffs,render,checked
 0x135278,848,cBoarderRender::cBoarderRender,boarder,checked
 0x1355c8,304,cBoarderRender::~cBoarderRender,boarder,checked
 0x1356f8,1984,cBoarderRender::vf7_1356f8,boarder,ported
 0x135eb8,652,BoarderRender_UpdateLighting,render,ported
-0x136148,548,BoarderRender_RecordStreaks,render,not started
+0x136148,548,BoarderRender_RecordStreaks,render,checked
 0x136370,348,BoarderRender_PickLod,render,checked
 0x1364d0,1908,BoarderRender_Draw,render,checked
 0x136c48,492,BoarderRender_GetHandStreakPoints,render,checked
 0x136e38,52,BoarderRender_CopyBoarderMatrix,render,checked
 0x136e70,32,Boarder_EmitBrakeSpray,boarder,ported
 0x136e90,12,Boarder_SpawnLandingPuffs,boarder,ported
-0x136ea0,64,BoarderRender_Reset,render,not started
-0x136f88,100,BoarderRender_DestructEffects,render,not started
+0x136ea0,64,BoarderRender_Reset,render,checked
+0x136f88,100,BoarderRender_DestructEffects,render,checked
 0x137040,84,cBoarderRender::__tf,runtime,host
 0x1370d8,44,Vec4_ScaleCopy15,common,checked
 0x137108,56,Vec3_Div,common,ported
@@ -750,8 +750,8 @@ address,size,name,system,status
 0x142ac8,36,cTexFlip::cTexFlip,render,ported
 0x142af0,392,TexFlip_Init,render,checked
 0x142c78,200,TexFlip_SetFrame,render,checked
-0x142d40,100,TexFlip_ApplyFrame,render,not started
-0x142da8,228,TexFlip_Draw,render,not started
+0x142d40,100,TexFlip_ApplyFrame,render,checked
+0x142da8,228,TexFlip_Draw,render,checked
 0x142e90,428,cTexFlipNode::cTexFlipNode,world,checked
 0x143040,116,cTexFlipNode::cTexFlipNode,world,checked
 0x1430b8,704,cTexFlipNode::Update,world,checked
@@ -875,7 +875,7 @@ address,size,name,system,status
 0x1498d8,92,cUVScrollTexFlipNode::__tf,runtime,host
 0x149938,76,cTexFlipNode::~cTexFlipNode,world,checked
 0x149988,92,cTexFlipNode::__tf,runtime,host
-0x1499e8,36,cTexFlip::~cTexFlip,render,not started
+0x1499e8,36,cTexFlip::~cTexFlip,render,checked
 0x149a10,64,cTexFlip::__tf,runtime,host
 0x149a88,20,UVScroll_ClearRegistry,world,ported
 0x149aa0,92,cUVScrollNode::__tf,runtime,host
@@ -2339,8 +2339,8 @@ address,size,name,system,status
 0x19a778,312,cAnimTexFlipNode::Update,animation,ported
 0x19a8b0,64,cAnimTexFlipNode::Draw,animation,checked
 0x19a8f0,76,cAnimTexFlipNode::vf28_19a8f0,animation,checked
-0x19aa18,148,Model_IsBoxCulled,render,not started
-0x19aab0,404,MeshAnim_AllocFrames,render,not started
+0x19aa18,148,Model_IsBoxCulled,render,checked
+0x19aab0,404,MeshAnim_AllocFrames,render,checked
 0x19ac48,108,cAnimTexFlipNode::~cAnimTexFlipNode,animation,checked
 0x19acb8,92,cAnimTexFlipNode::__tf,runtime,host
 0x19ad18,92,cAnimComboNode::__tf,runtime,host
@@ -2962,12 +2962,12 @@ address,size,name,system,status
 0x1d5180,360,ParticleSys_RandomizeFactors,render,ported
 0x1d52e8,20,ParticleSys_SetSizeRange,render,checked
 0x1d5300,32,ParticleSys_SetLifeRange,render,checked
-0x1d5338,68,ParticleSys_SetSpawnPoint,render,not started
+0x1d5338,68,ParticleSys_SetSpawnPoint,render,checked
 0x1d5380,152,ParticleSys_SetSpawnLine,render,checked
 0x1d5418,196,ParticleSys_SetSpawnQuad,render,checked
-0x1d54e0,104,ParticleSys_SetForce,render,not started
+0x1d54e0,104,ParticleSys_SetForce,render,checked
 0x1d5548,36,ParticleSys_ClearForce,render,checked
-0x1d5570,544,ParticleSys_SetVelocityCone,render,not started
+0x1d5570,544,ParticleSys_SetVelocityCone,render,checked
 0x1d5790,332,ParticleSys_SetVelocityBasis,render,checked
 0x1d58e0,252,ParticleSys_SetColors,render,checked
 0x1d59e0,16,ParticleSys_SetTime,render,checked
@@ -2978,7 +2978,7 @@ address,size,name,system,status
 0x1d8488,8,ParticleNode_InitMem,render,ported
 0x1d8490,1592,ParticleSys_Create,render,checked
 0x1d8ac8,52,ParticleNode_SetLifetime,render,checked
-0x1d8b00,28,ParticleNode_FreeMem,render,not started
+0x1d8b00,28,ParticleNode_FreeMem,render,checked
 0x1d8b20,164,ParticleNode_Update,render,checked
 0x1d8bc8,384,ParticleSys_Draw,render,checked
 0x1d8d48,56,ParticleNode_SaveState,render,checked
@@ -2993,7 +2993,7 @@ address,size,name,system,status
 0x1d9138,208,ParticleGroup_Remove,render,checked
 0x1d9208,1272,ParticleGroup_UpdateTrail,render,checked
 0x1d9700,504,ParticleMan_DrawSlot,render,checked
-0x1d98f8,8,cParticleMan::vf1_1d98f8,render,not started
+0x1d98f8,8,cParticleMan::vf1_1d98f8,render,checked
 0x1d9900,356,cParticleMan::vf2_1d9900,render,checked
 0x1d9a68,124,StaticInit_ParticleMan,render,checked
 0x1d9ae8,80,cParticleMan::__tf,runtime,host
@@ -3384,7 +3384,7 @@ address,size,name,system,status
 0x203c20,108,ClipList_DestroyAll,animation,checked
 0x203cf8,64,cSkelSequence::vf1_203cf8,render,checked
 0x203d38,8,cSkelSequence::vf0_203d38,render,checked
-0x203d40,52,SkelSeq_DtorMember34,render,not started
+0x203d40,52,SkelSeq_DtorMember34,render,checked
 0x203d78,80,cSkelSequence::__tf,runtime,host
 0x203df8,80,cSkelSequenceState::__tf,runtime,host
 0x203e48,64,cReplayRecordHeader::__tf,runtime,host
@@ -3404,8 +3404,8 @@ address,size,name,system,status
 0x2044c0,200,BdrLoad_FindPartName,boarder,checked
 0x204588,16,BdrLoad_GetShapeSlot,boarder,checked
 0x204598,160,SkinTexList_Find,render,checked
-0x2049b0,460,MeshChunk_ScalePositions,render,not started
-0x204f28,240,Model_ScalePositions,render,not started
+0x2049b0,460,MeshChunk_ScalePositions,render,checked
+0x204f28,240,Model_ScalePositions,render,checked
 0x205018,76,SkinPart_Delete,render,checked
 0x205068,24,SkinPart_Reset,render,checked
 0x205080,1092,SkinPart_Load,render,checked
@@ -3712,7 +3712,7 @@ address,size,name,system,status
 0x21e6c0,28,cBXAudio::vf3_21e6c0,audio,ported
 0x21e6e8,80,cBXAudio::__tf,runtime,host
 0x21e738,80,SnowProgram_Destruct,game,checked
-0x21e788,88,OwnedBuf_Delete1,render,not started
+0x21e788,88,OwnedBuf_Delete1,render,checked
 0x21e7e0,60,BankInstance_SetPitchBend,audio,checked
 0x21e8a0,56,cController::cController,audio,checked
 0x21e8d8,20,cController::~cController,audio,checked
@@ -4206,7 +4206,7 @@ address,size,name,system,status
 0x235b70,56,SpeechSys_StopCharScript,audio,ported
 0x235ba8,432,Speech_OnBigScore,audio,checked
 0x235d58,112,Speech_RollChance,audio,checked
-0x235e70,88,OwnedBuf_Delete2,render,not started
+0x235e70,88,OwnedBuf_Delete2,render,checked
 0x235fc8,52,CollBody_Construct,wipeout,checked
 0x236000,80,CollBody_ConstructCopy,wipeout,checked
 0x236050,212,CollBody_InitRider,wipeout,checked
@@ -4224,10 +4224,10 @@ address,size,name,system,status
 0x237480,2252,Collide_SphereTriangleFront,world,ported
 0x237d50,2284,Collide_SphereTriangleTwoSided,world,ported
 0x238640,408,Collide_BoarderBox,world,ported
-0x238980,256,MaskedList_Draw,render,not started
+0x238980,256,MaskedList_Draw,render,checked
 0x238a80,44,Vec4_ScaleCopy29,common,checked
-0x238af0,736,SphereTreeCache_Init,render,not started
-0x238dd0,384,SphereTreeBufCache_FreeAll,render,not started
+0x238af0,736,SphereTreeCache_Init,render,checked
+0x238dd0,384,SphereTreeBufCache_FreeAll,render,checked
 0x238f50,568,SphereTreeCache_Get,render,ported
 0x2391c8,8,SphTree_Assert,world,checked
 0x2391d0,20,bxSphereTree::~bxSphereTree,world,checked
@@ -4239,7 +4239,7 @@ address,size,name,system,status
 0x239750,400,SphTree_ForEachLeafRecurse,world,checked
 0x2398e0,80,bxSphereTree::__tf,runtime,host
 0x239930,44,Vec4_ScaleCopy18,common,checked
-0x239960,448,Rle_Encode,render,not started
+0x239960,448,Rle_Encode,render,checked
 0x239b20,136,SphTree_RleDecode,world,checked
 0x239ba8,144,SphereTree::SphereTree,world,ported
 0x239c38,20,SphereTree::~SphereTree,world,checked
@@ -4260,7 +4260,7 @@ address,size,name,system,status
 0x23ada0,1528,SphTree_TriangleRecurse,world,ported
 0x23b398,192,SphTree_SortOctants,world,ported
 0x23b4c8,84,SphereTree::__tf,runtime,host
-0x23b520,36,SphereTreeBufCache::~SphereTreeBufCache,render,not started
+0x23b520,36,SphereTreeBufCache::~SphereTreeBufCache,render,checked
 0x23b548,64,SphereTreeBufCache::__tf,runtime,host
 0x23b588,44,Vec4_ScaleCopy30,common,checked
 0x23b6b0,56,Tri_ContainsPointVu0,world,ported

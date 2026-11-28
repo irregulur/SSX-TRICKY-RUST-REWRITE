@@ -276,3 +276,4 @@ pub mod resultpages;
 pub mod loadscreen;
 pub mod statics;
 pub mod mockup;
+pub mod rendertail;
