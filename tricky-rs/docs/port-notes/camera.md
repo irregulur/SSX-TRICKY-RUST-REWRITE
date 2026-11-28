@@ -264,3 +264,62 @@ Checked in the runner (8,400 cases, the calls out logged, 22 of 22 mutants):
   `ResolveCameraPointers` 0x2542a8 (message 0x3a6f10; the `n` words at `p` get `base` added) and `ResolveCameras`
   0x254318 (message 0x3a6f30; each of `n` size-prefixed records handed to the loader's virtual at +0x100/+0x104 of
   `o`+0x10's table) answer 1.
+
+## The camera's last unchecked functions (row E11k; `game/src/camera_rest.rs`, `tests/camera_rest.rs`, proven)
+
+The index had 29 `camera` functions `ported` but not `checked`. Four were already compared with the game by earlier
+rows and only needed marking: `Camera_Cut` 0x177db0 and `CamPath_EvalStart` 0x170510 (E11f, `tests/camscript.rs`,
+run natively under `CamScript_StartPath`), `cBxCamera::EvalNamedCam` 0x174888 (`tests/camscript_cut.rs`, natively
+under `CamScript_CutTo`) and `cCourseResolve_Common::ResolveCamera` 0x254398 (E3a, `tests/pbd.rs`: every course's
+cameras resolved by the game and compared with `tricky_data::pbd`). The other 25 were only named by call-outs or
+comments (the tests that reach them stub them), so they are ported in `camera_rest.rs` on the game's bytes (`Mem`,
+call-outs through `FeEnv`, floats as bits):
+
+- **The camera-file objects**: `CamAnimation` 0x16d990, `CamCamera` 0x16dd68, `CamDirector` 0x16e6b0, `CamPath`
+  0x170470 and `CamScene` 0x1720c0 write their vtable (0x37ee70, 0x37f558, 0x380200, 0x3814c0, 0x382180) and keep
+  `Cml_FindObject(o, name, kind)` (kinds 1, 0, 2, 3, 5) at +4 (`CamPath` +0x24, `CamScene` +8);
+  `CamAnimation_InitScoped` 0x16d9d0 uses `Cml_FindObjectInScope(o, scope, name, 1)`. Their destructors (0x16dcb8,
+  0x16ded0, 0x172238) only jump to `cOfflineObject::~cOfflineObject` 0x16dcc0.
+- **`TriggerOp_SpawnCameraNode` 0x13d0b8**: 0xc8 bytes from `MemPool_Alloc(0x345e48, 0xc8, 0x40000000, 0x36bbf0,
+  0, 0)`, filled with 0xdeadc0de when given, then `cCameraNode::cCameraNode(node, 3, op)`, called on a null node too.
+- **`CamAnimFrame_Create` 0x1482c0** and **`CamAnim_SetShot` 0x148350**: the frame's parts (`AnimFrame_Clear` at
+  +0x1c, the vtables 0x391b10 then 0x391ae0 at +0xa8, `cBxTypeObjNode(o + 0xac, a1, 1000)`, its vtable 0x36c6b0 at
+  +0xb4). The shot looks up its animation by name hash (`Course_FindCamAnimByHash` in the course's world 0x346488)
+  into +0xc4. Then: start and end frames (+8 and +0xc) are the shot's +0 and +4 over 30, or the animation's length
+  (+0x50) over 30 when negative. The rate (+0x10) is the shot's +8 / 30 × 0.016666668. When the shot's +0xc is 1 the
+  rate is negated and the end goes to +0x14 (else the start). Last, +0x18 = 0, the length (+0x54) at +0x64, and its
+  own virtual +0x60.
+- **`Cam_StageAreaToWorld` 0x1777d0** (area, point, yaw): areas 1 and 2 are course instances named at 0x383068 /
+  0x383080 (`Name_Hash`, `Course_FindInstanceByHash`). It sets the point's w to 1.0 and transforms the point through
+  the instance's matrix with VU0 (`vmulax`, `vmadday`, `vmaddaz`, `vmaddw`; the port sums the rows in that order,
+  each step to nearest). The yaw is the angle of the matrix's x row (the transform of (1, 0, 0, 0)):
+  `Math_Atan(y / x)` ± π when x < 0, ±π/2 when x is 0, and y's own bits when both are 0. Returns 1, or 0 without an
+  instance. Area 0 returns 0. **Inferred, not ported**: any other area reaches the hash test with whatever v1 the
+  caller left. The game's callers pass the area from a camera-file record (0..2); the port treats it as area 0.
+  `CamScene_GetActorPosition` 0x172100 feeds it actor `i`'s position (record of 0x30 bytes at the block's +8,
+  position +0x20, area +0x1c).
+- **`Cam_Shake` 0x177758** (cam, p3, p2): a `CamCamera` local on the camera's name (+0x24) in its frame (sp − 0x40),
+  its view asked twice (`CamCamera::GetView` 0x16dda8 points the block's +0x11c at itself), `Cam_SetShakeParams(view,
+  p3, p2 × view +0xcc)`, the local's destructor with flags 2.
+- **`CamRegion_CheckTrigger` 0x171e28** (region, now, last, kind): 0 entering, 1 leaving, 2 inside
+  (`CamRegion_Contains` 0x171610), else 0. **`Camera_CutForReset` 0x173a60**: `Camera_Cut` on the replay camera
+  0x3368b0 while 0x337774 is set. **`Camera_StartCutFade` 0x174c30** (0x3365fc = 0, 0x3365f8 = 1),
+  **`Camera_ForceCutFade` 0x174c48** (0x3365f4 = 10). **`Boarder_GetCamera` 0x11ca88**: `Game_GetCamera(+0x38)`, 0
+  for -1.
+- **The camera files**: `Camera_GetCommonCmlName` 0x178310 / `Camera_GetScriptsCmlName` 0x178320 (`"commonob"`,
+  `"scripts"`). `Camera_GetCourseCmlName` 0x178330 looks up the course id (0x32de88) in a 12-way jump table; the
+  strings match `tricky_data::intro::course_cml_name` (checked too). `Camera_LoadCmlFiles` 0x1783e8 copies the
+  15-byte format `"data/camera/%s"` to the bottom of its frame (a copy it never uses), then loads the course's file
+  (when it has one), common and scripts. Each goes through `sprintf(frame + 0x10, ...)` and `Cml_LoadIfExists`
+  0x16e4c0 into 0x336688 / 0x336690 / 0x336698. The loader clears the slot, formats `"%s.cml"` into its own frame
+  (sp − 0x120) and, when `FileSys_Exists`, keeps `File_LoadAlloc(buf, 0)`.
+- **Checked** in `tests/camera_rest.rs`: 60,000 random cases (about 2,400 per function).
+  - Every call-out is a stub on both sides. It answers from one hash of the seed, the callee and its place in the
+    call log: pointers into the test's block, floats for `Math_Atan`, a third of the answers 0.
+  - Compared: the calls with their arguments (floats as bits), the results, the 16 KB block, the cut fade's, replay
+    and camera-file globals, and the frames written (`Cam_Shake`'s local, `Camera_LoadCmlFiles`' copy).
+  - Mutation run: 52 mutants, 49 killed, 3 equivalent. `+0x14 = +8` copied as a word or written from the start
+    float is the same bits. `0 <= y` against `0 < y` (x = 0), and `x < 0` against `x <= 0` (atan), differ only at 0,
+    which an earlier branch already took.
+  - A quarter of the cases fill the matrices with zeros, −0, a negative denormal and ±1, so that both zero
+    branches and the −0 of the stored y are reached. The stack under the call is random in every case.
