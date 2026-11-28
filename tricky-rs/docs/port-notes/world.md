@@ -3035,3 +3035,33 @@ Proven (`SLUS_203.26` disassembly + runner):
   `cTexFlip` / `cUVScrollNode`.
 - Checked bit-for-bit across all 35 functions in `tests/world_controllers_tail.rs` (reducing `world` `not started`
   from 96 to 61).
+
+## Visual, emitter, particle, movie & rail-manager nodes (row E9n, `controllers.rs`, checked: `tests/world_visual_nodes_tail.rs`)
+
+Proven (`SLUS_203.26` disassembly + runner):
+
+- **`cUVScrollNode` (`0x142128`, `0x1426d0`, `0x1427b8`)**: destructor decrements shared slot table
+  `0x31d938[slot]+4` (`12`-byte stride) and resets entry (`+0 = 0, +4 = 0, +8 = 1`) when `<= 0`. `Draw` and
+  `UVScrollNode_DrawMesh` copy `count` (`+0x64`) copies of the same 8-byte `(u, v)` pair at `+0x3c..+0x44` into a
+  stack buffer, check/set the once-per-frame guard `0x31d938[slot]+8` (nulling the UV buffer pointer if already
+  set), and submit through `gfx` vtable `+0x2ac` (`DrawMesh` first frustum-culls instance bounds `+0xcc/+0xd8`
+  via `+0x284`).
+- **`cFenceNode` (`0x143800`, `0x144578`), `cFlagNode` (`0x1448c8`, `0x145258`), `cTexFlipNode` (`0x1433b8`),
+  `cCrackedNode` (`0x1457a0`), `cCrowdBoxNode` (`0x145fc0`)**: Fence (`+0x54` mesh, `+0x1a4` scale) and Flag
+  (`+0x4c` mesh, `+0x190` scale) destructors release their custom mesh via `gfx` vtable `+0x234`; their `Draw`
+  virtuals frustum-cull via `+0x284`, scale the 4×4 instance matrix rows by `[sx, sy, sz, 1.0]`, and render via
+  custom mesh vtable `+0x3c` or fallback `gfx` `+0x2ac`. `cCrowdBoxNode::Draw` culls and submits with `this+0x40`.
+- **`cTrickTriggerNode` (`0x1478f0`, `0x147a80`, `0x147ad8`)**: constructor sets up broadphase proxy `+0x50` from
+  instance bounds and snapshots `rider+0x5910`; `Update` walks contacts via `Obj_HasId`, waits while
+  `rider+0x424 == 1`, spawns an event-4 `cScriptNode` on `gScriptPool` when trick points delta reaches `+0x38`,
+  and finishes `(1)` on exit or `(0)` after `+0x48` countdown.
+- **`cEmitterNode` (`0x147e10..0x147f28`), `cParticleNode` (`0x1480b0`, `0x1481c8`), `cCollideEmitterNode`
+  (`0x148560..0x1489e8`)**: manage embedded particle systems (`+0x20`, `+0x30`, `+0x70`) and per-rider collide
+  emitter refcounts at `0x31d498[rider_idx]`; `cCollideEmitterNode` ctor scales `mat[2]` by `|vel_obj+0x54|`;
+  `Update` self-deletes when `(inst+0xe8 & 0x900) != 0x100` or finite lifetime reaches `<= 0.0`.
+- **`cMovieNode` (`0x148a70..0x148d28`) & `cRailManNode` (`0x148dc8`, `0x148f70`)**: `cMovieNode` manages
+  jumbotron video handles on `gApp->game->+0x44` and draws via `gfx` `+0x1e4(3)` and `+0x2ac`; `cRailManNode`
+  registers singleton `0x31d4b0`, initializes 128 `{ id: -1, flags: 0 }` entries at `+0x28`, and restores each
+  active spline's low-16 flags from its upper-16 defaults on destruction.
+- Checked bit-for-bit across all 28 functions in `tests/world_visual_nodes_tail.rs` (reducing `world` `not started`
+  from 61 to 33).

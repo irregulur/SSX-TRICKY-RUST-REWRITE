@@ -1198,3 +1198,592 @@ pub fn tex_flip_node_dtor(m: &mut Mem, env: &mut dyn NodeEnv, this: u32, flags: 
 /// Additional no-op controller virtuals: `cLapBoostNode::Draw` 0x141188, `cLapBoostNode::Kill` 0x141190,
 /// `cBoostNode::vf29_149cc8` 0x149cc8, `cBoostNode::vf28_149cd0` 0x149cd0.
 pub fn boost_noop() {}
+
+// ---- Visual, emitter, particle, movie & rail-manager nodes (row E9n, on engine memory) ----
+
+pub const OBJ_HAS_ID: u32 = 0x110838;
+pub const TEX_FLIP_DRAW: u32 = 0x142da8;
+pub const COLLIDE_EMITTER_CREATE_PARTICLES: u32 = 0x148748;
+pub const MOVIE_NODE_OPEN_VIDEO: u32 = 0x148b28;
+pub const BROADPHASE_FIT_BOX: u32 = 0x14fa70;
+pub const BROADPHASE_PROXY_INIT: u32 = 0x150670;
+pub const BROADPHASE_PROXY_SET_BOX_B: u32 = 0x150818;
+pub const BX_TYPE_OBJ_NODE_CTOR: u32 = 0x17d048;
+pub const BX_SORT_OBJ_NODE_CTOR: u32 = 0x17d0e0;
+pub const PARTICLE_NODE_INIT_MEM: u32 = 0x1d8488;
+pub const PARTICLE_NODE_FREE_MEM: u32 = 0x1d8b00;
+pub const PARTICLE_NODE_UPDATE: u32 = 0x1d8b20;
+pub const PARTICLE_SYS_DRAW: u32 = 0x1d8bc8;
+pub const VIDEO_PLAYER_RELEASE: u32 = 0x200098;
+pub const MOVIE_GET_FRAME_TEXTURE: u32 = 0x2001c8;
+pub const RAIL_NODE_GET_SPLINE: u32 = 0x2609b0;
+
+pub const G_UV_SCROLL_TABLE: u32 = 0x31d938;
+pub const G_COLLIDE_EMITTER_COUNTS: u32 = 0x31d498;
+pub const G_RAIL_MAN_NODE: u32 = 0x31d4b0;
+
+pub const VT_RAIL_MAN_NODE: u32 = 0x36c510;
+pub const VT_MOVIE_NODE: u32 = 0x36c570;
+pub const VT_COLLIDE_EMITTER_NODE: u32 = 0x36c650;
+pub const VT_PARTICLE_NODE: u32 = 0x36c718;
+pub const VT_EMITTER_NODE: u32 = 0x36c7f8;
+pub const VT_TRICK_TRIGGER_NODE: u32 = 0x36c858;
+pub const VT_FLAG_NODE: u32 = 0x36ccb8;
+pub const VT_FENCE_NODE: u32 = 0x36cd98;
+pub const VT_UV_SCROLL_NODE: u32 = 0x36d048;
+
+const ONE_F32_BITS: u32 = 0x3f80_0000;
+
+fn call_gfx_vf(m: &mut Mem, env: &mut dyn NodeEnv, gfx: u32, off: u32, extra: &[u32]) -> u32 {
+    let vt = m.r32(gfx + 0x10);
+    let adj = m.r16(vt + off) as i16 as i32 as u32;
+    let f = m.r32(vt + off + 4);
+    let mut args = Vec::with_capacity(1 + extra.len());
+    args.push(gfx.wrapping_add(adj));
+    args.extend_from_slice(extra);
+    env.call(m, f, &args)
+}
+
+fn fill_bbox_pair(m: &mut Mem, inst: u32, min_dst: u32, max_dst: u32) {
+    for k in 0..3u32 {
+        m.w32(min_dst + k * 4, m.r32(inst + 0xcc + k * 4));
+    }
+    m.w32(min_dst + 0xc, ONE_F32_BITS);
+    for k in 0..3u32 {
+        m.w32(max_dst + k * 4, m.r32(inst + 0xd8 + k * 4));
+    }
+    m.w32(max_dst + 0xc, ONE_F32_BITS);
+}
+
+fn uv_scroll_prepare_buf(m: &mut Mem, this: u32, sp: u32) -> u32 {
+    let count = m.r32(this + 0x64) as i32;
+    let slot = m.r32(this + 0x68) as i32;
+    if count > 0 {
+        for i in 0..(count as u32) {
+            let lo = m.r32(this + 0x3c);
+            let hi = m.r32(this + 0x40);
+            m.w32(sp + i * 8, lo);
+            m.w32(sp + i * 8 + 4, hi);
+        }
+    }
+    let mut uv_ptr = sp;
+    if slot >= 0 {
+        let flag_addr = G_UV_SCROLL_TABLE
+            .wrapping_add((slot as u32).wrapping_mul(12))
+            .wrapping_add(8);
+        let prev = m.r32(flag_addr);
+        m.w32(flag_addr, 1);
+        if prev != 0 {
+            uv_ptr = 0;
+        }
+    }
+    uv_ptr
+}
+
+/// `cUVScrollNode::~cUVScrollNode` 0x142128(this, flags): restore vtable `0x36d048`, decrement shared UV-scroll
+/// table refcount at `0x31d938 + slot*12 + 4` when `slot >= 0` (clearing entry and setting `+8 = 1` when it hits
+/// `<= 0`), and tail-call `cControllerNode::~cControllerNode`.
+pub fn uv_scroll_node_dtor(m: &mut Mem, env: &mut dyn NodeEnv, this: u32, flags: u32) {
+    m.w32(this + 8, VT_UV_SCROLL_NODE);
+    let slot = m.r32(this + 0x68) as i32;
+    if slot >= 0 {
+        let entry = G_UV_SCROLL_TABLE.wrapping_add((slot as u32).wrapping_mul(12));
+        let next = (m.r32(entry + 4) as i32).wrapping_sub(1);
+        m.w32(entry + 4, next as u32);
+        let slot2 = m.r32(this + 0x68) as i32;
+        let entry2 = G_UV_SCROLL_TABLE.wrapping_add((slot2 as u32).wrapping_mul(12));
+        if (m.r32(entry2 + 4) as i32) <= 0 {
+            m.w32(entry2 + 8, 1);
+            m.w32(entry2, 0);
+            m.w32(entry2 + 4, 0);
+        }
+    }
+    controller_node_dtor(m, env, this, flags);
+}
+
+/// `cUVScrollNode::Draw` 0x1426d0(this, sp): build repeated UV offset buffer on stack (`sp`), guard against
+/// duplicate submission via `0x31d938[slot]+8`, and submit instance draw via `gfx` vtable `+0x2ac`.
+pub fn uv_scroll_node_draw(m: &mut Mem, env: &mut dyn NodeEnv, this: u32, sp: u32) {
+    let app = m.r32(G_APP);
+    let gfx = m.r32(app + 0x724);
+    let inst = m.r32(this + 0x28);
+    let mesh = m.r32(inst + 0xc0);
+    let uv_ptr = uv_scroll_prepare_buf(m, this, sp);
+    call_gfx_vf(
+        m,
+        env,
+        gfx,
+        0x2a8,
+        &[mesh, m.r32(inst + 0xf0), inst, inst.wrapping_add(0x40), 0, uv_ptr],
+    );
+}
+
+/// `UVScrollNode_DrawMesh` 0x1427b8(this, tex_override, sp): prepare UV offset buffer at `sp`, frustum-cull
+/// instance bounds (`sp+0xc0`, `sp+0xd0`) via `gfx` vtable `+0x284`, and if not culled (`!= 1`) draw via `+0x2ac`
+/// with `tex_override`.
+pub fn uv_scroll_node_draw_mesh(
+    m: &mut Mem,
+    env: &mut dyn NodeEnv,
+    this: u32,
+    tex_override: u32,
+    sp: u32,
+) {
+    let app = m.r32(G_APP);
+    let gfx = m.r32(app + 0x724);
+    let inst = m.r32(this + 0x28);
+    let mesh = m.r32(inst + 0xc0);
+    let uv_ptr = uv_scroll_prepare_buf(m, this, sp);
+    let bmin = sp.wrapping_add(0xc0);
+    let bmax = sp.wrapping_add(0xd0);
+    fill_bbox_pair(m, inst, bmin, bmax);
+    if call_gfx_vf(m, env, gfx, 0x280, &[bmin, bmax]) == 1 {
+        return;
+    }
+    let inst2 = m.r32(this + 0x28);
+    call_gfx_vf(
+        m,
+        env,
+        gfx,
+        0x2a8,
+        &[mesh, tex_override, inst2, inst2.wrapping_add(0x40), 0, uv_ptr],
+    );
+}
+
+/// `cTexFlipNode::Draw` 0x1433b8(this): when `*(this+0x2d0) != 0`, tail-call `TexFlip_Draw(this+0x58)`.
+pub fn tex_flip_node_draw(m: &mut Mem, env: &mut dyn NodeEnv, this: u32) {
+    if m.r32(this + 0x2d0) != 0 {
+        env.call(m, TEX_FLIP_DRAW, &[this.wrapping_add(0x58)]);
+    }
+}
+
+fn deformable_mesh_node_dtor(
+    m: &mut Mem,
+    env: &mut dyn NodeEnv,
+    this: u32,
+    flags: u32,
+    vt: u32,
+    mesh_off: u32,
+) {
+    m.w32(this + 8, vt);
+    let mesh = m.r32(this + mesh_off);
+    if mesh != 0 {
+        let gfx = m.r32(m.r32(G_APP) + 0x724);
+        call_gfx_vf(m, env, gfx, 0x230, &[mesh]);
+    }
+    controller_node_dtor(m, env, this, flags);
+}
+
+fn deformable_mesh_node_draw(
+    m: &mut Mem,
+    env: &mut dyn NodeEnv,
+    this: u32,
+    sp: u32,
+    scale_off: u32,
+    mesh_off: u32,
+) {
+    let gfx = m.r32(m.r32(G_APP) + 0x724);
+    let inst = m.r32(this + 0x28);
+    let bmin = sp;
+    let bmax = sp.wrapping_add(0x10);
+    fill_bbox_pair(m, inst, bmin, bmax);
+    if call_gfx_vf(m, env, gfx, 0x280, &[bmin, bmax]) == 1 {
+        return;
+    }
+    let scale = [
+        F(f32::from_bits(m.r32(this + scale_off))),
+        F(f32::from_bits(m.r32(this + scale_off + 4))),
+        F(f32::from_bits(m.r32(this + scale_off + 8))),
+        F(1.0),
+    ];
+    for (k, s) in scale.iter().enumerate() {
+        m.w32(sp + (k as u32) * 4, s.0.to_bits());
+    }
+    let inst2 = m.r32(this + 0x28);
+    for r in 0..4u32 {
+        let s = scale[r as usize];
+        for c in 0..4u32 {
+            let v = F(f32::from_bits(m.r32(inst2 + r * 0x10 + c * 4))) * s;
+            let bits = v.0.to_bits();
+            m.w32(sp + 0x60 + r * 0x10 + c * 4, bits);
+            m.w32(sp + 0x20 + r * 0x10 + c * 4, bits);
+        }
+    }
+    let mesh = m.r32(this + mesh_off);
+    if mesh != 0 {
+        let vt = m.r32(mesh);
+        let adj = m.r16(vt + 0x38) as i16 as i32 as u32;
+        let f = m.r32(vt + 0x3c);
+        let inst3 = m.r32(this + 0x28);
+        env.call(
+            m,
+            f,
+            &[
+                mesh.wrapping_add(adj),
+                sp.wrapping_add(0x20),
+                m.r32(inst3 + 0xf0),
+                inst3.wrapping_add(0x40),
+            ],
+        );
+    } else {
+        let gfx2 = m.r32(m.r32(G_APP) + 0x724);
+        let inst3 = m.r32(this + 0x28);
+        call_gfx_vf(
+            m,
+            env,
+            gfx2,
+            0x2a8,
+            &[m.r32(inst3 + 0xc0), m.r32(inst3 + 0xf0), inst3, inst3.wrapping_add(0x40), 0, 0],
+        );
+    }
+}
+
+/// `cFenceNode::~cFenceNode` 0x143800(this, flags): restore vtable `0x36cd98`, release custom mesh `*(this+0x54)`
+/// via `gfx` vtable `+0x234` if non-null, and tail-call `cControllerNode::~cControllerNode`.
+pub fn fence_node_dtor(m: &mut Mem, env: &mut dyn NodeEnv, this: u32, flags: u32) {
+    deformable_mesh_node_dtor(m, env, this, flags, VT_FENCE_NODE, 0x54);
+}
+
+/// `cFenceNode::Draw` 0x144578(this, sp): frustum-cull instance bounds, scale world matrix rows by `this+0x1a4`,
+/// and draw custom mesh `*(this+0x54)` via vtable `+0x3c` or fallback to `gfx` vtable `+0x2ac`.
+pub fn fence_node_draw(m: &mut Mem, env: &mut dyn NodeEnv, this: u32, sp: u32) {
+    deformable_mesh_node_draw(m, env, this, sp, 0x1a4, 0x54);
+}
+
+/// `cFlagNode::~cFlagNode` 0x1448c8(this, flags): restore vtable `0x36ccb8`, release custom mesh `*(this+0x4c)`
+/// via `gfx` vtable `+0x234` if non-null, and tail-call `cControllerNode::~cControllerNode`.
+pub fn flag_node_dtor(m: &mut Mem, env: &mut dyn NodeEnv, this: u32, flags: u32) {
+    deformable_mesh_node_dtor(m, env, this, flags, VT_FLAG_NODE, 0x4c);
+}
+
+/// `cFlagNode::Draw` 0x145258(this, sp): frustum-cull instance bounds, scale world matrix rows by `this+0x190`,
+/// and draw custom mesh `*(this+0x4c)` via vtable `+0x3c` or fallback to `gfx` vtable `+0x2ac`.
+pub fn flag_node_draw(m: &mut Mem, env: &mut dyn NodeEnv, this: u32, sp: u32) {
+    deformable_mesh_node_draw(m, env, this, sp, 0x190, 0x4c);
+}
+
+/// `cCrackedNode::Draw` 0x1457a0(this): tail-call `TexFlip_Draw(this+0x40)`.
+pub fn cracked_node_draw(m: &mut Mem, env: &mut dyn NodeEnv, this: u32) {
+    env.call(m, TEX_FLIP_DRAW, &[this.wrapping_add(0x40)]);
+}
+
+/// `cCrowdBoxNode::Draw` 0x145fc0(this, sp): frustum-cull instance bounds via `gfx` vtable `+0x284`; if visible,
+/// draw via `gfx` vtable `+0x2ac` with `this+0x40` as the tint/state pointer.
+pub fn crowd_box_node_draw(m: &mut Mem, env: &mut dyn NodeEnv, this: u32, sp: u32) {
+    let gfx = m.r32(m.r32(G_APP) + 0x724);
+    let inst = m.r32(this + 0x28);
+    let bmin = sp;
+    let bmax = sp.wrapping_add(0x10);
+    fill_bbox_pair(m, inst, bmin, bmax);
+    if call_gfx_vf(m, env, gfx, 0x280, &[bmin, bmax]) == 1 {
+        return;
+    }
+    let inst2 = m.r32(this + 0x28);
+    call_gfx_vf(
+        m,
+        env,
+        gfx,
+        0x2a8,
+        &[
+            m.r32(inst2 + 0xc0),
+            this.wrapping_add(0x40),
+            inst2,
+            inst2.wrapping_add(0x40),
+            0,
+            0,
+        ],
+    );
+}
+
+/// `cTrickTriggerNode::cTrickTriggerNode` 0x1478f0(this, a1, inst, params, rider): construct controller type 0x15,
+/// init broadphase proxy at `+0x50` from instance AABB, record rider's initial trick points `+0x5910`, and fit box.
+pub fn trick_trigger_node_ctor(
+    m: &mut Mem,
+    env: &mut dyn NodeEnv,
+    this: u32,
+    a1: u32,
+    inst_arg: u32,
+    params: u32,
+    rider: u32,
+) -> u32 {
+    env.call(m, CONTROLLER_NODE_CTOR, &[this, a1, 0x15, inst_arg]);
+    m.w32(this + 8, VT_TRICK_TRIGGER_NODE);
+    let proxy = this.wrapping_add(0x50);
+    env.call(m, BROADPHASE_PROXY_INIT, &[proxy]);
+    let p3 = m.r16(params + 0xc) as i16 as i32 as u32;
+    let p4 = m.r32(params + 0x10);
+    let ticks = (F(f32::from_bits(m.r32(params + 0x14))) * F(60.0)).0 as i32 as u32;
+    m.w32(this + 0x34, p3);
+    m.w32(this + 0x38, p4);
+    m.w32(this + 0x48, ticks);
+    m.w32(this + 0x4c, rider);
+    m.w32(this + 0x40, m.r32(rider + 0x460));
+    m.w32(proxy + 0x84, this);
+    m.w32(this + 0x3c, m.r32(rider + 0x5910));
+    let inst = m.r32(this + 0x28);
+    env.call(
+        m,
+        BROADPHASE_PROXY_SET_BOX_B,
+        &[proxy, inst.wrapping_add(0xcc), inst.wrapping_add(0xd8)],
+    );
+    let cm = contact_mgr(m);
+    env.call(m, BROADPHASE_FIT_BOX, &[cm, proxy]);
+    this
+}
+
+/// `cTrickTriggerNode::~cTrickTriggerNode` 0x147a80(this, flags): restore vtable `0x36c858`, remove broadphase
+/// contacts for `this+0x50`, and tail-call `cControllerNode::~cControllerNode`.
+pub fn trick_trigger_node_dtor(m: &mut Mem, env: &mut dyn NodeEnv, this: u32, flags: u32) {
+    m.w32(this + 8, VT_TRICK_TRIGGER_NODE);
+    let cm = contact_mgr(m);
+    env.call(m, CONTACT_REMOVE_ALL_FOR_NODE, &[cm, this.wrapping_add(0x50)]);
+    controller_node_dtor(m, env, this, flags);
+}
+
+/// `cTrickTriggerNode::Update` 0x147ad8(this): when tracking a rider (`+0x4c != 0`), walk broadphase contacts on
+/// `+0x50`; wait while rider `+0x424 == 1`, spawn event-4 script and clear `+0x4c` when trick points delta reaches
+/// `+0x38`, or finish(1) if rider left the box. When `+0x4c == 0`, count down `+0x48` and finish(0) at 0.
+pub fn trick_trigger_node_update(m: &mut Mem, env: &mut dyn NodeEnv, this: u32) {
+    if m.r32(this + 0x4c) == 0 {
+        let t = m.r32(this + 0x48) as i32;
+        if t > 0 {
+            let nt = t.wrapping_sub(1);
+            m.w32(this + 0x48, nt as u32);
+            if nt == 0 {
+                call_node_vf(m, env, this, 0xb0, &[0]);
+            }
+        }
+        return;
+    }
+    let proxy = this.wrapping_add(0x50);
+    let mut contact = m.r32(proxy);
+    while contact != 0 {
+        let side = env.call(m, OBJ_HAS_ID, &[contact, proxy]);
+        let other_off = if side == 0 { 4 } else { 0 };
+        let other_proxy = m.r32(contact.wrapping_add(other_off));
+        let owner = m.r32(other_proxy.wrapping_add(0x84));
+        if m.r32(owner.wrapping_add(0x14)) == 0x3ef {
+            let boarder = if owner != 0 && owner != 0x82c {
+                m.r32(owner.wrapping_sub(0x82c))
+            } else {
+                0
+            };
+            if boarder == m.r32(this + 0x4c) {
+                if m.r32(boarder.wrapping_add(0x424)) == 1 {
+                    return;
+                }
+                let diff = m
+                    .r32(boarder.wrapping_add(0x5910))
+                    .wrapping_sub(m.r32(this + 0x3c)) as i32;
+                if diff >= m.r32(this + 0x38) as i32 {
+                    let inst = m.r32(this + 0x28);
+                    let script = env.call(m, INSTANCE_GET_EVENT_SCRIPT, &[G_WORLD_GRID, inst, 4]);
+                    if script != 0xffff_ffff {
+                        let s = env.call(
+                            m,
+                            MEMPOOL_ALLOC,
+                            &[G_SCRIPT_POOL, 0xf0, 0x4000_0000, NAME_SCRIPT_NODE, 0, 0],
+                        );
+                        if s != 0 {
+                            eamem::set(m, s, 0xdead_c0de, 0xf0);
+                        }
+                        let inst2 = m.r32(this + 0x28);
+                        env.call(m, SCRIPT_NODE_CTOR, &[s, 3, script, inst2, 0, 0, 0]);
+                        m.w32(this + 0x4c, 0);
+                        return;
+                    }
+                }
+            }
+        }
+        let side2 = env.call(m, OBJ_HAS_ID, &[contact, proxy]);
+        contact = m.r32(contact.wrapping_add(8).wrapping_add(side2.wrapping_shl(2)));
+    }
+    call_node_vf(m, env, this, 0xb0, &[1]);
+}
+
+/// `cEmitterNode::~cEmitterNode` 0x147e10(this, flags): restore vtable `0x36c7f8`, free particle member `+0x20`
+/// (flags 2), and tail-call `cBxTypeObjNode::~cBxTypeObjNode`.
+pub fn emitter_node_dtor(m: &mut Mem, env: &mut dyn NodeEnv, this: u32, flags: u32) {
+    m.w32(this + 8, VT_EMITTER_NODE);
+    env.call(m, PARTICLE_NODE_FREE_MEM, &[this.wrapping_add(0x20), 2]);
+    bx_type_obj_node_dtor(m, env, this, flags);
+}
+
+/// `cEmitterNode::Update` 0x147e60(this): self-delete if `(*(inst+0xe8) & 0x900) != 0x100`; otherwise update
+/// particle member `+0x20`, self-deleting when non-negative lifetime expires (`<= 0.0`).
+pub fn emitter_node_update(m: &mut Mem, env: &mut dyn NodeEnv, this: u32) {
+    let inst = m.r32(this + 0x18);
+    if (m.r32(inst + 0xe8) & 0x900) != 0x100 {
+        if this != 0 {
+            call_node_vf(m, env, this, 8, &[3]);
+        }
+        return;
+    }
+    let before = f32::from_bits(m.r32(this + 0x20));
+    if before < 0.0 {
+        env.call(m, PARTICLE_NODE_UPDATE, &[this.wrapping_add(0x20)]);
+        return;
+    }
+    env.call(m, PARTICLE_NODE_UPDATE, &[this.wrapping_add(0x20)]);
+    let after = f32::from_bits(m.r32(this + 0x20));
+    if after <= 0.0 && this != 0 {
+        call_node_vf(m, env, this, 8, &[3]);
+    }
+}
+
+/// `cEmitterNode::Draw` 0x147f28(this): tail-call `ParticleSys_Draw(this+0x20)`.
+pub fn emitter_node_draw(m: &mut Mem, env: &mut dyn NodeEnv, this: u32) {
+    env.call(m, PARTICLE_SYS_DRAW, &[this.wrapping_add(0x20)]);
+}
+
+/// `cParticleNode::~cParticleNode` 0x1480b0(this, flags): restore vtable `0x36c718`, free particle member `+0x30`
+/// (flags 2), and tail-call `cControllerNode::~cControllerNode`.
+pub fn particle_node_dtor(m: &mut Mem, env: &mut dyn NodeEnv, this: u32, flags: u32) {
+    m.w32(this + 8, VT_PARTICLE_NODE);
+    env.call(m, PARTICLE_NODE_FREE_MEM, &[this.wrapping_add(0x30), 2]);
+    controller_node_dtor(m, env, this, flags);
+}
+
+/// `cParticleNode::Draw` 0x1481c8(this): tail-call `ParticleSys_Draw(this+0x30)`.
+pub fn particle_node_draw(m: &mut Mem, env: &mut dyn NodeEnv, this: u32) {
+    env.call(m, PARTICLE_SYS_DRAW, &[this.wrapping_add(0x30)]);
+}
+
+/// `cCollideEmitterNode::cCollideEmitterNode` 0x148560(this, a1, inst, rider, mat, vel_obj): init type-0x3ec node
+/// and particle member `+0x70`, copy `mat[0]` to `+0x30`, scale `mat[2]` by `|vel_obj+0x54|` into `+0x40`, call
+/// `CollideEmitterNode_CreateParticles`, and increment `0x31d498[rider_idx]`.
+pub fn collide_emitter_node_ctor(
+    m: &mut Mem,
+    env: &mut dyn NodeEnv,
+    this: u32,
+    a1: u32,
+    inst: u32,
+    rider: u32,
+    mat: u32,
+    vel_obj: u32,
+) -> u32 {
+    env.call(m, BX_TYPE_OBJ_NODE_CTOR, &[this, a1, 0x3ec]);
+    m.w32(this + 8, VT_COLLIDE_EMITTER_NODE);
+    env.call(m, PARTICLE_NODE_INIT_MEM, &[this.wrapping_add(0x70)]);
+    m.w32(this + 0x60, inst);
+    m.w32(this + 0x50, m.r32(rider + 0x460));
+    m.w32(this + 0x64, vel_obj);
+    for k in 0..4u32 {
+        m.w32(this + 0x30 + k * 4, m.r32(mat + k * 4));
+    }
+    let vx = F(f32::from_bits(m.r32(vel_obj + 0x54)));
+    let vy = F(f32::from_bits(m.r32(vel_obj + 0x58)));
+    let vz = F(f32::from_bits(m.r32(vel_obj + 0x5c)));
+    let speed = (((vx * vx + vy * vy) + vz * vz) + F(0.0)).sqrt();
+    for k in 0..4u32 {
+        let v = F(f32::from_bits(m.r32(mat + 0x20 + k * 4))) * speed;
+        m.w32(this + 0x40 + k * 4, v.0.to_bits());
+    }
+    env.call(m, COLLIDE_EMITTER_CREATE_PARTICLES, &[this]);
+    let slot = G_COLLIDE_EMITTER_COUNTS.wrapping_add(m.r32(this + 0x50).wrapping_shl(2));
+    m.w32(slot, m.r32(slot).wrapping_add(1));
+    this
+}
+
+/// `cCollideEmitterNode::~cCollideEmitterNode` 0x148890(this, flags): restore vtable `0x36c650`, decrement
+/// `0x31d498[*(this+0x50)]`, free particle member `+0x70` (flags 2), and tail-call `cBxTypeObjNode::~cBxTypeObjNode`.
+pub fn collide_emitter_node_dtor(m: &mut Mem, env: &mut dyn NodeEnv, this: u32, flags: u32) {
+    m.w32(this + 8, VT_COLLIDE_EMITTER_NODE);
+    let slot = G_COLLIDE_EMITTER_COUNTS.wrapping_add(m.r32(this + 0x50).wrapping_shl(2));
+    m.w32(slot, m.r32(slot).wrapping_sub(1));
+    env.call(m, PARTICLE_NODE_FREE_MEM, &[this.wrapping_add(0x70), 2]);
+    bx_type_obj_node_dtor(m, env, this, flags);
+}
+
+/// `cCollideEmitterNode::Update` 0x148948(this): self-delete if `(*(inst+0xe8) & 0x900) != 0x100`; otherwise
+/// update particle member `+0x70` and self-delete when `*(f32*)(this+0x70) <= 0.0`.
+pub fn collide_emitter_node_update(m: &mut Mem, env: &mut dyn NodeEnv, this: u32) {
+    let inst = m.r32(this + 0x60);
+    if (m.r32(inst + 0xe8) & 0x900) != 0x100 {
+        if this != 0 {
+            call_node_vf(m, env, this, 8, &[3]);
+        }
+        return;
+    }
+    env.call(m, PARTICLE_NODE_UPDATE, &[this.wrapping_add(0x70)]);
+    let after = f32::from_bits(m.r32(this + 0x70));
+    if after <= 0.0 && this != 0 {
+        call_node_vf(m, env, this, 8, &[3]);
+    }
+}
+
+/// `cCollideEmitterNode::Draw` 0x1489e8(this): tail-call `ParticleSys_Draw(this+0x70)`.
+pub fn collide_emitter_node_draw(m: &mut Mem, env: &mut dyn NodeEnv, this: u32) {
+    env.call(m, PARTICLE_SYS_DRAW, &[this.wrapping_add(0x70)]);
+}
+
+/// `cMovieNode::cMovieNode` 0x148a70(this, a1, inst): construct controller type 0x17, set vtable `0x36c570`, open
+/// jumbotron video (`0x148b28`), and update instance flags `(*flags & !2) | 4`.
+pub fn movie_node_ctor(m: &mut Mem, env: &mut dyn NodeEnv, this: u32, a1: u32, inst: u32) -> u32 {
+    env.call(m, CONTROLLER_NODE_CTOR, &[this, a1, 0x17, inst]);
+    m.w32(this + 8, VT_MOVIE_NODE);
+    env.call(m, MOVIE_NODE_OPEN_VIDEO, &[this]);
+    let obj = m.r32(this + 0x28);
+    let fl = (m.r32(obj + 0xe8) & !2u32) | 4;
+    m.w32(obj + 0xe8, fl);
+    this
+}
+
+/// `cMovieNode::~cMovieNode` 0x148cc8(this, flags): restore vtable `0x36c570`, release video handle `*(this+0x2c)`
+/// on `gApp->game->video_mgr (+0x44)`, and tail-call `cControllerNode::~cControllerNode`.
+pub fn movie_node_dtor(m: &mut Mem, env: &mut dyn NodeEnv, this: u32, flags: u32) {
+    m.w32(this + 8, VT_MOVIE_NODE);
+    let vid = m.r32(m.r32(m.r32(G_APP) + 0x730) + 0x44);
+    env.call(m, VIDEO_PLAYER_RELEASE, &[vid, m.r32(this + 0x2c)]);
+    controller_node_dtor(m, env, this, flags);
+}
+
+/// `cMovieNode::Update` 0x148d20: no-op.
+pub fn movie_node_update() {}
+
+/// `cMovieNode::Draw` 0x148d28(this): fetch frame texture from `Movie_GetFrameTexture`, call `gfx` vtable `+0x1e4`
+/// with `3`, and draw instance mesh via `gfx` vtable `+0x2ac` with the video frame texture.
+pub fn movie_node_draw(m: &mut Mem, env: &mut dyn NodeEnv, this: u32) {
+    let app = m.r32(G_APP);
+    let vid = m.r32(m.r32(app + 0x730) + 0x44);
+    let gfx = m.r32(app + 0x724);
+    let tex = env.call(m, MOVIE_GET_FRAME_TEXTURE, &[vid, m.r32(this + 0x2c)]);
+    call_gfx_vf(m, env, gfx, 0x1e0, &[3]);
+    let inst = m.r32(this + 0x28);
+    call_gfx_vf(
+        m,
+        env,
+        gfx,
+        0x2a8,
+        &[m.r32(inst + 0xc0), tex, inst, inst.wrapping_add(0x40), 0, 0],
+    );
+}
+
+/// `cRailManNode::cRailManNode` 0x148dc8(this, a1): construct sort node type `0x3ed`, register singleton at
+/// `0x31d4b0`, set vtable `0x36c510`, and initialize 128 `{ id: -1, flags: 0 }` entries at `this+0x28`.
+pub fn rail_man_node_ctor(m: &mut Mem, env: &mut dyn NodeEnv, this: u32, a1: u32) -> u32 {
+    env.call(m, BX_SORT_OBJ_NODE_CTOR, &[this, a1, 0x3ed]);
+    m.w32(G_RAIL_MAN_NODE, this);
+    m.w32(this + 8, VT_RAIL_MAN_NODE);
+    for i in 0..128u32 {
+        m.w16(this + 0x2a + i * 4, 0);
+        m.w16(this + 0x28 + i * 4, 0xffff);
+    }
+    this
+}
+
+/// `cRailManNode::~cRailManNode` 0x148f70(this, flags): restore vtable `0x36c510`, restore low-16 flags from
+/// upper-16 defaults on every active spline entry (`id != -1`) via `RailNode_GetSpline`, clear singleton
+/// `0x31d4b0`, and tail-call `cBxSortObjNode::~cBxSortObjNode`.
+pub fn rail_man_node_dtor(m: &mut Mem, env: &mut dyn NodeEnv, this: u32, flags: u32) {
+    m.w32(this + 8, VT_RAIL_MAN_NODE);
+    for i in 0..128u32 {
+        let id = m.r16(this + 0x28 + i * 4) as i16 as i32;
+        if id != -1 {
+            let spline = env.call(m, RAIL_NODE_GET_SPLINE, &[G_WORLD_GRID, id as u32]);
+            let w = m.r32(spline + 0x18);
+            m.w32(spline + 0x18, (w & 0xffff_0000) | (w >> 16));
+        }
+    }
+    m.w32(G_RAIL_MAN_NODE, 0);
+    bx_sort_obj_node_dtor(m, env, this, flags);
+}
