@@ -1067,3 +1067,528 @@ pub fn gfx_ret0() -> u32 {
 pub fn gfx_ret1() -> u32 {
     1
 }
+
+// ---- Row G7u: state pool, mesh cache, display modes, texture wrappers, projection, grid mesh ----
+
+pub const G_VIF1_IRQ_STATE: u32 = 0x0033_d7b0;
+
+pub const VT_PS2_GRID_MESH: u32 = 0x0039_35c8;
+pub const VT_GRID_MESH: u32 = 0x0039_39d8;
+
+pub const GFX_STOP_VIF1_IRQ: u32 = 0x001c_0958;
+pub const GFX_UPDATE_VIF1_IRQ: u32 = 0x001c_09c8;
+pub const TEXMAN_SHUTDOWN: u32 = 0x001c_0e78;
+pub const TEXMAN_REGISTER_TEXTURE: u32 = 0x001c_0ef8;
+pub const TEXMAN_UPLOAD_TEXTURES: u32 = 0x001c_1f50;
+pub const TEXMAN_UPDATE_LOD: u32 = 0x001c_3348;
+pub const TEXMAN_INIT_LOAD_NODES: u32 = 0x001c_3480;
+pub const TEXMAN_FREE_ALL: u32 = 0x001c_3560;
+pub const PS2_DRAW_STATE_INIT: u32 = 0x001c_4220;
+pub const PS2_DRAW_CLEAR_BUCKETS: u32 = 0x001c_4270;
+pub const PS2_DRAW_FLUSH_BUCKETS: u32 = 0x001c_4fe0;
+pub const GFX_SET_DISPLAY_MODE: u32 = 0x001e_06e0;
+pub const REMOVE_INTC_HANDLER: u32 = 0x0030_64e0;
+pub const REMOVE_DMAC_HANDLER: u32 = 0x0030_6510;
+pub const DELETE_THREAD: u32 = 0x0030_65f0;
+pub const TERMINATE_THREAD: u32 = 0x0030_6630;
+pub const DELETE_SEMA: u32 = 0x0030_67f0;
+pub const SIGNAL_SEMA: u32 = 0x0030_6800;
+pub const WAIT_SEMA: u32 = 0x0030_6820;
+pub const DISABLE_INTC: u32 = 0x0030_7208;
+pub const DISABLE_DMAC: u32 = 0x0030_72d8;
+
+/// `PS2Draw_FreeTables` 0x1c4158(this): free `*(this+4)` and `*(this+0xc)` via `Mem_Free` when non-null.
+pub fn ps2_draw_free_tables(m: &mut Mem, env: &mut dyn RenderEnv, this: u32) {
+    let p1 = m.r32(this + 4);
+    if p1 != 0 {
+        env.call(m, MEM_FREE, &[p1]);
+    }
+    let p2 = m.r32(this + 0xc);
+    if p2 != 0 {
+        env.call(m, MEM_FREE, &[p2]);
+    }
+}
+
+/// `Gfx_InitStatePool` 0x1c41a0(this): reset bucket heads, call `PS2Draw_ClearBuckets` and `PS2DrawState_Init`,
+/// and initialize pool cursors/sentinels (`+0xfa44..+0xfa64`).
+pub fn gfx_init_state_pool(m: &mut Mem, env: &mut dyn RenderEnv, this: u32) {
+    m.w32(this, 0);
+    m.w32(this + 8, 0);
+    env.call(m, PS2_DRAW_CLEAR_BUCKETS, &[this]);
+    m.w32(this + 0x3a24, 0);
+    let hi = this.wrapping_add(0x8000);
+    m.w32(hi + 0x7a44, 0xffff_ffff);
+    m.w32(hi + 0x7a48, 0xffff_ffff);
+    m.w32(hi + 0x7a4c, 0);
+    m.w32(hi + 0x7a54, 0);
+    m.w32(hi + 0x7a58, 0);
+    env.call(m, PS2_DRAW_STATE_INIT, &[this, this.wrapping_add(0xfa28)]);
+    m.w32(this + 0x10, 0);
+    m.w32(hi + 0x7a5c, 0xffff_ffff);
+    m.w32(this + 0x3020, 0);
+    m.w32(hi + 0x7a60, 0xffff_ffff);
+}
+
+/// `cPS2GraphicsMan::vf2_1dc168` 0x1dc168(this): full PS2 graphics manager shutdown (free matrix stack, remove
+/// INTC/DMAC handlers, terminate/delete render thread & semaphores, shut down `TexMan` & `PS2Draw`, stop VIF1 IRQ).
+pub fn ps2_gfx_shutdown(m: &mut Mem, env: &mut dyn RenderEnv, this: u32) {
+    let ms = m.r32(this + 0x3f8);
+    if ms != 0 {
+        env.call(m, MEM_FREE, &[ms]);
+    }
+    env.call(m, DISABLE_INTC, &[2]);
+    env.call(m, REMOVE_INTC_HANDLER, &[2, m.r32(this + 0x6f8)]);
+    env.call(m, DISABLE_DMAC, &[1]);
+    env.call(m, REMOVE_DMAC_HANDLER, &[0, m.r32(this + 0x6fc)]);
+    env.call(m, TERMINATE_THREAD, &[m.r32(this + 0x708)]);
+    env.call(m, DELETE_THREAD, &[m.r32(this + 0x708)]);
+    env.call(m, DELETE_SEMA, &[m.r32(this + 0x700)]);
+    env.call(m, DELETE_SEMA, &[m.r32(this + 0x704)]);
+    let tm = m.r32(this + 0x47c);
+    env.call(m, TEXMAN_SHUTDOWN, &[tm]);
+    env.call(m, MEM_DELETE, &[m.r32(this + 0x47c)]);
+    let draw = m.r32(this + 0x480);
+    ps2_draw_free_tables(m, env, draw);
+    env.call(m, MEM_DELETE, &[m.r32(this + 0x480)]);
+    env.call(m, GFX_STOP_VIF1_IRQ, &[G_VIF1_IRQ_STATE]);
+}
+
+/// `cPS2GraphicsMan::vf6_1dc210` 0x1dc210(this, w, h, bpp, zbpp): find matching display mode index in the
+/// `0x94`-byte table at `*(this+0x654)` (`bpp`: 24 -> psm 1, 32 -> psm 0; `zbpp`: 24 -> zpsm 0x31), or `-1`.
+pub fn ps2_gfx_find_mode(m: &Mem, this: u32, w: u32, h: u32, bpp: u32, zbpp: u32) -> i32 {
+    let count = m.r32(this + 0x64c) as i32;
+    if count <= 0 {
+        return -1;
+    }
+    let tbl = m.r32(this + 0x654);
+    for i in 0..count {
+        let e = tbl.wrapping_add((i as u32).wrapping_mul(0x94));
+        if m.r32(e + 0x80) != w || m.r32(e + 0x84) != h {
+            continue;
+        }
+        let bpp_ok = match bpp {
+            24 => m.r32(e + 0x88) == 1,
+            32 => m.r32(e + 0x88) == 0,
+            _ => false,
+        };
+        let zbpp_ok = zbpp == 24 && m.r32(e + 0x8c) == 0x31;
+        if bpp_ok && zbpp_ok {
+            return i;
+        }
+    }
+    -1
+}
+
+/// `cPS2GraphicsMan::vf5_1dc2c8` 0x1dc2c8(this, w, h, bpp, zbpp): look up mode via virtual `+0x3c`, and if found
+/// (`>= 0`) activate it via virtual `+0x2c`; else return 0.
+pub fn ps2_gfx_select_mode(
+    m: &mut Mem,
+    env: &mut dyn RenderEnv,
+    this: u32,
+    w: u32,
+    h: u32,
+    bpp: u32,
+    zbpp: u32,
+) -> u32 {
+    let idx = call_gfx_vf(m, env, this, 0x38, &[w, h, bpp, zbpp]) as i32;
+    if idx < 0 {
+        return 0;
+    }
+    call_gfx_vf(m, env, this, 0x28, &[idx as u32])
+}
+
+/// `cPS2GraphicsMan::vf4_1dc328` 0x1dc328(this, idx): if `*(this+0x650) != idx`, call `Gfx_SetDisplayMode` with
+/// mode table entry `idx`, update `*(this+0x650)`, and notify virtual `+0x144`; always return `1`.
+pub fn ps2_gfx_set_mode_index(m: &mut Mem, env: &mut dyn RenderEnv, this: u32, idx: u32) -> u32 {
+    if m.r32(this + 0x650) != idx {
+        let e = m.r32(this + 0x654).wrapping_add(idx.wrapping_mul(0x94));
+        env.call(
+            m,
+            GFX_SET_DISPLAY_MODE,
+            &[
+                this,
+                m.r32(e + 0x80),
+                m.r32(e + 0x84),
+                m.r32(e + 0x88),
+                m.r32(e + 0x8c),
+                0,
+                u32::from(m.r32(e + 0x90) != 0),
+                0,
+            ],
+        );
+        m.w32(this + 0x650, idx);
+        call_gfx_vf(m, env, this, 0x140, &[]);
+    }
+    1
+}
+
+/// `cPS2GraphicsMan::vf25_1dc3b0` 0x1dc3b0(this, out1, out2, out3): copy `+0x1c`, `+0x14`, `+0x18` from the active
+/// `0x34`-byte viewport stack entry (`this + 0x14 + *(this+0xe4)*0x34`).
+pub fn ps2_gfx_get_viewport_params(m: &mut Mem, this: u32, out1: u32, out2: u32, out3: u32) {
+    let entry = this
+        .wrapping_add(0x14)
+        .wrapping_add(m.r32(this + 0xe4).wrapping_mul(0x34));
+    m.w32(out1, m.r32(entry + 0x1c));
+    m.w32(out2, m.r32(entry + 0x14));
+    m.w32(out3, m.r32(entry + 0x18));
+}
+
+/// `cPS2GraphicsMan::vf35_1dd450` 0x1dd450(this, mode): store `mode` at `+0x17d4` and set preset brightness/scale
+/// floats at `+0x17d8..+0x17e4` for modes 0, 1, and 2.
+pub fn ps2_gfx_set_blend_preset(m: &mut Mem, this: u32, mode: u32) {
+    m.w32(this + 0x17d4, mode);
+    match mode {
+        0 => {
+            m.w32(this + 0x17d8, 0);
+            m.w32(this + 0x17dc, ONE_F32_BITS);
+            m.w32(this + 0x17e0, ONE_F32_BITS);
+            m.w32(this + 0x17e4, ONE_F32_BITS);
+        }
+        1 => {
+            m.w32(this + 0x17d8, 0x3e00_0000);
+            m.w32(this + 0x17dc, 0x3f40_0000);
+            m.w32(this + 0x17e0, 0x3f40_0000);
+            m.w32(this + 0x17e4, 0x3f40_0000);
+        }
+        2 => {
+            m.w32(this + 0x17d8, 0);
+            m.w32(this + 0x17dc, ONE_F32_BITS);
+            m.w32(this + 0x17e0, 0x3f40_0000);
+            m.w32(this + 0x17e4, ONE_F32_BITS);
+        }
+        _ => {}
+    }
+}
+
+/// `cPS2GraphicsMan::vf15_1dd4f0` 0x1dd4f0(this): flush draw buckets, hand DMA buffer to render thread via
+/// semaphores, flip double-buffer (`+0x690`, stride `0x198f80`), reset state pool, update texture LODs, and flush
+/// mesh cache.
+pub fn ps2_gfx_end_frame(m: &mut Mem, env: &mut dyn RenderEnv, this: u32) {
+    let s1 = m.r32(this + 0x680);
+    env.call(m, PS2_DRAW_FLUSH_BUCKETS, &[m.r32(this + 0x480), this.wrapping_add(0x680)]);
+    env.call(m, WAIT_SEMA, &[m.r32(this + 0x704)]);
+    let buf_idx = m.r32(this + 0x690);
+    m.w32(this + 0x6e8, buf_idx);
+    m.w32(this + 0x6ec, s1);
+    let slot = m.r32(this + 0x6e8);
+    m.w32(this + 0x6dc + slot.wrapping_shl(2), 2);
+    env.call(m, SIGNAL_SEMA, &[m.r32(this + 0x704)]);
+    env.call(m, SIGNAL_SEMA, &[m.r32(this + 0x700)]);
+    let next_idx = u32::from(m.r32(this + 0x690) == 0);
+    m.w32(this + 0x690, next_idx);
+    let ptr = m.r32(this + 0x68c).wrapping_add(next_idx.wrapping_mul(0x0019_8f80));
+    m.w32(this + 0x680, ptr);
+    m.w32(this + 0x684, ptr);
+    call_gfx_vf(m, env, this, 0x1b0, &[]);
+    gfx_init_state_pool(m, env, m.r32(this + 0x480));
+    env.call(m, TEXMAN_UPDATE_LOD, &[m.r32(this + 0x47c)]);
+    env.call(m, GFX_UPDATE_VIF1_IRQ, &[G_VIF1_IRQ_STATE]);
+    ps2_render_flush_mesh_cache(m, env, this, 0);
+}
+
+/// `PS2Render_UnlinkMesh` 0x1debd0(this, node): unlink `node` from its doubly-linked mesh cache list (`+0x1d70[list]`),
+/// set `node+0xc = 3` (unlinked), and decrement `+0x1d7c[list]`.
+pub fn ps2_render_unlink_mesh(m: &mut Mem, this: u32, node: u32) {
+    let prev = m.r32(node + 4);
+    let next = m.r32(node);
+    let list = m.r32(node + 0xc);
+    if prev == 0 {
+        m.w32(this + 0x1d70 + list.wrapping_shl(2), next);
+    } else {
+        m.w32(prev, next);
+    }
+    if next != 0 {
+        m.w32(next + 4, prev);
+    }
+    m.w32(node + 0xc, 3);
+    let cnt_addr = this + 0x1d7c + list.wrapping_shl(2);
+    m.w32(cnt_addr, m.r32(cnt_addr).wrapping_sub(1));
+}
+
+/// `PS2Render_LinkMesh` 0x1deb40(this, node, list_idx): unlink `node` if currently linked (`+0xc != 3`), prepend
+/// it to list `list_idx` (`+0x1d70[list_idx]`), and increment `+0x1d7c[list_idx]`.
+pub fn ps2_render_link_mesh(m: &mut Mem, this: u32, node: u32, list_idx: u32) {
+    if m.r32(node + 0xc) != 3 {
+        ps2_render_unlink_mesh(m, this, node);
+    }
+    m.w32(node + 4, 0);
+    m.w32(node + 0xc, list_idx);
+    let head_addr = this + 0x1d70 + list_idx.wrapping_shl(2);
+    let old = m.r32(head_addr);
+    m.w32(node, old);
+    if old != 0 {
+        m.w32(old + 4, node);
+    }
+    m.w32(head_addr, node);
+    let cnt_addr = this + 0x1d7c + list_idx.wrapping_shl(2);
+    m.w32(cnt_addr, m.r32(cnt_addr).wrapping_add(1));
+}
+
+/// `PS2Render_ResetMeshCache` 0x1dea88(this): clear the 3 cache lists (`+0x1d70..+0x1d88`) and link all 64
+/// embedded `0x14`-byte cache nodes (`+0x1870..+0x1d70`) onto free list 0.
+pub fn ps2_render_reset_mesh_cache(m: &mut Mem, this: u32) {
+    for k in 0..6u32 {
+        m.w32(this + 0x1d70 + k * 4, 0);
+    }
+    let mut node = this.wrapping_add(0x1870);
+    let end = this.wrapping_add(0x1d80);
+    while node.wrapping_add(0x10) < end {
+        m.w32(node + 0xc, 3);
+        m.w32(node + 8, 0);
+        m.w32(node + 0x10, 0);
+        ps2_render_link_mesh(m, this, node, 0);
+        node = node.wrapping_add(0x14);
+    }
+}
+
+/// `PS2Render_FlushMeshCache` 0x1dec38(this, force): walk pending-free list 2 (`+0x1d78`), deleting any mesh
+/// whose timestamp `+0x10 + 2 <= *(this+0x6c4)` (or all when `force != 0`) via deleting dtor `+8/+0xc(3)` and
+/// returning the cache node to list 0.
+pub fn ps2_render_flush_mesh_cache(m: &mut Mem, env: &mut dyn RenderEnv, this: u32, force: u32) {
+    if m.r32(this + 0x1d84) == 0 {
+        return;
+    }
+    let mut cur = m.r32(this + 0x1d78);
+    while cur != 0 {
+        let next = m.r32(cur);
+        let expired = force != 0 || m.r32(this + 0x6c4) >= m.r32(cur + 0x10).wrapping_add(2);
+        if expired {
+            let mesh = m.r32(cur + 8);
+            if mesh != 0 {
+                let vt = m.r32(mesh);
+                let adj = m.r16(vt + 8) as i16 as i32 as u32;
+                let f = m.r32(vt + 0xc);
+                env.call(m, f, &[mesh.wrapping_add(adj), 3]);
+            }
+            m.w32(cur + 8, 0);
+            m.w32(cur + 0x10, 0);
+            ps2_render_link_mesh(m, this, cur, 0);
+        }
+        cur = next;
+    }
+}
+
+/// `cPS2GraphicsMan::vf69_1dee58` 0x1dee58(this, mesh): link `*(mesh+0x54)` onto pending-free list 2 and return 1.
+pub fn ps2_gfx_release_mesh(m: &mut Mem, this: u32, mesh: u32) -> u32 {
+    let node = m.r32(mesh + 0x54);
+    ps2_render_link_mesh(m, this, node, 2);
+    1
+}
+
+/// `Render_CalcTexVramSize` 0x1e05d0(_this, w, h, psm, zpsm): compute GS framebuffer+zbuffer VRAM size in blocks
+/// (`((color_pages * 2) + z_pages) << 5`).
+pub fn render_calc_tex_vram_size(w: i32, h: i32, psm: u32, zpsm: i32) -> u32 {
+    let bw = w.wrapping_add(0x3f) >> 6;
+    let color_pages = match psm {
+        0 | 1 | 48 | 49 => bw.wrapping_mul(h.wrapping_add(0x1f) >> 5),
+        2 | 10 | 50 | 58 => bw.wrapping_mul(h.wrapping_add(0x3f) >> 6),
+        _ => 0,
+    };
+    let z_pages = match zpsm {
+        0x30 | 0x31 => bw.wrapping_mul(h.wrapping_add(0x1f) >> 5),
+        0x32 | 0x3a => bw.wrapping_mul(h.wrapping_add(0x3f) >> 6),
+        _ => 0,
+    };
+    ((color_pages.wrapping_shl(1)).wrapping_add(z_pages) as u32).wrapping_shl(5)
+}
+
+/// `Gfx_DispatchDisplayMode` 0x1e0680(_this, psm, zpsm): return 1 if `(psm, zpsm)` is a valid PS2 GS color/depth
+/// format pair, else 0.
+pub fn gfx_dispatch_display_mode(psm: u32, zpsm: u32) -> u32 {
+    match psm {
+        0 | 1 | 10 | 48 | 49 | 58 => u32::from(zpsm == 0x30 || zpsm == 0x31 || zpsm == 0x3a),
+        2 | 50 => u32::from(zpsm == 0x32),
+        _ => 0,
+    }
+}
+
+/// `cPS2GraphicsMan::vf38_1e1088` 0x1e1088(this): tail-call `TexMan_InitLoadNodes(*(this+0x47c))`.
+pub fn ps2_gfx_vf38(m: &mut Mem, env: &mut dyn RenderEnv, this: u32) -> u32 {
+    env.call(m, TEXMAN_INIT_LOAD_NODES, &[m.r32(this + 0x47c)])
+}
+
+/// `cPS2GraphicsMan::vf39_1e1090` 0x1e1090(this): tail-call `TexMan_UploadTextures(*(this+0x47c), +0x1714..+0x1720)`.
+pub fn ps2_gfx_vf39(m: &mut Mem, env: &mut dyn RenderEnv, this: u32) -> u32 {
+    env.call(
+        m,
+        TEXMAN_UPLOAD_TEXTURES,
+        &[
+            m.r32(this + 0x47c),
+            m.r32(this + 0x1714),
+            m.r32(this + 0x1718),
+            m.r32(this + 0x171c),
+            m.r32(this + 0x1720),
+        ],
+    )
+}
+
+/// `cPS2GraphicsMan::vf40_1e10b0` 0x1e10b0(this): tail-call `TexMan_FreeAll(*(this+0x47c))`.
+pub fn ps2_gfx_vf40(m: &mut Mem, env: &mut dyn RenderEnv, this: u32) -> u32 {
+    env.call(m, TEXMAN_FREE_ALL, &[m.r32(this + 0x47c)])
+}
+
+/// `cPS2GraphicsMan::vf41_1e10b8` 0x1e10b8(this, shp, a2, flags): unpack EA `.ssh` shape header (`+0` type 2/3/5,
+/// `+4/+6` w/h, `+0xc >> 28` mips, CLUT offset `(w0 >> 8) + 0x10`) and forward to virtual `+0x15c`.
+pub fn ps2_gfx_register_shape(
+    m: &mut Mem,
+    env: &mut dyn RenderEnv,
+    this: u32,
+    shp: u32,
+    a2: u32,
+    flags: u32,
+) -> u32 {
+    let b = m.r8(shp);
+    let mut t2 = 0u32;
+    let mut t3 = 0u32;
+    let mut t4 = 0u32;
+    if b == 3 {
+        t2 = 2;
+    } else if b == 2 {
+        let w0 = m.r32(shp) as i32;
+        let clut_base = if (w0 as u32 & 0xffff_ff00) != 0 {
+            shp.wrapping_add((w0 >> 8) as u32)
+        } else {
+            0
+        };
+        t2 = 4;
+        t3 = 1;
+        t4 = clut_base.wrapping_add(0x10);
+    }
+    let w = m.r16(shp + 4) as i16 as i32 as u32;
+    let h = m.r16(shp + 6) as i16 as i32 as u32;
+    let mips = m.r32(shp + 0xc) >> 28;
+    call_gfx_vf(
+        m,
+        env,
+        this,
+        0x158,
+        &[shp.wrapping_add(0x10), a2, w, h, mips, t2, t3, t4, flags],
+    )
+}
+
+/// `cPS2GraphicsMan::vf42_1e1188` 0x1e1188(this, a1..s1): reorder arguments and call `TexMan_RegisterTexture`.
+#[allow(clippy::too_many_arguments)]
+pub fn ps2_gfx_register_texture(
+    m: &mut Mem,
+    env: &mut dyn RenderEnv,
+    this: u32,
+    a1: u32,
+    a2: u32,
+    a3: u32,
+    t0: u32,
+    t1: u32,
+    t2: u32,
+    t3: u32,
+    s0: u32,
+    s1: u32,
+) -> u32 {
+    env.call(
+        m,
+        TEXMAN_REGISTER_TEXTURE,
+        &[m.r32(this + 0x47c), a1, a3, t0, t1, t2, a2, s0, t3, s1],
+    )
+}
+
+/// `cPS2GraphicsMan::vf49_1e16f0` 0x1e16f0(this, idx): return `*(tex_entries[idx] + 0x10)` (stride `0x5c`).
+pub fn ps2_gfx_get_tex_x10(m: &Mem, this: u32, idx: u32) -> u32 {
+    let entries = m.r32(m.r32(this + 0x47c) + 0x10);
+    m.r32(entries.wrapping_add(idx.wrapping_mul(0x5c)).wrapping_add(0x10))
+}
+
+/// `cPS2GraphicsMan::vf50_1e1710` 0x1e1710(this, idx): return `*(tex_entries[idx] + 0x18)` (stride `0x5c`).
+pub fn ps2_gfx_get_tex_x18(m: &Mem, this: u32, idx: u32) -> u32 {
+    let entries = m.r32(m.r32(this + 0x47c) + 0x10);
+    m.r32(entries.wrapping_add(idx.wrapping_mul(0x5c)).wrapping_add(0x18))
+}
+
+/// `PS2Render_ProjectToScreen` 0x1e1ec8(out, this, pt): transform `pt` by `this+0x5b0`, perspective-divide by
+/// `.w`, scale by `this+0x5f0` and bias by `this+0x600`, store at `out`, and return `out`.
+pub fn ps2_render_project_to_screen(m: &mut Mem, out: u32, this: u32, pt: u32) -> u32 {
+    let mat = read_m4(m, this + 0x5b0);
+    let v = read_v4(m, pt);
+    let scale = read_v4(m, this + 0x5f0);
+    let bias = read_v4(m, this + 0x600);
+    let clip = transform_v4(&mat, v);
+    let q = F(1.0) / clip[3];
+    let ndc = [clip[0] * q, clip[1] * q, clip[2] * q, clip[3] * q];
+    let scr = [
+        scale[0] * ndc[0] + bias[0],
+        scale[1] * ndc[1] + bias[1],
+        scale[2] * ndc[2] + bias[2],
+        scale[3] * ndc[3] + bias[3],
+    ];
+    write_v4(m, out, scr);
+    out
+}
+
+/// `PS2Render_ClipTransform` 0x1e1f28(out, this, pt): transform `pt` by `this+0x5b0`, store at `out`, return `out`.
+pub fn ps2_render_clip_transform(m: &mut Mem, out: u32, this: u32, pt: u32) -> u32 {
+    let mat = read_m4(m, this + 0x5b0);
+    let v = read_v4(m, pt);
+    write_v4(m, out, transform_v4(&mat, v));
+    out
+}
+
+/// `cGridMesh::~cGridMesh` 0x1e6670(this, flags): restore vtable `0x3939d8` and `Mem_Delete(this)` if `flags & 1`.
+pub fn grid_mesh_dtor(m: &mut Mem, env: &mut dyn RenderEnv, this: u32, flags: u32) {
+    m.w32(this, VT_GRID_MESH);
+    if (flags & 1) != 0 {
+        env.call(m, MEM_DELETE, &[this]);
+    }
+}
+
+/// `cPS2GridMesh::~cPS2GridMesh` 0x1e6698(this, flags): restore vtable `0x3935c8`, `Mem_Free(*(this+0x24))` if
+/// non-null, and tail-call `cGridMesh::~cGridMesh`.
+pub fn ps2_grid_mesh_dtor(m: &mut Mem, env: &mut dyn RenderEnv, this: u32, flags: u32) {
+    m.w32(this, VT_PS2_GRID_MESH);
+    let p = m.r32(this + 0x24);
+    if p != 0 {
+        env.call(m, MEM_FREE, &[p]);
+    }
+    grid_mesh_dtor(m, env, this, flags);
+}
+
+/// `cPS2GridMesh::vf6_1e6df8` 0x1e6df8(this, a1, a2): dispatch virtual `+0x44` (`delta +0x40`) with
+/// `(this_adj, a1, *(i16*)(*(a2+4)))`.
+pub fn ps2_grid_mesh_vf6(m: &mut Mem, env: &mut dyn RenderEnv, this: u32, a1: u32, a2: u32) -> u32 {
+    let v = m.r16(m.r32(a2 + 4)) as i16 as i32 as u32;
+    let vt = m.r32(this);
+    let adj = m.r16(vt + 0x40) as i16 as i32 as u32;
+    let f = m.r32(vt + 0x44);
+    env.call(m, f, &[this.wrapping_add(adj), a1, v])
+}
+
+/// `cPS2GraphicsMan::vf98_1e7ab0` 0x1e7ab0(this, a1, a2): store `a1` at `+0x1d88` and `a2` at `+0x1d8c`.
+pub fn ps2_gfx_vf98(m: &mut Mem, this: u32, a1: u32, a2: u32) {
+    m.w32(this + 0x1d8c, a2);
+    m.w32(this + 0x1d88, a1);
+}
+
+/// `GridMesh_PackUV` 0x1e7cf8(_this, dst, idx, uv_ptr): quantize `(u, v) * 4096.0` as two `i16`s at `dst + idx*4`.
+pub fn grid_mesh_pack_uv(m: &mut Mem, dst: u32, idx: u32, uv_ptr: u32) {
+    let k = F(4096.0);
+    let u = (F(f32::from_bits(m.r32(uv_ptr))) * k).0 as i32 as u16;
+    let v = (F(f32::from_bits(m.r32(uv_ptr + 4))) * k).0 as i32 as u16;
+    let at = dst.wrapping_add(idx.wrapping_shl(2));
+    m.w16(at, u);
+    m.w16(at + 2, v);
+}
+
+/// `GridMesh_PackNormal` 0x1e7d38(_this, dst, idx, n_ptr): quantize `(nx, ny, nz) * 32767.0` as three `i16`s at
+/// `dst + idx*6`.
+pub fn grid_mesh_pack_normal(m: &mut Mem, dst: u32, idx: u32, n_ptr: u32) {
+    let k = F(f32::from_bits(0x46ff_fe00));
+    let at = dst.wrapping_add(idx.wrapping_mul(6));
+    for i in 0..3u32 {
+        let q = (F(f32::from_bits(m.r32(n_ptr + i * 4))) * k).0 as i32 as u16;
+        m.w16(at + i * 2, q);
+    }
+}
+
+/// `StripPacket_Init` 0x1e81f8(this, a1): set `*(this) = a1`, `*(this+4) = 0`, `*(this+8) = 0`, and return `this`.
+pub fn strip_packet_init(m: &mut Mem, this: u32, a1: u32) -> u32 {
+    m.w32(this, a1);
+    m.w32(this + 4, 0);
+    m.w32(this + 8, 0);
+    this
+}

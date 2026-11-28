@@ -62,3 +62,27 @@ Proven (`SLUS_203.26` disassembly + runner):
   and `cGraphicsMan`.
 - Checked bit-for-bit across all 52 functions in `tests/render_gfxman_tail.rs` (reducing `render` `not started`
   from 148 to 96).
+
+## State pool, mesh cache, display modes, texture wrappers, projection & grid mesh (row G7u, `rendertail.rs`, checked: `tests/render_meshcache_tail.rs`)
+
+Proven (`SLUS_203.26` disassembly + runner):
+
+- **State pool & shutdown (`0x1c4158`, `0x1c41a0`, `0x1dc168`, `0x1dd4f0`)**: `PS2Draw_FreeTables` frees `+4`
+  and `+0xc`; `Gfx_InitStatePool` clears bucket heads (`0x1c4270`), calls `PS2DrawState_Init(this, this+0xfa28)`,
+  and writes sentinel `-1`s at `+0xfa44/+0xfa48/+0xfa5c/+0xfa60`. `vf2_1dc168` tears down INTC 2 / DMAC 1/0,
+  render thread `+0x708`, semaphores `+0x700/+0x704`, `TexMan`, `PS2Draw`, and stops VIF1 IRQ (`0x33d7b0`).
+  `vf15_1dd4f0` flushes buckets, signals the render thread, flips the `0x198f80`-byte DMA double buffer, resets
+  the state pool, updates LODs, and flushes expired mesh cache nodes.
+- **Mesh cache (`0x1dea88..0x1dec38`, `0x1dee58`)**: 64 embedded `0x14`-byte nodes (`+0x1870..+0x1d70`) managed
+  across 3 doubly-linked lists (heads `+0x1d70`, counts `+0x1d7c`; `node+0xc == 3` means unlinked).
+  `PS2Render_FlushMeshCache` deletes list-2 meshes whose `timestamp + 2 <= *(this+0x6c4)` (or all when forced).
+- **Display modes & VRAM (`0x1dc210..0x1dc3b0`, `0x1dd450`, `0x1e05d0`, `0x1e0680`)**: `vf6_1dc210` searches
+  the `0x94`-byte mode table (`bpp` 24/32 -> psm 1/0, `zbpp` 24 -> zpsm `0x31`); `Render_CalcTexVramSize`
+  computes `((color_pages*2) + z_pages) << 5` via jump table `0x393280`; `Gfx_DispatchDisplayMode` validates
+  `(psm, zpsm)` pairs via jump table `0x393370`.
+- **Texture wrappers, projection & grid mesh (`0x1e1088..0x1e1710`, `0x1e1ec8`, `0x1e1f28`, `0x1e6670..0x1e81f8`)**:
+  `vf41_1e10b8` unpacks `.ssh` header type 2/3/5 + CLUT offset `(w0 >> 8) + 0x10`; `vf42_1e1188` permutes its 9
+  arguments for `TexMan_RegisterTexture`; `PS2Render_ProjectToScreen` performs `scale * (clip / clip.w) + bias`;
+  `GridMesh_PackUV` / `GridMesh_PackNormal` quantize floats by `4096.0` and `32767.0` (`0x46ff_fe00`).
+- Checked bit-for-bit across all 32 functions in `tests/render_meshcache_tail.rs` (reducing `render` `not started`
+  from 96 to 64).
