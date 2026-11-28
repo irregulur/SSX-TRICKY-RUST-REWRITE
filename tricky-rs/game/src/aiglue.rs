@@ -110,6 +110,25 @@ pub fn reset_place(paths: &[Path], f: &Follow) -> Option<(Vec3, f32)> {
     Some((Vec3::new(p.pos[0], p.pos[2], -p.pos[1]) * 0.01, p.heading))
 }
 
+/// The start gate's place of race rider `k` of `riders` (gate order): `cAI::vf14` 0x111108 gives it the start path
+/// `k + (6 − riders) / 2` (`AIPathSet_GetPath` 0x197ef8, the `.aip`'s start positions; `Boarder_SetRestartPoint`
+/// 0x118068 keeps it at +0x57a4), and the rider's reset `cBoarder::vf8` 0x116ab8 puts it there (0x116c5c..0x116d88):
+/// the path's direction at distance 0 (`AIP_GetDirectionAtDistance` 0x197738), its heading by the inline atan2 of
+/// `Boarder_UpdateOrientation`, and the path's start moved along that direction by `Boarder_StartLineOffset` 0x11ea00
+/// (the body scale stats+0x60 × 90 − 90 cm: a smaller rider stands further back, so its hands reach the gate), handed
+/// to `Boarder_PlaceAt` 0x11cae8 with no normal. The place in the port's units and the port's yaw for that heading.
+pub fn gate_place(paths: &[Path], start_paths: &[usize], k: usize, riders: usize, scale: f32) -> Option<(Vec3, f32)> {
+    use crate::ps2f::F;
+    let slot = k + 6usize.saturating_sub(riders) / 2;
+    let path = paths.get(*start_paths.get(slot)?)?;
+    let dir = path.direction_at(0.0);
+    let heading = crate::jump::atan2_inline(dir[1], dir[0]);
+    let off = F(scale) * F(90.0) - F(90.0);
+    let p = [0, 1, 2].map(|i| (F(path.start[i]) + F(dir[i]) * off).0);
+    let yaw = crate::rider::wrap(heading - std::f32::consts::FRAC_PI_2);
+    Some((Vec3::new(p[0], p[2], -p[1]) * 0.01, yaw))
+}
+
 /// Starting [`Follow`] for a rider (`cAI::vf14` 0x111108 -> `Boarder_SetRestartPoint` 0x118068 -> `cBoarder::vf8`
 /// 0x116ab8): uses `start_path` when valid and within 50 m of `pos` (so `TRICKY_SPAWN` or mid-course snaps fall back
 /// to the nearest path), else the nearest AI path via `AIP_SortLinesByDistance`, projected from its start.

@@ -124,6 +124,8 @@ struct PropVisual(usize);
 
 /// Computer-controlled opponents.
 struct Opponent { rider: Rider, driver: AiDriver, character: usize,
+    /// its place in the start gate (the race's rider index; the player has the one left over)
+    gate: usize,
     /// board index (0..12), from `Career_SetupAIRider` (`0x16ae68`, row E1b2r1)
     board: usize,
     /// exact 16 stat bytes from `Career_SetupAIRider` (`0x16ae68`, row E1b2r1) when prepared from `SLUS_203.26`
@@ -152,6 +154,7 @@ fn make_opponents(start: Vec3, yaw: f32, player_char: usize, n_chars: usize, cou
             rider: { let mut r = Rider::new(start + side * lane * 1.5 + Vec3::Y * 0.5, yaw); r.ai = true; r.slot = i as u32 + 1; r },
             driver: AiDriver::new(lane * 1.5, skill),
             character: (player_char + 1 + i * if n_chars > 6 { 2 } else { 1 }) % n_chars,
+            gate: i + 1,
             board: 0, stat_bytes: None, init_attitude: None,
             grudge: None, taunt_wait: 1.0, port: Default::default(), draw: DrawLerp::default(),
         }
@@ -199,6 +202,7 @@ fn prepare_lineup(
             rider: { let mut r = Rider::new(start + side * lane * 1.5 + Vec3::Y * 0.5, yaw); r.ai = true; r.slot = ai_idx as u32 + 1; r },
             driver: AiDriver::new(lane * 1.5, skill),
             character,
+            gate,
             board: row.board_index(),
             stat_bytes: Some(row.stat_bytes),
             init_attitude: Some(row.relations[player_gate.min(5)].0),
@@ -508,7 +512,7 @@ fn main() {
     if std::env::var("TRICKY_GATETEST").is_ok() {
         // line six riders up as a race does and see who gets away
         let mut field = make_opponents(loaded.start, loaded.yaw, 0, 12, 5, 0);
-        field.0.push(Opponent { rider: Rider::new(loaded.start + Vec3::Y * 0.5, loaded.yaw), driver: AiDriver::new(0.0, 0.9), character: 0, board: 0, stat_bytes: None, init_attitude: None, grudge: None, taunt_wait: 1.0, port: Default::default(), draw: DrawLerp::default() });
+        field.0.push(Opponent { rider: Rider::new(loaded.start + Vec3::Y * 0.5, loaded.yaw), driver: AiDriver::new(0.0, 0.9), character: 0, gate: 1, board: 0, stat_bytes: None, init_attitude: None, grudge: None, taunt_wait: 1.0, port: Default::default(), draw: DrawLerp::default() });
         println!("start {:.1?} yaw {:.2} line[0] {:.1?} line[1] {:.1?}", loaded.start, loaded.yaw, loaded.line[0], loaded.line[1]);
         let from: Vec<Vec3> = field.0.iter().map(|o| o.rider.pos).collect();
         let (mut t, dt) = (0.0f32, 1.0 / 120.0);
@@ -2040,6 +2044,28 @@ fn ride(
         } else if let Some(rivals) = game.rivals {
             let i = row_of(d);
             o.rider.stats.bytes = tricky_game::stats::ai_bytes(&tricky_game::stats::BASE[i], &tricky_game::stats::CAPS[i], Some(rivals[i]), game.master);
+        }
+    }
+    // the start gate's places (`cAI::vf14` 0x111108 -> `cBoarder::vf8` 0x116ab8, `aiglue::gate_place`): rider k of
+    // the race on the `.aip`'s start path k + (6 - riders) / 2, stepped back by its size; each rider put there once
+    // (its spawn moved), before the countdown's gate code runs on it
+    if race.0.state == RaceState::Countdown && !is_tutorial {
+        let n = opponents.0.len() + 1;
+        let mine = (0..n).find(|g| !opponents.0.iter().any(|o| o.gate == *g)).unwrap_or(0);
+        let (paths, starts) = (&race.0.ai_paths, &race.0.ai_start_paths);
+        let mut put = |rr: &mut Rider, gate: usize| {
+            if let Some(at) = tricky_game::aiglue::gate_place(paths, starts, gate, n, rr.stats.scale) {
+                if rr.spawn.0.distance(at.0) > 0.01 || (rr.spawn.1 - at.1).abs() > 1e-4 {
+                    rr.spawn = at;
+                    rr.respawn(at);
+                    // standing in the gate, not moving off as a reset's respawn does (`cBoarder::vf8` sets no speed)
+                    rr.vel = Vec3::ZERO;
+                }
+            }
+        };
+        put(r, mine);
+        for o in opponents.0.iter_mut() {
+            put(&mut o.rider, o.gate);
         }
     }
     if game.screen == ui::Screen::Menu {
