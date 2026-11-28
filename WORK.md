@@ -42,6 +42,7 @@ state machine and the renderer are ours. Nothing has been checked against the or
 | E8a | Air: `Air_IntegrateRK4` 0x12b340, `AirPredict_AtTakeoff` 0x123b10, landing `Air_MotionUpdate` 0x108378, `Landing_CheckAngles` 0x12ba78, `Landing_ChooseState` 0x109308 | any | F4a | | [repo] Ported, unchecked Split: E8a1, E8a2 |
 | E9 | Script machine: `TriggerScript_Run`, `TriggerScript_ExecOp` 0x13bfd0 with every op, controllers (`TriggerScript_Op0_SpawnController` 0x13c600), persistent cell scripts, run at runtime instead of read statically | unowned | E3c | | [repo] `logic.rs` reads SSFLogic.json statically today |
 | E11 | Camera: named cameras `cBxCamera_EvalNamedCam` 0x174888 (ported), director scripts `cBxCamera_RunDirectorScript`, replay and finish cameras, camera collision | any | | | [repo] Chase cam ported in `rider.rs`; free camera is ours (keep, tag) |
+| E11k | Split of E11: the 29 `ported` `camera` functions: marked `checked` where a runner test already compares them with the game's code, the rest (`CamAnimFrame_Create` 0x1482c0, `CamAnim_SetShot` 0x148350, `Cml_LoadIfExists` 0x16e4c0, `Camera_StartCutFade` 0x174c30, the CML name getters 0x178310..0x178330, `Camera_LoadCmlFiles` 0x1783e8, ...) checked bit-for-bit in the runner | any | | irregulur/lynx (2026-11-28) | Split of E11 |
 
 ## P2 Gameplay systems
 
@@ -2057,3 +2058,4 @@ matches the original.
 - 2026-11-28 irregulur/neon: added and claimed G7x (split of G7).
 - 2026-11-28 irregulur/lynx: added and claimed E12j (split of E12).
 - 2026-11-28 irregulur/lynx: E12j done (the 68 `ported` `save` functions checked: 25 ported in `memcard.rs` and runner-checked in `tests/save_ops.rs`, 43 already runner-compared and marked; unindexed `MemCardOp_IsFailed` 0x1d21b0 added; `ported` down to 839).
+- 2026-11-28 irregulur/lynx: added and claimed E11k (split of E11).
