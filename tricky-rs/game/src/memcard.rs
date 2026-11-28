@@ -1477,3 +1477,434 @@ pub fn static_init_memcard(m: &mut Mem) {
     crate::copies::rand_init(m, MEMCARD_RAND_A);
     crate::copies::rand_init(m, MEMCARD_RAND_B);
 }
+
+// Row E12j: the rest of the memory card overlay's small functions and the card system's helpers.
+
+/// `cMCOverlayManager`'s vtable (`0x392238`), written by its constructor and destructor
+pub const MC_OVERLAY_VT: u32 = 0x392238;
+/// `cSaveOverlay`'s vtable (`0x38f9b0`) and the construction vtable of its virtual base (`0x38f918`, 0x98 bytes)
+pub const SAVE_OVERLAY_VT: u32 = 0x38f9b0;
+pub const SAVE_OVERLAY_BASE_VT: u32 = 0x38f918;
+/// `"BASLUS-20326"` (`0x392188`, 13 bytes with its NUL), `"REP"` (`0x392198`) and `"SET"` (`0x3921a0`)
+pub const GAME_CODE: u32 = 0x392188;
+pub const TAG_REP: u32 = 0x392198;
+pub const TAG_SET: u32 = 0x3921a0;
+/// `"%s %d %s"` (`0x392178`, `MCSlot_GetLabel`) and `"%s\%s"` (`0x3921a8`, `MemCardUI_SetMessage`)
+pub const SLOT_LABEL_FMT: u32 = 0x392178;
+pub const MESSAGE_FMT: u32 = 0x3921a8;
+pub const EAMEM_SET: u32 = 0x2cc808;
+pub const EAMEM_ALLOC: u32 = 0x2ccf70;
+/// `EAMem_Alloc`'s pool for the card system (`0x3a4268`)
+pub const MEMCARD_POOL: u32 = 0x3a4268;
+pub const MEMCARD_CTOR: u32 = 0x23d908;
+pub const OBJECT_DELETE: u32 = 0x23d738;
+pub const BACKDROP_OVERLAY_INIT: u32 = 0x1a8900;
+pub const WSTR_COUNT: u32 = 0x17cc48;
+pub const WSTR_FORMAT_ASCII: u32 = 0x17ce70;
+
+/// `cSelectNextEventOverlay::vf55_1cee28` 0x1cee28(o, mode): the overlay's mode (+4); mode 1 also restarts the
+/// timer (+0x44 = 60) and the blink (+0x4c = 1.0, +0x50 = 0.0167)
+pub fn mc_overlay_set_mode(m: &mut Mem, o: u32, mode: u32) {
+    m.w32(o + 4, mode);
+    if mode == 1 {
+        m.w32(o + 0x44, 0x3c);
+        m.w32(o + 0x4c, 0x3f80_0000);
+        m.w32(o + 0x50, 0x3c88_8f86);
+    }
+}
+
+/// `cMCOverlayManager::cMCOverlayManager` 0x1ce490(o): the vtable at +0x428, mode 1 ([`mc_overlay_set_mode`]),
+/// every flag, count and the state cleared, the blink at 1.0 / 0.0167, the slot table (+0x168, 0xb0 bytes) and the
+/// message (+0xd8, 0x42 bytes) zeroed, no slot count (+0x218 = -1), the card wait at 5, no card system, and the
+/// one-shot save flag (`0x33efbc`) cleared; returns `o`
+pub fn mc_overlay_manager_new(m: &mut Mem, e: &mut dyn FeEnv, o: u32) -> u32 {
+    m.w32(o + 8, 0);
+    m.w32(o + 0x428, MC_OVERLAY_VT);
+    m.w32(o, 1);
+    mc_overlay_set_mode(m, o, 1);
+    m.w32(o + 0x54, 0);
+    m.w32(o + 0x38, 0);
+    m.w32(o + 0x48, 0);
+    m.w32(o + 0x40, 0);
+    m.w32(o + 0x44, 0);
+    for off in [0xc, 0x10, 0x14, 0x18, 0x1c, 0x30, 0x28, 0x24, 0x20, 0x2c, 0x3c] {
+        m.w32(o + off, 0);
+    }
+    m.w32(o + 0x4c, 0x3f80_0000);
+    m.w32(o + 0x50, 0x3c88_8f86);
+    m.w32(o + 0x218, u32::MAX);
+    e.call(m, EAMEM_SET, &[o + 0x168, 0, 0xb0]);
+    m.w32(o + 0x21c, 0);
+    m.w32(o + 0x220, 0);
+    e.call(m, EAMEM_SET, &[o + 0xd8, 0, 0x42]);
+    m.w32(o + 0x164, 0);
+    m.w32(o + 0x160, 5);
+    m.w32(o + 0x15c, 0);
+    m.w32(o + 0x224, 0);
+    m.w32(MC_SAVE_FLAG, 0);
+    o
+}
+
+/// `cMCOverlayManager::~cMCOverlayManager` 0x1ce580(o, flags): the vtable back, the one-shot save flag cleared,
+/// and `Mem_Delete(o)` (0x114f80) when `flags & 1`
+pub fn mc_overlay_manager_drop(m: &mut Mem, e: &mut dyn FeEnv, o: u32, flags: u32) {
+    m.w32(o + 0x428, MC_OVERLAY_VT);
+    m.w32(MC_SAVE_FLAG, 0);
+    if flags & 1 != 0 {
+        e.call(m, MEM_DELETE, &[o, 1]);
+    }
+}
+
+/// `SaveOverlay_Init` 0x1b8568(o, whole; sp on entry): the save overlay. With `whole` its virtual base is its own
+/// (+0x42c = o + 0x438, `BackdropOverlay_Init(o + 0x438, whole)`); then `cMCOverlayManager`'s constructor; the base's
+/// vtable (+0x28 of the base) is the construction vtable `0x38f918`, or, without `whole`, a copy of it in the frame
+/// (0x98 bytes at sp - 0xd0) with its first offset (+8, a halfword) moved by `o + 0x438 - base`, left pointing into
+/// the dead frame; last its own vtable (+0x428 = `0x38f9b0`) and +0x434 = 0x1c2. Returns `o`
+pub fn save_overlay_init(m: &mut Mem, e: &mut dyn FeEnv, o: u32, whole: u32, sp: u32) -> u32 {
+    if whole != 0 {
+        m.w32(o + 0x42c, o + 0x438);
+        e.call(m, BACKDROP_OVERLAY_INIT, &[o + 0x438, whole]);
+    }
+    mc_overlay_manager_new(m, e, o);
+    let base = m.r32(o + 0x42c);
+    m.w32(base + 0x28, SAVE_OVERLAY_BASE_VT);
+    if whole == 0 {
+        let frame = sp.wrapping_sub(0xd0);
+        for k in (0..0x98).step_by(4) {
+            let v = m.r32(SAVE_OVERLAY_BASE_VT + k);
+            m.w32(frame + k, v);
+        }
+        let first = m.r16(SAVE_OVERLAY_BASE_VT + 8);
+        let delta = o.wrapping_sub(base.wrapping_sub(0x438));
+        m.w32(base + 0x28, frame);
+        m.w16(frame + 8, first.wrapping_add(delta as u16));
+    }
+    m.w32(o + 0x428, SAVE_OVERLAY_VT);
+    m.w32(o + 0x434, 0x1c2);
+    o
+}
+
+/// `MemCard_Create` 0x23d6e0(): the card system: 0x500 bytes from `EAMem_Alloc(0x3a4268, 0x500, 16)`, filled with
+/// 0xdeadc0de when given, then `cPS2MemCard::cPS2MemCard` (0x23d908, also on a null block); returns what it returns
+pub fn memcard_create(m: &mut Mem, e: &mut dyn FeEnv) -> u32 {
+    let p = e.call(m, EAMEM_ALLOC, &[MEMCARD_POOL, 0x500, 0x10]);
+    if p != 0 {
+        e.call(m, EAMEM_SET, &[p, 0xdead_c0de, 0x500]);
+    }
+    e.call(m, MEMCARD_CTOR, &[p])
+}
+
+/// `MemCardOp_Create` 0x1cee68(o): the card system from [`memcard_create`] at +0x224, the blink at 1.0 / 0.0167, +0x40
+/// cleared
+pub fn memcard_op_create(m: &mut Mem, e: &mut dyn FeEnv, o: u32) {
+    let c = memcard_create(m, e);
+    m.w32(o + 0x224, c);
+    m.w32(o + 0x50, 0x3c88_8f86);
+    m.w32(o + 0x4c, 0x3f80_0000);
+    m.w32(o + 0x40, 0);
+}
+
+/// `MemCardOp_Destroy` 0x1ceeb0(o): `Object_Delete` (0x23d738) on the card system, and +0x224 cleared
+pub fn memcard_op_destroy(m: &mut Mem, e: &mut dyn FeEnv, o: u32) {
+    let c = m.r32(o + 0x224);
+    e.call(m, OBJECT_DELETE, &[c]);
+    m.w32(o + 0x224, 0);
+}
+
+/// `MCOverlay_SetSaveBytes` 0x1ce730 and `MemCardOp_Begin` 0x1ce8b0 (the same code) (o, size): the card system's
+/// virtual at +0x80 with `size`, and the size at +0x30
+pub fn mc_overlay_set_save_bytes(m: &mut Mem, e: &mut dyn FeEnv, o: u32, size: u32) {
+    let card = m.r32(o + 0x224);
+    vcall_slot(m, e, card, 0, 0x80, &[size]);
+    m.w32(o + 0x30, size);
+}
+
+/// `MCOverlay_BeginLoad` 0x1ce6b8(o, a1, a2, a3): the card system's virtual at +0xb8 with `(a1, a2, a3)`, and `a3`
+/// (the byte count) at +0x28
+pub fn mc_overlay_begin_load(m: &mut Mem, e: &mut dyn FeEnv, o: u32, a1: u32, a2: u32, a3: u32) {
+    let card = m.r32(o + 0x224);
+    vcall_slot(m, e, card, 0, 0xb8, &[a1, a2, a3]);
+    m.w32(o + 0x28, a3);
+}
+
+/// `MemCardOp_StartWrite` 0x1d1d80(o, a1, a2, a3): the one-shot save flag set, the card system's virtual at +0xf0
+/// with `(a1, a2, a3)`, and `a3` at +0x24
+pub fn memcard_op_start_write(m: &mut Mem, e: &mut dyn FeEnv, o: u32, a1: u32, a2: u32, a3: u32) {
+    m.w32(MC_SAVE_FLAG, 1);
+    let card = m.r32(o + 0x224);
+    vcall_slot(m, e, card, 0, 0xf0, &[a1, a2, a3]);
+    m.w32(o + 0x24, a3);
+}
+
+/// `MCOverlay_SaveMore` 0x1d1f18(o, data, n): the one-shot save flag set, +0x24 += n, the card system's virtual at
+/// +0x110 with `(data, n)`
+pub fn mc_overlay_save_more(m: &mut Mem, e: &mut dyn FeEnv, o: u32, data: u32, n: u32) {
+    m.w32(MC_SAVE_FLAG, 1);
+    let v = m.r32(o + 0x24).wrapping_add(n);
+    m.w32(o + 0x24, v);
+    let card = m.r32(o + 0x224);
+    vcall_slot(m, e, card, 0, 0x110, &[data, n]);
+}
+
+/// `MCOverlay_LoadMore` 0x1d1fd0(o, data, n): +0x28 += n, the card system's virtual at +0xc0 with `(data, n)`
+pub fn mc_overlay_load_more(m: &mut Mem, e: &mut dyn FeEnv, o: u32, data: u32, n: u32) {
+    let v = m.r32(o + 0x28).wrapping_add(n);
+    m.w32(o + 0x28, v);
+    let card = m.r32(o + 0x224);
+    vcall_slot(m, e, card, 0, 0xc0, &[data, n]);
+}
+
+/// `MCOverlay_Draw` 0x1cf628(o): [`mc_overlay_draw_state`] in mode 0, nothing otherwise
+pub fn mc_overlay_draw(m: &mut Mem, e: &mut dyn FeEnv, o: u32) {
+    if m.r32(o + 4) == 0 {
+        mc_overlay_draw_state(m, e, o);
+    }
+}
+
+/// `MemCardUI_GetSlotCount` 0x1d1eb8(o): the smaller of +0x2c and the card system's count (virtual +0x1d0, asked
+/// twice when it is the smaller)
+pub fn memcard_ui_get_slot_count(m: &mut Mem, e: &mut dyn FeEnv, o: u32) -> u32 {
+    let card = m.r32(o + 0x224);
+    let n = vcall_slot(m, e, card, 0, 0x1d0, &[]);
+    let mine = m.r32(o + 0x2c);
+    if (mine as i32) < (n as i32) {
+        return mine;
+    }
+    let card = m.r32(o + 0x224);
+    vcall_slot(m, e, card, 0, 0x1d0, &[])
+}
+
+/// `MemCardOp_IsDone` 0x1d21a0(o): the op has finished (state 1)
+pub fn memcard_op_is_done(m: &Mem, o: u32) -> u32 {
+    (m.r32(o + 0x54) == 1) as u32
+}
+
+/// `MemCardOp_IsFailed` 0x1d21b0(o) (not in Ghidra's function list): the op ended without the card's done flag
+/// (state 0x21, set by the state machine's states 31 and 32)
+pub fn memcard_op_is_failed(m: &Mem, o: u32) -> u32 {
+    (m.r32(o + 0x54) == 0x21) as u32
+}
+
+/// `MemCardOp_GetResult` 0x1d21c0(o): the op's result (+0x20)
+pub fn memcard_op_get_result(m: &Mem, o: u32) -> u32 {
+    m.r32(o + 0x20)
+}
+
+/// `cMCOverlayManager::vf47_1d21c8` 0x1d21c8(o): the file cursor (+0x21c) one down the list of +0x218, wrapping to
+/// 0 when +0x3c allows it
+pub fn mc_overlay_vf47(m: &mut Mem, o: u32) {
+    let last = m.r32(o + 0x218).wrapping_sub(1) as i32;
+    let cur = m.r32(o + 0x21c) as i32;
+    if cur < last {
+        m.w32(o + 0x21c, cur.wrapping_add(1) as u32);
+    } else if m.r32(o + 0x3c) != 0 {
+        m.w32(o + 0x21c, 0);
+    }
+}
+
+/// `cMCOverlayManager::vf48_1d2200` 0x1d2200(o): the file cursor (+0x21c) one up, wrapping to the last (+0x218 - 1)
+/// when +0x3c allows it
+pub fn mc_overlay_vf48(m: &mut Mem, o: u32) {
+    let cur = m.r32(o + 0x21c) as i32;
+    if cur > 0 {
+        m.w32(o + 0x21c, cur.wrapping_sub(1) as u32);
+    } else if m.r32(o + 0x3c) != 0 {
+        let v = m.r32(o + 0x218).wrapping_sub(1);
+        m.w32(o + 0x21c, v);
+    }
+}
+
+/// `cMCOverlayManager::vf51_1d2230` 0x1d2230(o): the slot (+0x38) one up, wrapping to the last
+/// ([`memcard_ui_get_slot_count`] - 1) when +0x3c allows it
+pub fn mc_overlay_vf51(m: &mut Mem, e: &mut dyn FeEnv, o: u32) {
+    let cur = m.r32(o + 0x38) as i32;
+    if cur > 0 {
+        m.w32(o + 0x38, cur.wrapping_sub(1) as u32);
+    } else if m.r32(o + 0x3c) != 0 {
+        let v = memcard_ui_get_slot_count(m, e, o).wrapping_sub(1);
+        m.w32(o + 0x38, v);
+    }
+}
+
+/// `cMCOverlayManager::vf50_1d2278` 0x1d2278(o): the slot (+0x38) one down ([`memcard_ui_get_slot_count`]),
+/// wrapping to 0 when +0x3c allows it
+pub fn mc_overlay_vf50(m: &mut Mem, e: &mut dyn FeEnv, o: u32) {
+    let last = memcard_ui_get_slot_count(m, e, o).wrapping_sub(1) as i32;
+    let cur = m.r32(o + 0x38) as i32;
+    if cur < last {
+        m.w32(o + 0x38, cur.wrapping_add(1) as u32);
+    } else if m.r32(o + 0x3c) != 0 {
+        m.w32(o + 0x38, 0);
+    }
+}
+
+fn copy_bytes(m: &mut Mem, dst: u32, src: u32, n: u32) {
+    for k in 0..n {
+        let b = m.r8(src + k);
+        m.w8(dst + k, b);
+    }
+}
+
+/// `Save_GetGameCode` 0x1d2f60(dst): `"BASLUS-20326"` and its NUL (13 bytes, from 0x392188)
+pub fn save_get_game_code(m: &mut Mem, dst: u32) {
+    copy_bytes(m, dst, GAME_CODE, 13);
+}
+
+/// `MemCard_WriteTagREP` 0x1d2fa0(dst): `"REP"` and its NUL (from 0x392198)
+pub fn memcard_write_tag_rep(m: &mut Mem, dst: u32) {
+    copy_bytes(m, dst, TAG_REP, 4);
+}
+
+/// `MemCard_WriteTagSET` 0x1d2fc8(dst): `"SET"` and its NUL (from 0x3921a0)
+pub fn memcard_write_tag_set(m: &mut Mem, dst: u32) {
+    copy_bytes(m, dst, TAG_SET, 4);
+}
+
+/// `MCSlot_GetLabel` 0x1d2d50(c, slot, out): a card slot's line (the card system's slot records, 0x58 bytes from
+/// +0x168): no card (+0x174 or +0x168 zero) string 0x16e, unformatted (+0x16c zero) string 0x180, nothing when +0x170
+/// is zero, else `WStr_FormatAscii(out, "%s %d %s", name, +0x178, string 0x17a)` with the slot's name (+0x17c) or,
+/// when empty (`WStr_Count`), string 0x186
+pub fn mc_slot_get_label(m: &mut Mem, e: &mut dyn FeEnv, c: u32, slot: u32, out: u32) {
+    let s = c.wrapping_add(slot.wrapping_mul(0x58));
+    if m.r32(s + 0x174) == 0 || m.r32(s + 0x168) == 0 {
+        let t = loc(m, e, 0x16e);
+        e.call(m, WSTR_COPY, &[out, t]);
+        return;
+    }
+    if m.r32(s + 0x16c) == 0 {
+        let t = loc(m, e, 0x180);
+        e.call(m, WSTR_COPY, &[out, t]);
+        return;
+    }
+    if m.r32(s + 0x170) == 0 {
+        return;
+    }
+    let mut name = s + 0x17c;
+    if e.call(m, WSTR_COUNT, &[name]) == 0 {
+        name = loc(m, e, 0x186);
+    }
+    let t = loc(m, e, 0x17a);
+    let n = m.r32(s + 0x178);
+    e.call(m, WSTR_FORMAT_ASCII, &[out, SLOT_LABEL_FMT, name, n, t]);
+}
+
+/// `MemCardUI_SetMessage` 0x1d2fe8(o, out, size): the overlay's message for its state (+0x54, jump table 0x3921b0,
+/// states 2..=34): a string (`WStr_Copy`), a string formatted with the port number (the card system's +0x20, plus 1),
+/// the file's name (+0xd8) or a flag (`WStr_Format`), or two strings joined by `"%s\%s"` (`WStr_FormatAscii`); some
+/// clear `out` first (`EAMem_Set(out, 0, size * 2)`); states 7, 8, 19, 26, 28, 33 and the rest leave it
+pub fn memcard_ui_set_message(m: &mut Mem, e: &mut dyn FeEnv, o: u32, out: u32, size: u32) {
+    let card = |m: &mut Mem| m.r32(o + 0x224);
+    let port = |m: &mut Mem, e: &mut dyn FeEnv| {
+        let c = card(m);
+        vcall_slot(m, e, c, 0, 0x20, &[]).wrapping_add(1)
+    };
+    let copy = |m: &mut Mem, e: &mut dyn FeEnv, id: u32| {
+        let t = loc(m, e, id);
+        e.call(m, WSTR_COPY, &[out, t]);
+    };
+    let fmt = |m: &mut Mem, e: &mut dyn FeEnv, t: u32, args: &[u32]| {
+        let mut a = vec![out, t];
+        a.extend_from_slice(args);
+        e.call(m, WSTR_FORMAT, &a);
+    };
+    let fmt_port = |m: &mut Mem, e: &mut dyn FeEnv, id: u32| {
+        let t = loc(m, e, id);
+        let p = port(m, e);
+        fmt(m, e, t, &[p]);
+    };
+    let join = |m: &mut Mem, e: &mut dyn FeEnv, a: u32, b: u32| {
+        let x = loc(m, e, a);
+        let y = loc(m, e, b);
+        e.call(m, WSTR_FORMAT_ASCII, &[out, MESSAGE_FMT, x, y]);
+    };
+    let clear = |m: &mut Mem, e: &mut dyn FeEnv| {
+        e.call(m, EAMEM_SET, &[out, 0, size << 1]);
+    };
+    let ask = |m: &mut Mem, e: &mut dyn FeEnv, slot: u32| {
+        let c = card(m);
+        vcall_slot(m, e, c, 0, slot, &[])
+    };
+    match m.r32(o + 0x54) {
+        2 | 3 => copy(m, e, 0x40),
+        4 | 5 => {
+            let t = loc(m, e, 0x18a);
+            fmt(m, e, t, &[1]);
+        }
+        6 => {
+            if ask(m, e, 0x1a0) != 0 {
+                fmt_port(m, e, 0x1a0);
+            } else {
+                copy(m, e, 0x1a1);
+            }
+        }
+        9 => {
+            let t = loc(m, e, 0x194);
+            fmt(m, e, t, &[o + 0xd8]);
+        }
+        10 => fmt_port(m, e, 0x163),
+        11 => {
+            clear(m, e);
+            fmt_port(m, e, 0x168);
+        }
+        12 => {
+            if ask(m, e, 0x170) == 0 {
+                if ask(m, e, 0x150) != 0 {
+                    fmt_port(m, e, 0x166);
+                } else {
+                    join(m, e, 0x166, 0x19a);
+                }
+            } else if ask(m, e, 0x160) != 0 {
+                join(m, e, 0x166, 0xde3);
+            } else {
+                copy(m, e, 0x166);
+            }
+        }
+        13..=18 => {
+            let t = loc(m, e, 0x1c3);
+            fmt(m, e, t, &[o + 0xd8]);
+        }
+        20 => {
+            if ask(m, e, 0x170) == 0 && ask(m, e, 0x150) == 0 {
+                join(m, e, 0x1c0, 0x19a);
+            } else {
+                copy(m, e, 0x1c0);
+            }
+        }
+        21 | 22 => {
+            let t = loc(m, e, 0x1ce);
+            let p = port(m, e);
+            let c = card(m);
+            let free = vcall_slot(m, e, c, 0, 0xa0, &[]);
+            fmt(m, e, t, &[p, free]);
+        }
+        23 => {
+            let t = loc(m, e, 0x15a);
+            fmt(m, e, t, &[o + 0xd8]);
+        }
+        24 | 25 => {
+            clear(m, e);
+            let t = loc(m, e, 0x15c);
+            fmt(m, e, t, &[o + 0xd8]);
+        }
+        27 => {
+            if ask(m, e, 0x170) == 0 {
+                join(m, e, 0x159, 0x19a);
+            } else {
+                fmt_port(m, e, 0x159);
+            }
+        }
+        29..=32 => {
+            clear(m, e);
+            let t = loc(m, e, 0x17c);
+            fmt(m, e, t, &[o + 0xd8]);
+        }
+        34 => {
+            if ask(m, e, 0x170) == 0 {
+                join(m, e, 0x174, 0x19a);
+            } else {
+                copy(m, e, 0x174);
+            }
+        }
+        _ => {}
+    }
+}

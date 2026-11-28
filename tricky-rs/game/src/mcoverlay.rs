@@ -83,7 +83,7 @@ const C74: u32 = 0x74;
 const O_CONFIRM: u32 = 0x1ac;
 const O_CANCEL: u32 = 0x1b4;
 
-/// 0x1d3818: the slot's status record (0x58 bytes a slot from +0x168): four flags set, then the ones that apply
+/// `MCOverlay_ReadSlotStatus` 0x1d3818: the slot's status record (0x58 bytes a slot from +0x168): four flags set, then the ones that apply
 /// cleared, and a formatted card with room reads the slot's header into the record.
 fn read_slot_status(c: &mut Cx) {
     let off = c.r(0x220).wrapping_mul(0x58);
@@ -115,7 +115,7 @@ fn read_slot_status(c: &mut Cx) {
     }
 }
 
-/// 0x1cfbc8: choose the state from the card (`flag` allows the move to 6).
+/// `MCOverlay_PickStateFromCard` 0x1cfbc8: choose the state from the card (`flag` allows the move to 6).
 fn pick_state(c: &mut Cx, flag: bool) {
     if c.card(HAS_CARD) == 0 {
         if c.card(CARD_ERR) == 0 {
@@ -171,7 +171,7 @@ fn pad_long(c: &mut Cx, s_b: u32, s_x: u32, s_a: u32) {
     }
 }
 
-// state 2 (0x1cf8d0)
+// state 2 (`MCOverlay_WaitTimer` 0x1cf8d0)
 fn st_wait_timer(c: &mut Cx) {
     let t = c.r(0x44) as i32;
     c.w(0x44, t.wrapping_sub(1) as u32);
@@ -180,7 +180,7 @@ fn st_wait_timer(c: &mut Cx) {
     }
 }
 
-// state 3 (0x1cf918)
+// state 3 (`MCOverlay_CheckCard` 0x1cf918)
 fn st_check_card(c: &mut Cx) {
     if c.card(BUSY) != 0 {
         return;
@@ -206,7 +206,7 @@ fn st_check_card(c: &mut Cx) {
     }
 }
 
-// state 4 (0x1cfaa8)
+// state 4 (`MCOverlay_State02` 0x1cfaa8)
 fn st_02(c: &mut Cx) {
     if c.card(BUSY) == 0 {
         if !c.flag(0x33efc0) {
@@ -234,7 +234,7 @@ fn st_02(c: &mut Cx) {
     }
 }
 
-// state 5 (0x1cfcf8)
+// state 5 (`MCOverlay_State03` 0x1cfcf8)
 fn st_03(c: &mut Cx) {
     if c.card(BUSY) == 0 {
         if !c.flag(0x33efc8) {
@@ -275,7 +275,7 @@ fn st_03(c: &mut Cx) {
     }
 }
 
-// state 6 (0x1cfee0)
+// state 6 (`MCOverlay_State04` 0x1cfee0)
 fn st_04(c: &mut Cx) {
     let t = c.r(0x44) as i32;
     c.w(0x44, t.wrapping_sub(1) as u32);
@@ -325,7 +325,7 @@ fn st_04(c: &mut Cx) {
     }
 }
 
-// state 7 (0x1d0a38)
+// state 7 (`MCOverlay_State05` 0x1d0a38)
 fn st_05(c: &mut Cx) {
     if c.r(0x15c) != 0 {
         pad_long(c, 0x33efe4, 0x33efe8, 0x33efec);
@@ -400,7 +400,7 @@ fn st_05(c: &mut Cx) {
     pad_long(c, 0x33efe4, 0x33efe8, 0x33efec);
 }
 
-// state 9 (0x1d1c30)
+// state 9 (`MCOverlay_State07` 0x1d1c30)
 fn st_07(c: &mut Cx) {
     if c.r(0x15c) == 0 {
         if c.card(HAS_CARD) == 0 {
@@ -430,7 +430,7 @@ fn st_07(c: &mut Cx) {
     c.set(7);
 }
 
-// state 10 (0x1d0150)
+// state 10 (`MCOverlay_State08` 0x1d0150)
 fn st_08(c: &mut Cx) {
     if c.r(0x15c) == 0 {
         if c.card(HAS_CARD) == 0 {
@@ -456,7 +456,7 @@ fn st_08(c: &mut Cx) {
     c.set(7);
 }
 
-// state 11 (0x1d0240)
+// state 11 (`MCOverlay_State09` 0x1d0240)
 fn st_09(c: &mut Cx) {
     let t = c.r(0x44) as i32;
     c.w(0x44, t.wrapping_sub(1) as u32);
@@ -469,7 +469,7 @@ fn st_09(c: &mut Cx) {
     }
 }
 
-// state 12 (0x1d02e8)
+// state 12 (`MCOverlay_State10` 0x1d02e8)
 fn st_10(c: &mut Cx) {
     let p = c.pad();
     if p & 0x880 != 0 {
@@ -478,7 +478,7 @@ fn st_10(c: &mut Cx) {
     }
 }
 
-// state 13 (0x1d06a8)
+// state 13 (`MCOverlay_State11` 0x1d06a8)
 fn st_11(c: &mut Cx) {
     let s = c.slot_arg();
     if c.card1(C1CC, s) == 0 {
@@ -491,7 +491,7 @@ fn st_11(c: &mut Cx) {
     c.set(0xe);
 }
 
-// state 14 and 15 (0x1d0740, 0x1d07d8)
+// state 14 and 15 (`MCOverlay_State12` 0x1d0740, `MCOverlay_State13` 0x1d07d8)
 fn st_done_or(c: &mut Cx, next: u32) {
     if c.card(BUSY) == 0 {
         if c.card(OP_DONE) == 0 {
@@ -508,13 +508,13 @@ fn progress(c: &mut Cx) {
     c.w(0x48, (F(a) / F(b)).0.to_bits());
 }
 
-// state 16 (0x1d0870)
+// state 16 (`MCOverlay_State14` 0x1d0870)
 fn st_14(c: &mut Cx) {
     progress(c);
     c.set(0x11);
 }
 
-// 0x1d1f60
+// `MCOverlay_CancelSave` 0x1d1f60
 fn fail_save(c: &mut Cx) {
     c.setflag(0x33efbc, 0);
     c.card(0x12c);
@@ -522,7 +522,7 @@ fn fail_save(c: &mut Cx) {
     c.owner(0x3c);
 }
 
-// state 17 (0x1d08b8)
+// state 17 (`MCOverlay_State15` 0x1d08b8)
 fn st_15(c: &mut Cx) {
     let t = c.r(0x44) as i32;
     c.w(0x44, t.wrapping_sub(1) as u32);
@@ -548,7 +548,7 @@ fn st_15(c: &mut Cx) {
     }
 }
 
-// state 18 (0x1d0f20)
+// state 18 (`MCOverlay_State16` 0x1d0f20)
 fn st_16(c: &mut Cx) {
     if c.card(BUSY) == 0 {
         if (c.r(0x44) as i32) < 1 {
@@ -566,7 +566,7 @@ fn st_16(c: &mut Cx) {
     }
 }
 
-// state 19 (0x1d05f8)
+// state 19 (`MCOverlay_State17` 0x1d05f8)
 fn st_17(c: &mut Cx) {
     let p = c.pad();
     if p & 0x80 == 0 {
@@ -580,7 +580,7 @@ fn st_17(c: &mut Cx) {
     }
 }
 
-// state 20 and 34 (0x1d0358, 0x1d0ff0): wait for the card, then back to 6 after a press
+// state 20 and 34 (`MCOverlay_State18` 0x1d0358, `MCOverlay_State32` 0x1d0ff0): wait for the card, then back to 6 after a press
 fn st_wait_press(c: &mut Cx, flag: u32) {
     if c.card(BUSY) == 0 && c.flag(flag) {
         c.setflag(flag, 0);
@@ -595,7 +595,7 @@ fn st_wait_press(c: &mut Cx, flag: u32) {
     }
 }
 
-// state 21 (0x1d0420)
+// state 21 (`MCOverlay_State19` 0x1d0420)
 fn st_19(c: &mut Cx) {
     if c.card(BUSY) == 0 {
         c.setflag(0x33efd8, 0);
@@ -609,7 +609,7 @@ fn st_19(c: &mut Cx) {
     }
 }
 
-// state 22 (0x1d04d8)
+// state 22 (`MCOverlay_State20` 0x1d04d8)
 fn st_20(c: &mut Cx) {
     if c.card(BUSY) == 0 {
         if !c.flag(0x33efe0) {
@@ -637,7 +637,7 @@ fn st_20(c: &mut Cx) {
     }
 }
 
-// state 23 (0x1d17c8)
+// state 23 (`MCOverlay_State21` 0x1d17c8)
 fn st_21(c: &mut Cx) {
     if c.card(BUSY) == 0 {
         if c.card(HAS_CARD) == 0 {
@@ -675,7 +675,7 @@ fn st_21(c: &mut Cx) {
     }
 }
 
-// state 24 (0x1d1978)
+// state 24 (`MCOverlay_State22` 0x1d1978)
 fn st_22(c: &mut Cx) {
     if c.card(BUSY) == 0 {
         if c.card(OP_DONE) == 0 {
@@ -686,7 +686,7 @@ fn st_22(c: &mut Cx) {
     }
 }
 
-// state 25 (0x1d1ac0)
+// state 25 (`MCOverlay_State23` 0x1d1ac0)
 fn st_23(c: &mut Cx) {
     if (c.r(0x44) as i32) < 1 {
         if c.card(BUSY) != 0 {
@@ -711,7 +711,7 @@ fn st_23(c: &mut Cx) {
     }
 }
 
-// state 26 (0x1d1bc0)
+// state 26 (`MCOverlay_State24` 0x1d1bc0)
 fn st_24(c: &mut Cx) {
     let p = c.pad();
     if p & 0x880 != 0 {
@@ -720,7 +720,7 @@ fn st_24(c: &mut Cx) {
     }
 }
 
-// state 27 (0x1d1a10)
+// state 27 (`MCOverlay_State25` 0x1d1a10)
 fn st_25(c: &mut Cx) {
     if c.card(BUSY) == 0 && c.flag(0x33f008) {
         c.setflag(0x33f008, 0);
@@ -734,7 +734,7 @@ fn st_25(c: &mut Cx) {
     }
 }
 
-// state 28 (0x1d1498)
+// state 28 (`MCOverlay_State26` 0x1d1498)
 fn st_26(c: &mut Cx) {
     if c.r(0x15c) != 0 {
         pad_long(c, 0x33eff4, 0x33eff8, 0x33effc);
@@ -778,7 +778,7 @@ fn st_26(c: &mut Cx) {
     pad_long(c, 0x33eff4, 0x33eff8, 0x33effc);
 }
 
-// state 29 (0x1d1268)
+// state 29 (`MCOverlay_State27` 0x1d1268)
 fn st_27(c: &mut Cx) {
     if c.card(OP_DONE) == 0 {
         c.set(0x1e);
@@ -788,14 +788,14 @@ fn st_27(c: &mut Cx) {
     }
 }
 
-// 0x1d2010
+// `MCOverlay_CancelLoad` 0x1d2010
 fn fail_load(c: &mut Cx) {
     c.card(0xdc);
     c.set(0x22);
     c.owner(C64);
 }
 
-// state 30 (0x1d12f0)
+// state 30 (`MCOverlay_State28` 0x1d12f0)
 fn st_28(c: &mut Cx) {
     let n = c.card(0x7c) as i32 as f32;
     let d = c.r(0x30) as i32 as f32;
@@ -825,7 +825,7 @@ fn st_28(c: &mut Cx) {
     }
 }
 
-// state 31 (0x1d1720)
+// state 31 (`MCOverlay_State29` 0x1d1720)
 fn st_29(c: &mut Cx) {
     if c.card(BUSY) == 0 {
         if c.card(OP_DONE) == 0 {
@@ -837,7 +837,7 @@ fn st_29(c: &mut Cx) {
     }
 }
 
-// state 32 (0x1d10b8)
+// state 32 (`MCOverlay_State30` 0x1d10b8)
 fn st_30(c: &mut Cx) {
     if (c.r(0x44) as i32) < 1 {
         if c.card(BUSY) == 0 {
@@ -858,7 +858,7 @@ fn st_30(c: &mut Cx) {
     }
 }
 
-/// 0x1cf040: one tick of the overlay: ask the card system for its state (the flags at +0x10..+0x1c are rebuilt in
+/// `MCOverlay_RunState` 0x1cf040: one tick of the overlay: ask the card system for its state (the flags at +0x10..+0x1c are rebuilt in
 /// states 7 and 0x1c), count the wait down, run the state's function, then tell the overlay what the state means
 /// (0x15c / 0x164).
 pub fn run_state(m: &mut dyn Mem, e: &mut dyn CardEnv, o: u32) {
@@ -995,7 +995,7 @@ pub fn run_state(m: &mut dyn Mem, e: &mut dyn CardEnv, o: u32) {
     }
 }
 
-/// 0x1ceee0: the card op's tick: the blink (+0x4c eased between 0.2 and 1.0 at the rate +0x50, reversing at the
+/// `MemCardOp_Update` 0x1ceee0: the card op's tick: the blink (+0x4c eased between 0.2 and 1.0 at the rate +0x50, reversing at the
 /// ends), then mode 0 runs the state machine and mode 1 waits for the card to finish.
 pub fn update(m: &mut dyn Mem, e: &mut dyn CardEnv, o: u32) {
     let mut c = Cx { m, e, o };
@@ -1030,7 +1030,7 @@ pub fn update(m: &mut dyn Mem, e: &mut dyn CardEnv, o: u32) {
     }
 }
 
-/// 0x1d2140: restart the op: waiting for the card, no result, state 0.
+/// `MemCardOp_Restart` 0x1d2140: restart the op: waiting for the card, no result, state 0.
 pub fn restart(m: &mut dyn Mem, e: &mut dyn CardEnv, o: u32) {
     let mut c = Cx { m, e, o };
     c.w(0x164, 1);
@@ -1041,19 +1041,5 @@ pub fn restart(m: &mut dyn Mem, e: &mut dyn CardEnv, o: u32) {
     c.w(0x54, 0);
 }
 
-/// 0x1d21a0: the op has finished (state 1).
-pub fn is_done(m: &dyn Mem, o: u32) -> bool {
-    m.r32(o + 0x54) == 1
-}
-
-/// 0x1d21c0: the op's result.
-pub fn result(m: &dyn Mem, o: u32) -> u32 {
-    m.r32(o + 0x20)
-}
-
-/// 0x1ce8b0: begin an op of `size` bytes: the card system's call at 0x84 and the size at +0x30.
-pub fn begin(m: &mut dyn Mem, e: &mut dyn CardEnv, o: u32, size: u32) {
-    let mut c = Cx { m, e, o };
-    c.card(0x84);
-    c.w(0x30, size);
-}
+// `MemCardOp_IsDone` 0x1d21a0, `MemCardOp_GetResult` 0x1d21c0 and `MemCardOp_Begin` 0x1ce8b0 are in `memcard.rs` (row
+// E12j), on the same `Mem` and `FeEnv` as the overlay's other small calls.

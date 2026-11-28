@@ -4339,6 +4339,7 @@ G 214d10 Audio_StopLoadScreenLoop
 G 20f908 Sfx_SurfaceSoundType
 G 20d928 Sfx_EvalCurve
 G 1d21a0 MemCardOp_IsDone
+G 1d21b0 MemCardOp_IsFailed
 G 1d2140 MemCardOp_Restart
 G 1ceee0 MemCardOp_Update
 G 1aae88 Results_ClearText

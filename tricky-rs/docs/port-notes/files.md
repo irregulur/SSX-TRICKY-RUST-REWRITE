@@ -1766,6 +1766,67 @@ Proven (`SLUS_203.26` disassembly + runner):
 - Checked bit-for-bit in `tests/save_tail.rs` (200 profile + 50 `StaticInit_MemCard` + 1,200 overlay dispatch
   cases covering every `DrawState` value `-2..=40` + all 10 virtual stubs); `save` is now at 0 `not started`.
 
+## The rest of the `save` functions checked (row E12j; `tricky_game::memcard`, checked: `tests/save_ops.rs`)
+
+The index had 68 `save` functions `ported` but not `checked`. 43 of them were already compared with the game's code
+by a runner test and only needed marking: G9m's `tests/mcoverlay.rs` runs `MCOverlay_RunState` 0x1cf040 with every
+state (`MCOverlay_WaitTimer`, `_CheckCard`, `_State02`..`_State32`, `_PickStateFromCard`, `_ReadSlotStatus`
+0x1d3818, `_CancelSave` 0x1d1f60, `_CancelLoad` 0x1d2010) running natively, plus `MemCardOp_Update` 0x1ceee0 and
+`MemCardOp_Restart` 0x1d2140; `tests/saveexit.rs` calls `MemCardOp_StartSave` 0x1ce778 and `MemCardOp_StartLoad`
+0x1ce5b0; `tests/career.rs` runs `Profile_ResetNewGame` 0x161b40, `Profile_SyncAudioSettings` 0x161928 and
+`Profile_ApplyAudioSettings` 0x161a98 natively inside `Career_InitNewGame` and `Career_SaveToCard` and compares the
+block and the sound calls. The others were only named in comments or by call-outs (`replayui.rs` and
+`overlays.rs` stub them), so they are ported here (`memcard.rs`, after E12i's part). Ghidra's state names are two
+off from the state numbers (`MCOverlay_State02` is state 4); `mcoverlay.rs`'s comments now give both.
+
+Proven (`SLUS_203.26` disassembly + runner):
+
+- **`cMCOverlayManager::cMCOverlayManager` 0x1ce490**: +8 = 0, vtable 0x392238 at +0x428, +0 = 1, mode 1 through
+  `cSelectNextEventOverlay::vf55_1cee28` 0x1cee28 (the mode at +4; mode 1 also sets +0x44 = 60, the blink +0x4c = 1.0,
+  +0x50 = 0x3c888f86 = 0.0167), then the flags, counts and state cleared (+0x44 too), the blink again, +0x218 = -1,
+  `EAMem_Set(o + 0x168, 0, 0xb0)`, `EAMem_Set(o + 0xd8, 0, 0x42)`, the card wait +0x160 = 5, +0x224 = 0 and the
+  one-shot save flag 0x33efbc = 0. The destructor 0x1ce580 puts the vtable back, clears the flag and tail-calls
+  `Mem_Delete(o, 1)` when `flags & 1`.
+- **`SaveOverlay_Init` 0x1b8568** (o, whole): gcc's construction of a class with a virtual base. With `whole` the
+  base is its own (+0x42c = o + 0x438, `BackdropOverlay_Init(o + 0x438, whole)`). The base's vtable (+0x28) becomes
+  the construction vtable 0x38f918; without `whole` it becomes a copy of it (0x98 bytes) in the function's own frame
+  (sp − 0xd0) with the first entry's offset (+8, a halfword) moved by `o + 0x438 − base`, and that frame address is
+  left in the base after the return (`save_overlay_init` takes the sp on entry). Then +0x428 = 0x38f9b0, +0x434 =
+  0x1c2.
+- **`MemCard_Create` 0x23d6e0**: `EAMem_Alloc(0x3a4268, 0x500, 16)`, filled with 0xdeadc0de when not null, then
+  `cPS2MemCard::cPS2MemCard` (0x23d908) is called even on a null block; its result is returned.
+  **`MemCardOp_Create` 0x1cee68** keeps it at +0x224 and resets the blink and +0x40; **`MemCardOp_Destroy`
+  0x1ceeb0**: `Object_Delete(+0x224)`, +0x224 = 0.
+- **The card op's starts**: `MCOverlay_SetSaveBytes` 0x1ce730 and `MemCardOp_Begin` 0x1ce8b0 are the same code
+  (card virtual +0x80 with the size, the size at +0x30); `MCOverlay_BeginLoad` 0x1ce6b8 (+0xb8 with a1..a3, a3 at
+  +0x28); `MemCardOp_StartWrite` 0x1d1d80 (flag = 1, +0xf0 with a1..a3, a3 at +0x24); `MCOverlay_SaveMore` 0x1d1f18
+  (flag = 1, +0x24 += n, +0x110 with data, n); `MCOverlay_LoadMore` 0x1d1fd0 (+0x28 += n, +0xc0 with data, n).
+  The card's virtuals get the caller's argument registers unchanged; where a register is not an argument of ours
+  (a temporary in a2 or a3) the test compares only the arguments we pass.
+- **`MCOverlay_Draw` 0x1cf628**: `MCOverlay_DrawState` in mode 0 only. **`MemCardUI_GetSlotCount` 0x1d1eb8**: the
+  card's count (+0x1d0) and +0x2c, signed, the smaller; when the card's is the smaller it is asked a second time.
+- **`MemCardOp_IsDone` 0x1d21a0** (state 1), **`MemCardOp_IsFailed` 0x1d21b0** (state 0x21: the op ended without
+  the card's done flag, states 31 and 32; a 12-byte function Ghidra did not list, added to the index and
+  `symbols.txt`), **`MemCardOp_GetResult` 0x1d21c0** (+0x20).
+- **The cursors**: vf47 0x1d21c8 / vf48 0x1d2200 move the file cursor +0x21c down / up in `0..+0x218`, vf50
+  0x1d2278 / vf51 0x1d2230 the slot +0x38 in `0..GetSlotCount`; all signed, wrapping only when +0x3c is set.
+- **`Save_GetGameCode` 0x1d2f60** (`"BASLUS-20326"` with its NUL, 13 bytes from 0x392188), **`MemCard_WriteTagREP`
+  0x1d2fa0** / **`MemCard_WriteTagSET` 0x1d2fc8** (`"REP"` / `"SET"` with NUL, 0x392198 / 0x3921a0).
+- **`MCSlot_GetLabel` 0x1d2d50** (c, slot, out): the slot's 0x58-byte record at c + 0x168: no card (+0x174 or +0x168
+  zero) string 0x16e, unformatted (+0x16c zero) 0x180, +0x170 zero leaves `out`, else `WStr_FormatAscii(out,
+  "%s %d %s", name, +0x178, string 0x17a)`, the name being +0x17c or string 0x186 when `WStr_Count` says it is empty.
+- **`MemCardUI_SetMessage` 0x1d2fe8** (o, out, size): by state (jump table 0x3921b0): 2–3 string 0x40; 4–5
+  `WStr_Format(0x18a, 1)`; 6 0x1a0 with the port when card +0x1a0, else 0x1a1; 9 0x194 with the file's name
+  (o + 0xd8); 10 0x163 with the port; 11 cleared, 0x168 with the port; 12 by card +0x170 / +0x150 / +0x160: 0x166
+  with the port, `"%s\%s"` of 0x166 and 0x19a or 0xde3, or 0x166; 13–18 0x1c3 with the name; 20 0x1c0, or joined
+  with 0x19a when card +0x170 and +0x150 are both zero; 21–22 0x1ce with the port and card +0xa0; 23 0x15a with the
+  name; 24–25 cleared, 0x15c with the name; 27 0x159 joined with 0x19a or with the port; 29–32 cleared, 0x17c with
+  the name; 34 0x174, joined with 0x19a when card +0x170 is zero; 7, 8, 19, 26, 28, 33 and anything else leave
+  `out`. The port is the card's +0x20 plus 1; "cleared" is `EAMem_Set(out, 0, size × 2)`.
+- Checked in `tests/save_ops.rs`: 40,000 random cases over the 27 functions above (about 1,500 each), every call
+  out a stub on both sides answering from one hash (a third of the answers 0, for the branches), the calls,
+  results, the 8 KB block, the flag and (for `SaveOverlay_Init`) the frame compared, and the card virtuals that take arguments must get them all. 56 mutants, 55 killed, 1 equivalent (`MCSlot_GetLabel` reading +0x178 before or after the string lookup: the lookup writes no memory).
+
 ## The file system's queue (row E2v; `tricky_game::filesys`, `tests/filesys.rs`)
 
 Proven (from the disassembly; Ghidra was not running):
