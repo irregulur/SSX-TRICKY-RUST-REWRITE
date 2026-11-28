@@ -1897,3 +1897,55 @@ Proven (from the disassembly): the stream's state +4 lock, +0x10 / +0x14 request
 `Strm_UnlinkRequest` 0x2c65a0: out of the queue (the one being read moves to the next, or the one before), onto
 the free list. `Strm_MatchChunkType` 0x2c6610: the first type whose mask of the packet's word gives its value, −2.
 Checked in the runner: 18,000 calls; 16 mutants, all killed.
+
+## The stream library (row E2ab; `tricky_game::strm`, `tests/strm_stream.rs`)
+
+Proven (from the disassembly; Ghidra was not running). The library streams packets (word 0 an id, word 1 a size in
+the low 24 bits) from files or memory into one ring buffer and sorts them into chunks the callers read.
+
+- `Strm_Create` 0x2c6e70(requests, types, chunks, memory, size): 2..0x100 requests, 1..16 types, 1..types chunks,
+  and at least 0x18000 bytes over `Strm_CalcMemSize` (else 0). Layout: the state (0x178 bytes; magic "STRM"),
+  the requests (0x124 each, all free), the types (12 each: mask, value, chunk; all catch-all to chunk 1), the
+  chunk handles (16 each: the state, number from 1, bytes buffered, first packet), then the buffer from the next
+  64-byte line to the end. Priorities 0x96 (reading) and 0x32 (the file system's, and when urgent). Answers the
+  first chunk's handle (a stream's handles are its chunks: `Strm_GetHeader` reads the state through word 0).
+- `Strm_SetPlaylistEntry` 0x2c7098(handle, type, mask, value, chunk): only while idle; the last type must stay
+  catch-all; chunk −1 / −2 means no chunk (the packets are used up as they are sorted).
+- Requests: `VideoStream_QueueFile` 0x2c73d0(handle, name, start, last packet's id) and `Strm_Queue`
+  0x2c74c8(handle, memory, size, last id; size 0: up to and with the last packet). An idle stream starts reading
+  (`Strm_KickNextRequest` 0x2c6a28): the request's data starts where the sorted packets end; memory is copied
+  at once; a file reads on if it is the one open, else the open one is closed (`Strm_OpenAfterClose` 0x2c68d0)
+  and the new one opened (`Strm_OnReadDone` 0x2c6890), then read 0x8000 bytes at a time (`Strm_OnDataRead`
+  0x2c6928). A request ends at a short read, at its size (memory) or at its last packet, whose size is padded so
+  the next request starts on a 64-byte line.
+- `Strm_ScanPackets` 0x2c6b88: the reader skips used-up packets (−2) and wrap marks (−1, to +0x2c); requests the
+  reader has passed are let go; with more than 0x8000 bytes of room it reads on; near the buffer's end the
+  part-packet is moved to the start (kept on its 64-byte phase for files) and a wrap mark left; else the stream is
+  full (state 2) until a packet is given back.
+- `Strm_ClassifyPackets` 0x2c6668: each whole packet gets its chunk's number in the size word's top byte (by the
+  first type whose mask of the id gives its value) and counts in its chunk and the fill; a purged request's
+  packets are left (its last one padded); 1 when the request's last packet was sorted.
+- `Strm_ConsumeBytes` 0x2c63d0: the fill goes down; below the low-water mark the stream turns urgent and its file
+  operation is moved up (`FileSys_SetPriority`); sorting packets above the mark clears it.
+- `Strm_GetPacket` 0x2c7a28 / `Strm_ReleasePacket` 0x2c7b30: a chunk's first packet (its chunk number stripped),
+  the next one of the chunk found; given back it is used up (only packets inside the buffer and not used up
+  already), and a full stream reads on. A packet given back without `GetPacket` keeps its chunk number in the
+  size word and sends the reader far off (the game's callers don't; the test doesn't).
+- `Strm_Purge` 0x2c75d8(handle, id): a queued request is let go; a reading or read one is marked purged and its
+  buffered packets used up, chunk by chunk (packets of chunks that start before it: only its own; chunks that
+  start inside it: taken and given back). `Strm_Stop` 0x2c7858 purges from the last request back while they are
+  queued or reading, lets go of those before the one being read and purges it, empties every chunk, uses up the
+  fill and the sorted packets; a full stream's last packet is padded (or the buffer starts again), idle. A stop
+  with every request from the last back still queued reads near address 0 (the test avoids it).
+- `VideoStream_Close` 0x2c7178: stopped, waited on while reading (polling when on the file thread), the magic
+  cleared, the lock destroyed, the file closed (`File_CloseSync`, 0x64). `Strm_FindBufferedRequest` 0x2c7d20: the
+  id of the request a chunk's first packet came from. `Strm_GetRequestWord4` 0x2c7de8: a request's state.
+- Request ids keep their place in the low byte; `Strm_AllocRequest` counts in 0x100s, so a counter not on a
+  0x100 step makes `Strm_LookupRequest` miss and `Strm_Stop` loop for ever (as in the game).
+- Host: the locks, the file system's calls, `File_CloseSync`, the thread calls, the poll. The file system's
+  callbacks are ours (`on_read_done`, `open_after_close`, `on_data_read`).
+- Checked in the runner: 600 streams of 80 calls (made, typed, fed from memory and files, read, purged, stopped,
+  closed); 57 mutants, 52 killed, 5 equivalent (a part-packet of 4 to 7 bytes, or a size with its top byte set,
+  is waited on either way; urgent is only ever set below the mark, so clearing it on any sort above is the same;
+  a memory read's size in signed or unsigned terms; the priority `Strm_Queue` starts with only reaches a memory
+  read, which has none).
