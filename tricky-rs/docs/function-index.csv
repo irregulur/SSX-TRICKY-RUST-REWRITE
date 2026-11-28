@@ -3049,7 +3049,7 @@ address,size,name,system,status
 0x1deb40,140,PS2Render_LinkMesh,render,checked
 0x1debd0,100,PS2Render_UnlinkMesh,render,checked
 0x1dec38,180,PS2Render_FlushMeshCache,render,checked
-0x1decf0,360,cPS2GraphicsMan::vf68_1decf0,render,not started
+0x1decf0,360,cPS2GraphicsMan::vf68_1decf0,render,checked
 0x1dee58,36,cPS2GraphicsMan::vf69_1dee58,render,checked
 0x1dee80,672,cPS2GraphicsMan::vf99_1dee80,render,ported
 0x1df120,436,cPS2GraphicsMan::vf101_1df120,render,ported
@@ -3057,7 +3057,7 @@ address,size,name,system,status
 0x1df478,2480,cPS2GraphicsMan::vf91_1df478,render,checked
 0x1dfe30,344,cPS2GraphicsMan::vf93_1dfe30,render,checked
 0x1dff88,1328,cPS2GraphicsMan::vf94_1dff88,render,checked
-0x1e04b8,280,Render_FormatVramStats,render,not started
+0x1e04b8,280,Render_FormatVramStats,render,checked
 0x1e05d0,140,Render_CalcTexVramSize,render,checked
 0x1e0680,48,Gfx_DispatchDisplayMode,render,checked
 0x1e06e0,764,Gfx_SetDisplayMode,render,not started
@@ -3070,8 +3070,8 @@ address,size,name,system,status
 0x1e10b0,8,cPS2GraphicsMan::vf40_1e10b0,render,checked
 0x1e10b8,204,cPS2GraphicsMan::vf41_1e10b8,render,checked
 0x1e1188,68,cPS2GraphicsMan::vf42_1e1188,render,checked
-0x1e11d0,388,cPS2GraphicsMan::vf43_1e11d0,render,not started
-0x1e1358,348,cPS2GraphicsMan::vf44_1e1358,render,not started
+0x1e11d0,388,cPS2GraphicsMan::vf43_1e11d0,render,checked
+0x1e1358,348,cPS2GraphicsMan::vf44_1e1358,render,checked
 0x1e14b8,88,cPS2GraphicsMan::vf46_1e14b8,render,checked
 0x1e1510,308,cPS2GraphicsMan::vf47_1e1510,render,checked
 0x1e1648,28,cPS2GraphicsMan::vf45_1e1648,render,checked
@@ -3085,7 +3085,7 @@ address,size,name,system,status
 0x1e1ec8,96,PS2Render_ProjectToScreen,render,checked
 0x1e1f28,68,PS2Render_ClipTransform,render,checked
 0x1e1f70,2516,cPS2GraphicsMan::DrawModel,render,checked
-0x1e2948,280,cPS2GraphicsMan::vf85_1e2948,render,not started
+0x1e2948,280,cPS2GraphicsMan::vf85_1e2948,render,checked
 0x1e2a60,1024,cPS2GraphicsMan::vf74_1e2a60,render,checked
 0x1e2e60,1024,cPS2GraphicsMan::vf75_1e2e60,render,checked
 0x1e3260,2100,cPS2GraphicsMan::vf70_1e3260,render,not started
@@ -3099,7 +3099,7 @@ address,size,name,system,status
 0x1e4120,28,Gfx_RenderThreadEntry,render,checked
 0x1e4140,324,Gfx_RenderThread,render,not started
 0x1e4288,2964,Gfx_ProgramDisplay,render,not started
-0x1e4e20,148,Gfx_LoadImageToFrame,render,not started
+0x1e4e20,148,Gfx_LoadImageToFrame,render,checked
 0x1e4eb8,536,Gfx_LoadImage,render,not started
 0x1e50d8,5120,PS2Render_ClipLine,render,not started
 0x1e64d8,404,PS2GridMesh_Init,render,not started
@@ -3118,9 +3118,9 @@ address,size,name,system,status
 0x1e7cf8,64,GridMesh_PackUV,render,checked
 0x1e7d38,100,GridMesh_PackNormal,render,checked
 0x1e7da0,100,Vec3_PackShort,common,checked
-0x1e7e08,436,StripPacket_Begin,render,not started
-0x1e7fc0,220,StripPacket_AddVertex,render,not started
-0x1e80a0,340,StripPacket_Destroy,render,not started
+0x1e7e08,436,StripPacket_Begin,render,checked
+0x1e7fc0,220,StripPacket_AddVertex,render,checked
+0x1e80a0,340,StripPacket_Destroy,render,checked
 0x1e81f8,20,StripPacket_Init,render,checked
 0x1e8210,924,cPS2GraphicsMan::vf77_1e8210,render,not started
 0x1e85b0,648,PS2Render_UpdateModelMatrices,render,ported
@@ -3130,7 +3130,7 @@ address,size,name,system,status
 0x1e8958,24,cPS2GraphicsMan::vf24_1e8958,render,checked
 0x1e8970,76,cPS2GraphicsMan::vf23_1e8970,render,checked
 0x1e89c0,600,cPS2GraphicsMan::vf18_1e89c0,render,not started
-0x1e8c18,192,cPS2GraphicsMan::vf17_1e8c18,render,not started
+0x1e8c18,192,cPS2GraphicsMan::vf17_1e8c18,render,checked
 0x1e8cd8,136,cPS2GraphicsMan::vf16_1e8cd8,render,checked
 0x1e8d60,28,cPS2GraphicsMan::vf11_1e8d60,render,checked
 0x1e8d80,28,cPS2GraphicsMan::vf10_1e8d80,render,checked
@@ -3158,11 +3158,11 @@ address,size,name,system,status
 0x1e9458,32,cPS2GraphicsMan::vf57_1e9458,render,checked
 0x1e9478,112,cPS2GraphicsMan::SetAlphaBlend,render,checked
 0x1e94e8,32,cPS2GraphicsMan::vf55_1e94e8,render,checked
-0x1e9508,288,cPS2GraphicsMan::vf54_1e9508,render,not started
+0x1e9508,288,cPS2GraphicsMan::vf54_1e9508,render,checked
 0x1e9628,72,cPS2GraphicsMan::vf53_1e9628,render,checked
 0x1e9670,40,cPS2GraphicsMan::vf52_1e9670,render,checked
 0x1e9698,112,cPS2GraphicsMan::vf51_1e9698,render,checked
-0x1e9708,376,cPS2GraphicsMan::vf34_1e9708,render,not started
+0x1e9708,376,cPS2GraphicsMan::vf34_1e9708,render,checked
 0x1e9880,52,cPS2GraphicsMan::vf33_1e9880,render,checked
 0x1e98b8,52,cPS2GraphicsMan::vf32_1e98b8,render,checked
 0x1e98f0,124,cPS2GraphicsMan::vf31_1e98f0,render,checked

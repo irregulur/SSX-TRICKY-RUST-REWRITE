@@ -108,3 +108,25 @@ Proven (`SLUS_203.26` disassembly + runner):
   `0x64` to set skip flag `+8`, latching buttons on the 10th.
 - Checked bit-for-bit across all 18 functions in `tests/render_irq_video_tail.rs` (reducing `render` `not started`
   from 64 to 46).
+
+## Grid-mesh creation, VRAM stats, RefPack texture upload, `StripPacket`, viewport pop & rotate (row G7w, `rendertail.rs`, checked: `tests/render_strippacket_tail.rs`)
+
+Proven (`SLUS_203.26` disassembly + runner):
+
+- **Grid-mesh allocation (`0x1decf0`)**: allocates `0x58` bytes from `gScriptPool` (when `flags & 0x4000_0000`) or
+  `EAMem_Alloc` (`"GridMesh"` `0x393258`), fills with `0` (`flags < 0`) or `0xdeadc0de`, initializes via
+  `PS2GridMesh_Init`, optionally validates via virtual `+0x14` (deleting on failure), and links onto list 1.
+- **VRAM formatting & RefPack upload (`0x1e04b8`, `0x1e11d0`, `0x1e1358`, `0x1e2948`, `0x1e4e20`)**:
+  `Render_FormatVramStats` binds table `0x33f018` and formats `(w, h, bpp, KB)` via `sprintf` (`0x393268`);
+  `vf43`/`vf44` detect `0x10 0xfb` RefPack headers, decode into a temporary `EAMem_Alloc` buffer, clear bit 7
+  of byte 0, and call `TexMan_UploadPixels`; `vf85_1e2948` unpacks 4 quantized `i16` quad vertices;
+  `Gfx_LoadImageToFrame` flushes cache and calls `Gfx_LoadImage` with framebuffer base `*(this+0x6d0) << 5`.
+- **`StripPacket` (`0x1e7e08`, `0x1e7fc0`, `0x1e80a0`)**: builds PS2 DMA/VIF/GIF direct strip packets (`0x521`
+  REGLIST `RGBAQ/ST/XYZ2`), padding odd vertex counts with a zero qword, patching the DMA tag (`0x1000_0000 |
+  (qwc-1)`) and VIF DIRECT tag (`0x5000_0000 | (qwc-2)`), and submitting via `PS2Render_Submit`. Preserves the
+  original `lw` sign-extension on negative `u * q` when packing ST into a 64-bit word.
+- **Viewport pop, state block & Rodrigues rotation (`0x1e8c18`, `0x1e9508`, `0x1e9708`)**: `vf17` pops `+0xe4`
+  and restores viewport (`+0x9c`) + ortho (`+0xb4`) or perspective (`+0xac`); `vf54` applies all 9 render-state
+  fields; `vf34` builds an axis-angle rotation via `Math_SinCos` and post-multiplies `*(this+0x3f4)`.
+- Checked bit-for-bit across all 12 functions in `tests/render_strippacket_tail.rs` (reducing `render`
+  `not started` from 46 to 34).

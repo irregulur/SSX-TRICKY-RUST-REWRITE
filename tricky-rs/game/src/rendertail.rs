@@ -1845,3 +1845,411 @@ pub fn ps2_video_player_vf4(m: &Mem, this: u32) -> u32 {
 pub fn ps2_video_player_vf5(m: &Mem, this: u32) -> u32 {
     m.r32(this + 8)
 }
+
+// ---- Row G7w: mesh creation, VRAM stats, RefPack texture upload, StripPacket, viewport pop, state apply, rotate ----
+
+pub const G_DISPLAY_MODES: u32 = 0x0033_f018;
+pub const STR_GRID_MESH: u32 = 0x0039_3258;
+pub const STR_VRAM_FMT: u32 = 0x0039_3268;
+pub const STR_REFPACK_TMP: u32 = 0x0039_3550;
+
+pub const TEXMAN_UPLOAD_PIXELS: u32 = 0x001c_1d58;
+pub const GFX_LOAD_IMAGE: u32 = 0x001e_4eb8;
+pub const PS2_GRID_MESH_INIT: u32 = 0x001e_64d8;
+pub const PS2_RENDER_SUBMIT: u32 = 0x001e_8838;
+pub const MATH_SIN_COS: u32 = 0x0025_0c10;
+pub const REFPACK_DECODE: u32 = 0x002c_31b0;
+pub const MEM_MOVE: u32 = 0x002c_e228;
+pub const SPRINTF: u32 = 0x002f_ca28;
+pub const FLUSH_CACHE: u32 = 0x0030_6a60;
+
+fn w64(m: &mut Mem, at: u32, v: u64) {
+    m.w32(at, v as u32);
+    m.w32(at.wrapping_add(4), (v >> 32) as u32);
+}
+
+/// `cPS2GraphicsMan::vf68_1decf0` 0x1decf0(this, a1, a2, flags): allocate a `0x58`-byte `cPS2GridMesh` if the
+/// mesh cache has a free node, initialize via `PS2GridMesh_Init`, optionally validate via virtual `+0x14`
+/// (deleting on failure), and link onto live list 1.
+pub fn ps2_gfx_create_grid_mesh(
+    m: &mut Mem,
+    env: &mut dyn RenderEnv,
+    this: u32,
+    a1: u32,
+    a2: u32,
+    flags: u32,
+) -> u32 {
+    if m.r32(this + 0x1d7c) == 0 {
+        return 0;
+    }
+    let p = if (flags & 0x4000_0000) != 0 {
+        env.call(m, MEMPOOL_ALLOC, &[G_SCRIPT_POOL, 0x58, flags, STR_GRID_MESH, 0, 0])
+    } else {
+        env.call(m, EAMEM_ALLOC, &[STR_GRID_MESH, 0x58, flags & 0x03ff_ffff])
+    };
+    if p != 0 {
+        let fill = if (flags as i32) < 0 { 0 } else { 0xdead_c0de };
+        eamem::set(m, p, fill, 0x58);
+    }
+    let mesh = env.call(m, PS2_GRID_MESH_INIT, &[p, a1, a2, this, flags]);
+    if (flags & 0x2000_0000) != 0 {
+        if mesh == 0 {
+            return 0;
+        }
+        let vt = m.r32(mesh);
+        let adj = m.r16(vt + 0x10) as i16 as i32 as u32;
+        let f = m.r32(vt + 0x14);
+        if env.call(m, f, &[mesh.wrapping_add(adj)]) == 0 {
+            let vt2 = m.r32(mesh);
+            let adj2 = m.r16(vt2 + 8) as i16 as i32 as u32;
+            let f2 = m.r32(vt2 + 0xc);
+            env.call(m, f2, &[mesh.wrapping_add(adj2), 3]);
+            return 0;
+        }
+    }
+    let node = m.r32(this + 0x1d70);
+    m.w32(node + 8, mesh);
+    m.w32(mesh + 0x54, node);
+    m.w32(node + 0x10, 0);
+    ps2_render_link_mesh(m, this, node, 1);
+    mesh
+}
+
+/// `Render_FormatVramStats` 0x1e04b8(this): bind display-mode table `0x33f018` (`+0x64c = 1`, `+0x654 = 0x33f018`)
+/// and format each entry's resolution, bpp, and VRAM size via `sprintf` (`0x2fca28`).
+pub fn render_format_vram_stats(m: &mut Mem, env: &mut dyn RenderEnv, this: u32) {
+    m.w32(this + 0x64c, 1);
+    m.w32(this + 0x654, G_DISPLAY_MODES);
+    let mut i = 0i32;
+    loop {
+        let entry = G_DISPLAY_MODES.wrapping_add((i as u32).wrapping_mul(0x94));
+        let psm = m.r32(entry + 0x88);
+        let bpp = if psm == 2 {
+            16u32
+        } else if psm == 1 {
+            24
+        } else {
+            32
+        };
+        let w = m.r32(entry + 0x80) as i32;
+        let h = m.r32(entry + 0x84) as i32;
+        let zpsm = m.r32(entry + 0x8c) as i32;
+        let blocks = render_calc_tex_vram_size(w, h, psm, zpsm);
+        let kb_f = F(((blocks << 8) as i32) as f32) * F(f32::from_bits(0x3a80_0000));
+        let kb_d = (kb_f.0 as f64).to_bits();
+        env.call(
+            m,
+            SPRINTF,
+            &[
+                entry,
+                STR_VRAM_FMT,
+                m.r32(entry + 0x80),
+                m.r32(entry + 0x84),
+                bpp,
+                kb_d as u32,
+                (kb_d >> 32) as u32,
+            ],
+        );
+        i += 1;
+        if i >= (m.r32(this + 0x64c) as i32) {
+            break;
+        }
+    }
+}
+
+fn upload_shape_maybe_refpack(
+    m: &mut Mem,
+    env: &mut dyn RenderEnv,
+    this: u32,
+    idx: u32,
+    shp: u32,
+    clut: u32,
+) {
+    if m.r8(shp + 0x10) == 0x10 && m.r8(shp + 0x11) == 0xfb {
+        let uncomp = ((m.r8(shp + 0x12) as u32) << 16)
+            | ((m.r8(shp + 0x13) as u32) << 8)
+            | (m.r8(shp + 0x14) as u32);
+        let alloc_sz = uncomp.wrapping_add(0x10);
+        let tmp = env.call(m, EAMEM_ALLOC, &[STR_REFPACK_TMP, alloc_sz, 0x10]);
+        if tmp != 0 {
+            eamem::set(m, tmp, 0, alloc_sz);
+        }
+        env.call(m, MEM_MOVE, &[tmp, shp, 0x10]);
+        let dst = tmp.wrapping_add(0x10);
+        env.call(m, REFPACK_DECODE, &[shp.wrapping_add(0x10), dst, 1]);
+        let b0 = m.r8(tmp) & 0x7f;
+        m.w8(tmp, b0);
+        env.call(m, TEXMAN_UPLOAD_PIXELS, &[m.r32(this + 0x47c), dst, clut, idx]);
+        env.call(m, EAMEM_FREE, &[tmp]);
+    } else {
+        env.call(
+            m,
+            TEXMAN_UPLOAD_PIXELS,
+            &[m.r32(this + 0x47c), shp.wrapping_add(0x10), clut, idx],
+        );
+    }
+}
+
+/// `cPS2GraphicsMan::vf43_1e11d0` 0x1e11d0(this, idx, shp): derive CLUT pointer from `(w0 >> 8) + 0x10`, decompress
+/// RefPack (`0x10 0xfb`) if compressed, and upload pixels via `TexMan_UploadPixels`.
+pub fn ps2_gfx_upload_shape(m: &mut Mem, env: &mut dyn RenderEnv, this: u32, idx: u32, shp: u32) {
+    let w0 = m.r32(shp) as i32;
+    let clut = if (w0 as u32 & 0xffff_ff00) != 0 {
+        let t = shp.wrapping_add((w0 >> 8) as u32);
+        if t != 0 {
+            t.wrapping_add(0x10)
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+    upload_shape_maybe_refpack(m, env, this, idx, shp, clut);
+}
+
+/// `cPS2GraphicsMan::vf44_1e1358` 0x1e1358(this, idx, shp, clut): decompress RefPack (`0x10 0xfb`) if compressed
+/// and upload pixels via `TexMan_UploadPixels` with explicit `clut`.
+pub fn ps2_gfx_upload_shape_with_clut(
+    m: &mut Mem,
+    env: &mut dyn RenderEnv,
+    this: u32,
+    idx: u32,
+    shp: u32,
+    clut: u32,
+) {
+    upload_shape_maybe_refpack(m, env, this, idx, shp, clut);
+}
+
+/// `cPS2GraphicsMan::vf85_1e2948` 0x1e2948(_this, obj, out_n, out_p, out_uv): unpack 4 vertices of quantized
+/// `i16` normals (`+0x100`), positions (`+0xd0`) scaled by `0x3800_0100`, and UVs (`+0x90`) scaled by `0x3980_0000`.
+pub fn ps2_gfx_unpack_quad_verts(m: &mut Mem, obj: u32, out_n: u32, out_p: u32, out_uv: u32) {
+    let base = m.r32(m.r32(m.r32(obj + 0x28)) + 0xc);
+    let k1 = F(f32::from_bits(0x3800_0100));
+    let k2 = F(f32::from_bits(0x3980_0000));
+    for i in 0..4u32 {
+        for k in 0..3u32 {
+            let vn = F((m.r16(base + 0x100 + i * 6 + k * 2) as i16) as f32) * k1;
+            m.w32(out_n + i * 12 + k * 4, vn.0.to_bits());
+            let vp = F((m.r16(base + 0xd0 + i * 6 + k * 2) as i16) as f32) * k1;
+            m.w32(out_p + i * 12 + k * 4, vp.0.to_bits());
+        }
+        for k in 0..2u32 {
+            let vu = F((m.r16(base + 0x90 + i * 4 + k * 2) as i16) as f32) * k2;
+            m.w32(out_uv + i * 8 + k * 4, vu.0.to_bits());
+        }
+    }
+}
+
+/// `Gfx_LoadImageToFrame` 0x1e4e20(this, a1, a2, a3, t0, t1): `FlushCache(0)`, call `Gfx_LoadImage` with active
+/// framebuffer base `*(this+0x6d0) << 5` and dimensions `+0x698`/`+0x6a0`, and return `1`.
+#[allow(clippy::too_many_arguments)]
+pub fn gfx_load_image_to_frame(
+    m: &mut Mem,
+    env: &mut dyn RenderEnv,
+    this: u32,
+    a1: u32,
+    a2: u32,
+    a3: u32,
+    t0: u32,
+    t1: u32,
+) -> u32 {
+    env.call(m, FLUSH_CACHE, &[0]);
+    env.call(
+        m,
+        GFX_LOAD_IMAGE,
+        &[
+            this,
+            t1,
+            m.r32(this + 0x6d0) << 5,
+            a3,
+            t0,
+            m.r32(this + 0x698),
+            m.r32(this + 0x6a0),
+            a1,
+            a2,
+        ],
+    );
+    1
+}
+
+fn strip_finish_current(m: &mut Mem, this: u32) {
+    let cur_ptr_addr = m.r32(this);
+    let n_verts = m.r32(this + 0xc);
+    if (n_verts & 1) != 0 {
+        let p = m.r32(cur_ptr_addr);
+        w64(m, p, 0);
+        m.w32(cur_ptr_addr, p.wrapping_add(8));
+    }
+    let hdr = m.r32(this + 8);
+    w64(m, hdr, 0x1400_0000_0000_0001u64);
+    w64(m, hdr + 8, 0);
+    w64(m, hdr + 0x10, 0x4a);
+    w64(m, hdr + 0x18, 0);
+    w64(m, hdr + 0x20, 0x3400_0000_0000_8000u64 | (n_verts as u64));
+    w64(m, hdr + 0x28, 0x521);
+    m.w32(this + 8, hdr.wrapping_add(0x30));
+}
+
+fn strip_write_vertex(m: &mut Mem, dst: u32, vtx: u32, pos: u32) {
+    let r = m.r32(vtx + 0x10) as u64;
+    let g = m.r32(vtx + 0x14) as u64;
+    let b = m.r32(vtx + 0x18) as u64;
+    let a = m.r32(vtx + 0x1c) as u64;
+    let q_bits = (m.r32(pos + 0xc) as u64) << 32;
+    w64(m, dst, r | (g << 8) | (b << 16) | (a << 24) | q_bits);
+
+    let q = F(f32::from_bits(m.r32(pos + 0xc)));
+    let u = (F(f32::from_bits(m.r32(vtx))) * q).0.to_bits() as i32 as i64 as u64;
+    let v = ((F(f32::from_bits(m.r32(vtx + 4))) * q).0.to_bits() as u64) << 32;
+    w64(m, dst + 8, u | v);
+
+    let x = (f32::from_bits(m.r32(pos)) as i32) as i64 as u64;
+    let y = ((f32::from_bits(m.r32(pos + 4)) as i32) as i64 as u64) << 16;
+    let z = (((F(f32::from_bits(m.r32(pos + 8))) * q).0 as i32) as u64) << 32;
+    w64(m, dst + 0x10, x | y | z);
+}
+
+/// `StripPacket_Begin` 0x1e7e08(this, vtx, pos): reserve DMA/GIF header if first strip (or finalize prior strip),
+/// open a new 0x30-byte strip header at current cursor, and emit the first vertex.
+pub fn strip_packet_begin(m: &mut Mem, this: u32, vtx: u32, pos: u32) {
+    let cur_ptr_addr = m.r32(this);
+    if m.r32(this + 4) == 0 {
+        let p = m.r32(cur_ptr_addr);
+        m.w32(this + 4, p);
+        m.w32(cur_ptr_addr, p.wrapping_add(0x20));
+    } else if m.r32(this + 8) != 0 {
+        strip_finish_current(m, this);
+    }
+    let cur = m.r32(cur_ptr_addr);
+    m.w32(this + 0xc, 0);
+    m.w32(this + 8, cur);
+    strip_write_vertex(m, cur.wrapping_add(0x30), vtx, pos);
+    m.w32(cur_ptr_addr, cur.wrapping_add(0x48));
+    m.w32(this + 0xc, 1);
+}
+
+/// `StripPacket_AddVertex` 0x1e7fc0(this, vtx, pos): append a 24-byte GIF strip vertex and increment `*(this+0xc)`.
+pub fn strip_packet_add_vertex(m: &mut Mem, this: u32, vtx: u32, pos: u32) {
+    let cur_ptr_addr = m.r32(this);
+    let cur = m.r32(cur_ptr_addr);
+    strip_write_vertex(m, cur, vtx, pos);
+    m.w32(cur_ptr_addr, cur.wrapping_add(0x18));
+    m.w32(this + 0xc, m.r32(this + 0xc).wrapping_add(1));
+}
+
+/// `StripPacket_Destroy` 0x1e80a0(this, flags): close active strip, patch DMA/VIF direct tag at `*(this+4)`,
+/// submit packet via `PS2Render_Submit`, and `Mem_Delete(this)` if `flags & 1 != 0`.
+pub fn strip_packet_destroy(m: &mut Mem, env: &mut dyn RenderEnv, this: u32, flags: u32) {
+    if m.r32(this + 4) != 0 {
+        if m.r32(this + 8) != 0 {
+            strip_finish_current(m, this);
+        }
+        let pkt = m.r32(this + 4);
+        let cur_ptr_addr = m.r32(this);
+        let end = m.r32(cur_ptr_addr);
+        m.w32(cur_ptr_addr, end.wrapping_add(0x10));
+        let diff = end.wrapping_sub(pkt) as i32;
+        let qwc = ((diff >> 3).wrapping_add(((diff as u32) >> 31) as i32)) >> 1;
+        let tag0 = ((qwc.wrapping_sub(1) as i64) as u64) | 0x1000_0000u64;
+        let tag1 = (((qwc.wrapping_sub(2) as u32) | 0x5000_0000u32) as u64) << 32;
+        w64(m, pkt, tag0);
+        w64(m, pkt + 8, 0);
+        w64(m, pkt + 0x10, 0);
+        w64(m, pkt + 0x18, tag1);
+        let gfx = m.r32(m.r32(G_APP) + 0x724);
+        env.call(m, PS2_RENDER_SUBMIT, &[gfx, m.r32(this + 4), end, 0]);
+    }
+    if (flags & 1) != 0 {
+        env.call(m, MEM_DELETE, &[this]);
+    }
+}
+
+/// `cPS2GraphicsMan::vf17_1e8c18` 0x1e8c18(this): pop viewport/projection stack (`+0xe4 -= 1`), restore viewport
+/// via virtual `+0x9c`, and restore ortho (`+0xb4`, when `*(entry) != 0`) or perspective (`+0xac`) projection.
+pub fn ps2_gfx_pop_viewport(m: &mut Mem, env: &mut dyn RenderEnv, this: u32) {
+    let idx = m.r32(this + 0xe4).wrapping_sub(1);
+    m.w32(this + 0xe4, idx);
+    let e = this.wrapping_add(0x14).wrapping_add(idx.wrapping_mul(0x34));
+    call_gfx_vf(
+        m,
+        env,
+        this,
+        0x98,
+        &[m.r32(e + 4), m.r32(e + 8), m.r32(e + 0xc), m.r32(e + 0x10)],
+    );
+    if m.r32(e) != 0 {
+        call_gfx_vf(
+            m,
+            env,
+            this,
+            0xb0,
+            &[
+                m.r32(e + 0x24),
+                m.r32(e + 0x28),
+                m.r32(e + 0x2c),
+                m.r32(e + 0x30),
+                m.r32(e + 0x14),
+                m.r32(e + 0x18),
+            ],
+        );
+    } else {
+        call_gfx_vf(m, env, this, 0xa8, &[m.r32(e + 0x1c), m.r32(e + 0x14), m.r32(e + 0x18)]);
+    }
+}
+
+/// `cPS2GraphicsMan::vf54_1e9508` 0x1e9508(this, state): apply all 9 render-state fields from `state+0..+0x30`
+/// via virtuals `+0x1c4`, `+0x1cc`, `+0x1d4`, `+0x1e4`, `+0x1ec`, `+0x1f4` (×2), `+0x1fc` (×2).
+pub fn ps2_gfx_apply_state_block(m: &mut Mem, env: &mut dyn RenderEnv, this: u32, st: u32) {
+    call_gfx_vf(m, env, this, 0x1c0, &[m.r32(st)]);
+    call_gfx_vf(m, env, this, 0x1c8, &[m.r32(st + 4), m.r32(st + 8), m.r32(st + 0xc)]);
+    call_gfx_vf(m, env, this, 0x1d0, &[m.r32(st + 0x10)]);
+    call_gfx_vf(m, env, this, 0x1e0, &[m.r32(st + 0x14)]);
+    call_gfx_vf(m, env, this, 0x1e8, &[m.r32(st + 0x18), m.r32(st + 0x1c)]);
+    call_gfx_vf(m, env, this, 0x1f0, &[m.r32(st + 0x20), 0]);
+    call_gfx_vf(m, env, this, 0x1f0, &[m.r32(st + 0x24), 1]);
+    call_gfx_vf(m, env, this, 0x1f8, &[m.r32(st + 0x28), 0]);
+    call_gfx_vf(m, env, this, 0x1f8, &[m.r32(st + 0x2c), 1]);
+}
+
+/// `cPS2GraphicsMan::vf34_1e9708` 0x1e9708(this, axis, angle_f12): build Rodrigues rotation matrix for `(axis,
+/// angle_f12)` via `Math_SinCos`, post-multiply `*(this+0x3f4)` in place, and clear dirty flag `*(this+0x17d0)`.
+pub fn ps2_gfx_mat_rotate_axis(
+    m: &mut Mem,
+    env: &mut dyn RenderEnv,
+    this: u32,
+    axis: u32,
+    angle_f12: f32,
+    sp: u32,
+) {
+    let sin_ptr = sp.wrapping_add(0x40);
+    let cos_ptr = sp.wrapping_add(0x44);
+    env.call(m, MATH_SIN_COS, &[sin_ptr, cos_ptr, angle_f12.to_bits()]);
+    let s = F(f32::from_bits(m.r32(sin_ptr)));
+    let c = F(f32::from_bits(m.r32(cos_ptr)));
+    let t = F(1.0) - c;
+    let ax = F(f32::from_bits(m.r32(axis)));
+    let ay = F(f32::from_bits(m.r32(axis + 4)));
+    let az = F(f32::from_bits(m.r32(axis + 8)));
+    let tx = t * ax;
+    let ty = t * ay;
+    let tz = t * az;
+    let sx = s * ax;
+    let sy = s * ay;
+    let sz = s * az;
+    let rot = [
+        [tx * ax + c, ty * ax - sz, tz * ax + sy, F(0.0)],
+        [tx * ay + sz, ty * ay + c, tz * ay - sx, F(0.0)],
+        [tx * az - sy, ty * az + sx, tz * az + c, F(0.0)],
+        [F(0.0), F(0.0), F(0.0), F(1.0)],
+    ];
+    let mat_ptr = m.r32(this + 0x3f4);
+    let lhs = read_m4(m, mat_ptr);
+    let out = [
+        transform_v4(&lhs, rot[0]),
+        transform_v4(&lhs, rot[1]),
+        transform_v4(&lhs, rot[2]),
+        transform_v4(&lhs, rot[3]),
+    ];
+    write_m4(m, mat_ptr, out);
+    m.w32(this + 0x17d0, 0);
+}
