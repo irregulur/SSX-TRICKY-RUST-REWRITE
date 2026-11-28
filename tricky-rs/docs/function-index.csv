@@ -6232,11 +6232,11 @@ address,size,name,system,status
 0x2c6358,56,Strm_GetHeader,lib-file,checked
 0x2c6390,64,RingBuf_InRange,lib-file,checked
 0x2c63d0,144,Strm_ConsumeBytes,lib-file,host
-0x2c6460,124,Strm_AllocRequest,lib-file,host
-0x2c64e0,116,Strm_AppendRequest,lib-file,host
-0x2c6558,72,Strm_LookupRequest,lib-file,host
-0x2c65a0,112,Strm_UnlinkRequest,lib-file,host
-0x2c6610,84,Strm_MatchChunkType,lib-file,host
+0x2c6460,124,Strm_AllocRequest,lib-file,checked
+0x2c64e0,116,Strm_AppendRequest,lib-file,checked
+0x2c6558,72,Strm_LookupRequest,lib-file,checked
+0x2c65a0,112,Strm_UnlinkRequest,lib-file,checked
+0x2c6610,84,Strm_MatchChunkType,lib-file,checked
 0x2c6668,548,Strm_ClassifyPackets,lib-file,host
 0x2c6890,60,Strm_OnReadDone,lib-file,host
 0x2c68d0,84,Strm_OpenAfterClose,lib-file,host

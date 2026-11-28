@@ -124,3 +124,102 @@ pub fn get_buffer_size(m: &Mem, h: u32) -> u32 {
 pub fn get_fill_bytes(m: &Mem, h: u32) -> u32 {
     header(m, h).map_or(0, |head| m.r32(head + 0x48))
 }
+
+// ---- The request list (row E2aa) ----
+//
+// The stream's state (`st`): +4 its lock, +0x10 / +0x14 the requests (0x124 bytes each) and their count, +0x18 /
+// +0x1c the chunk types (12 bytes each: mask, value, type) and their count, +0x58 the first request queued, +0x5c
+// the one being read, +0x60 the last, +0x64 the free ones. A request: +0 its id (the low byte its place, the rest
+// a number), +4 queued, +8 the one before, +0xc the one after (or the next free).
+
+pub const MUTEX_LOCK: u32 = 0x2ceb00;
+pub const MUTEX_UNLOCK: u32 = 0x2ceb60;
+/// The next request number, in steps of 0x100 (gp − 0x7dc4)
+pub const REQUEST_NUMBER: u32 = 0x3bbb2c;
+
+/// `Strm_AllocRequest` 0x2c6460(st): a free request, numbered (0 skipped); 0 if none
+pub fn alloc_request(m: &mut Mem, e: &mut dyn StrmEnv, st: u32) -> u32 {
+    e.call(m, MUTEX_LOCK, &[st + 4]);
+    let r = m.r32(st + 0x64);
+    if r != 0 {
+        let mut n = m.r32(REQUEST_NUMBER).wrapping_add(0x100);
+        m.w32(st + 0x64, m.r32(r + 0xc));
+        if n == 0 {
+            n = 0x100;
+        }
+        m.w32(REQUEST_NUMBER, n);
+        m.w32(r, m.r8(r) as u32 | n);
+    }
+    e.call(m, MUTEX_UNLOCK, &[st + 4]);
+    r
+}
+
+/// `Strm_AppendRequest` 0x2c64e0(st, request): queued last (first, and being read, if the queue is empty)
+pub fn append_request(m: &mut Mem, e: &mut dyn StrmEnv, st: u32, r: u32) {
+    m.w32(r + 0xc, 0);
+    m.w32(r + 4, 1);
+    e.call(m, MUTEX_LOCK, &[st + 4]);
+    let last = m.r32(st + 0x60);
+    if last != 0 {
+        m.w32(r + 8, last);
+        m.w32(last + 0xc, r);
+        m.w32(st + 0x60, r);
+    } else {
+        m.w32(r + 8, 0);
+        m.w32(st + 0x60, r);
+        m.w32(st + 0x58, r);
+        m.w32(st + 0x5c, r);
+    }
+    e.call(m, MUTEX_UNLOCK, &[st + 4]);
+}
+
+/// `Strm_LookupRequest` 0x2c6558(st, id): the queued request with that id, else 0
+pub fn lookup_request(m: &Mem, st: u32, id: u32) -> u32 {
+    let i = id & 0xff;
+    if (i as i32) >= m.r32(st + 0x14) as i32 {
+        return 0;
+    }
+    let r = m.r32(st + 0x10).wrapping_add(i * 0x124);
+    if m.r32(r) != id || m.r32(r + 4) == 0 {
+        return 0;
+    }
+    r
+}
+
+/// `Strm_UnlinkRequest` 0x2c65a0(st, request): out of the queue (the one being read moves on to the next, or back
+/// to the one before), into the free list
+pub fn unlink_request(m: &mut Mem, st: u32, r: u32) {
+    let (prev, next) = (m.r32(r + 8), m.r32(r + 0xc));
+    if r == m.r32(st + 0x58) {
+        m.w32(st + 0x58, next);
+    } else {
+        m.w32(prev + 0xc, next);
+    }
+    let (prev, next) = (m.r32(r + 8), m.r32(r + 0xc));
+    if r == m.r32(st + 0x60) {
+        m.w32(st + 0x60, prev);
+    } else {
+        m.w32(next + 8, prev);
+    }
+    if r == m.r32(st + 0x5c) {
+        let v = if m.r32(r + 0xc) != 0 { m.r32(r + 0xc) } else { m.r32(r + 8) };
+        m.w32(st + 0x5c, v);
+    }
+    m.w32(r + 4, 0);
+    m.w32(r + 0xc, m.r32(st + 0x64));
+    m.w32(st + 0x64, r);
+}
+
+/// `Strm_MatchChunkType` 0x2c6610(st, packet): the type of the first chunk type whose mask of the packet's first
+/// word gives its value; −2 if none
+pub fn match_chunk_type(m: &Mem, st: u32, packet: u32) -> u32 {
+    let w = m.r32(packet);
+    let n = m.r32(st + 0x1c) as i32;
+    for i in 0..n.max(0) as u32 {
+        let t = m.r32(st + 0x18).wrapping_add(i * 0xc);
+        if w & m.r32(t) == m.r32(t + 4) {
+            return m.r32(t + 8);
+        }
+    }
+    -2i32 as u32
+}

@@ -133,3 +133,122 @@ fn the_stream_calls_match_the_original() {
     }
     assert!(nonzero > 1000);
 }
+
+const ST: u32 = 0x0107_0000;
+const REQS: u32 = 0x0108_0000;
+const TYPES: u32 = 0x0109_0000;
+const GLOBALS: (u32, u32) = (0x3bbb00, 0x40);
+
+/// The request list (row E2aa): random allocs, appends, unlinks (of queued requests), lookups and chunk matches
+#[test]
+fn the_request_list_matches_the_original() {
+    let Some(mut r) = Runner::from_env() else { return };
+    for f in [0x2c6460, 0x2c64e0, 0x2c6558, 0x2c65a0, 0x2c6610] {
+        r.allow(f);
+    }
+    let log: Rc<RefCell<Vec<(u32, Vec<u32>)>>> = Rc::default();
+    for f in [strm::MUTEX_LOCK, strm::MUTEX_UNLOCK] {
+        let log = log.clone();
+        r.stub(f, move |c, _| {
+            log.borrow_mut().push((f, vec![c.gpr(4) as u32]));
+            c.set_gpr(2, 0);
+        });
+    }
+    let mut g = Rng(0x5747_aa00_0000_0001);
+    let mut found = 0;
+    for run in 0..300 {
+        let rnd = |g: &mut Rng, n: u32| -> Vec<u8> { (0..n).map(|_| g.next() as u8).collect() };
+        let n = 1 + g.below(8);
+        let mut m = Mem {
+            regions: vec![(ST, rnd(&mut g, 0x80)), (REQS, rnd(&mut g, 8 * 0x124)), (TYPES, rnd(&mut g, 0x60)), (GLOBALS.0, rnd(&mut g, GLOBALS.1)), (OUT, rnd(&mut g, 0x10))],
+        };
+        m.w32(ST + 0x10, REQS);
+        m.w32(ST + 0x14, n);
+        m.w32(ST + 0x18, TYPES);
+        m.w32(ST + 0x1c, if g.below(6) == 0 { -1i32 as u32 } else { g.below(8) });
+        for k in 0..8 {
+            // masks with few bits, so some match
+            m.w32(TYPES + 0xc * k, 1 << g.below(4) | 1 << g.below(4));
+            m.w32(TYPES + 0xc * k + 4, g.below(4));
+        }
+        m.w32(strm::REQUEST_NUMBER, if g.below(4) == 0 { 0xffff_fe00 } else { g.next() & !0xff });
+        for (o, v) in [(0x58, 0), (0x5c, 0), (0x60, 0), (0x64, REQS)] {
+            m.w32(ST + o, v);
+        }
+        for k in 0..n {
+            let q = REQS + 0x124 * k;
+            m.w32(q, k);
+            m.w32(q + 4, 0);
+            m.w32(q + 0xc, if k + 1 < n { q + 0x124 } else { 0 });
+        }
+        for (a, v) in &m.regions {
+            r.mem.write(*a, v).unwrap();
+        }
+        let mut env = Env { log: vec![] };
+        log.borrow_mut().clear();
+        let mut free: Vec<u32> = vec![];
+        for step in 0..60 {
+            let queued: Vec<u32> = {
+                let mut v = vec![];
+                let mut q = m.r32(ST + 0x58);
+                while q != 0 && v.len() < 16 {
+                    v.push(q);
+                    q = m.r32(q + 0xc);
+                }
+                v
+            };
+            let (f, args, ours): (u32, Vec<u32>, Option<u32>) = match g.below(6) {
+                0 => {
+                    let a = strm::alloc_request(&mut m, &mut env, ST);
+                    if a != 0 {
+                        free.push(a);
+                    }
+                    (0x2c6460, vec![ST], Some(a))
+                }
+                1 if !free.is_empty() => {
+                    let q = free.remove(g.below(free.len() as u32) as usize);
+                    strm::append_request(&mut m, &mut env, ST, q);
+                    (0x2c64e0, vec![ST, q], None)
+                }
+                2 if !queued.is_empty() => {
+                    let q = queued[g.below(queued.len() as u32) as usize];
+                    // (the one being read anywhere in the queue)
+                    let cur = queued[g.below(queued.len() as u32) as usize];
+                    m.w32(ST + 0x5c, cur);
+                    r.mem.write_u32(ST + 0x5c, cur);
+                    strm::unlink_request(&mut m, ST, q);
+                    (0x2c65a0, vec![ST, q], None)
+                }
+                3 | 4 => {
+                    let id = match g.below(3) {
+                        0 if !queued.is_empty() => m.r32(queued[g.below(queued.len() as u32) as usize]),
+                        1 => m.r32(REQS + 0x124 * g.below(n)),
+                        _ => g.below(10) | (g.next() & 0x300),
+                    };
+                    let v = strm::lookup_request(&m, ST, id);
+                    found += (v != 0) as u32;
+                    (0x2c6558, vec![ST, id], Some(v))
+                }
+                _ => {
+                    m.w32(OUT, g.below(16));
+                    r.mem.write_u32(OUT, m.r32(OUT));
+                    (0x2c6610, vec![ST, OUT], Some(strm::match_chunk_type(&m, ST, OUT)))
+                }
+            };
+            for (k, a) in args.iter().enumerate() {
+                r.cpu.set_gpr(4 + k, *a as i32 as i64 as u64);
+            }
+            r.call(f).unwrap_or_else(|e| panic!("run {run} step {step}: {f:#x} {args:x?}: {e}"));
+            for (a, v) in &m.regions {
+                let mut t = vec![0u8; v.len()];
+                r.mem.read(*a, &mut t).unwrap();
+                assert_eq!(&t, v, "run {run} step {step}: {f:#x} {args:x?}: memory at {a:#x}");
+            }
+            assert_eq!(*log.borrow(), env.log, "run {run} step {step}: {f:#x} {args:x?}: the calls out");
+            if let Some(v) = ours {
+                assert_eq!(r.cpu.gpr(2) as u32, v, "run {run} step {step}: {f:#x} {args:x?}: the answer");
+            }
+        }
+    }
+    assert!(found > 100, "{found}");
+}

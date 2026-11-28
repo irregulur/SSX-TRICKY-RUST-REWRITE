@@ -1886,3 +1886,14 @@ becomes urgent while reading, state 1), +0x40 the low-water mark (`Strm_SetLowWa
 the fill at +0x48 crosses it), +0x44 urgent. `Strm_IsFinished`: state 0 and nothing buffered. `RingBuf_InRange`
 0x2c6390: start ≤ at < end, or (end below start) at ≥ start or at < end. `Strm_CalcMemSize` 0x2c6e48:
 a × 0x124 + b × 0xc + c × 16 + 0x1b8. Checked in the runner: 12,000 calls; 18 mutants, all killed.
+
+## The stream library's request list (row E2aa; `tricky_game::strm`, `tests/strm.rs`)
+
+Proven (from the disassembly): the stream's state +4 lock, +0x10 / +0x14 requests (0x124 bytes) and count, +0x18
+/ +0x1c chunk types (mask, value, type) and count, +0x58 first queued, +0x5c being read, +0x60 last, +0x64 free.
+`Strm_AllocRequest` 0x2c6460 takes a free one and numbers it (0x3bbb2c += 0x100, 0 skipped; the low byte kept).
+`Strm_AppendRequest` 0x2c64e0 queues last (an empty queue's first is also the one being read).
+`Strm_LookupRequest` 0x2c6558: by the id's low byte, only if the id matches and it is queued.
+`Strm_UnlinkRequest` 0x2c65a0: out of the queue (the one being read moves to the next, or the one before), onto
+the free list. `Strm_MatchChunkType` 0x2c6610: the first type whose mask of the packet's word gives its value, −2.
+Checked in the runner: 18,000 calls; 16 mutants, all killed.
